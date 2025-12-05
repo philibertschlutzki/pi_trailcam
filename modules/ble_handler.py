@@ -13,8 +13,14 @@ class BLEHandler:
 
     def __init__(self):
         self.mac_address = config.BLE_MAC_ADDRESS
-        self.char_uuid = config.CHAR_UUID
-        self.payload = config.WAKEUP_PAYLOAD
+        self.char_uuid = config.BLE_CHAR_UUID
+        # Convert the hex string from config to a bytearray
+        try:
+            self.payload = bytearray.fromhex(config.BLE_PAYLOAD_HEX)
+        except ValueError:
+            logger.error("Invalid Hex String in config.BLE_PAYLOAD_HEX")
+            self.payload = bytearray()
+
         self.timeout = 20.0 # Timeout for connection attempts
 
     async def wake_camera(self, retries=3):
@@ -27,6 +33,9 @@ class BLEHandler:
         Returns:
             bool: True if successful, False otherwise.
         """
+        if len(self.payload) != 8:
+            logger.warning(f"Warning: BLE Payload is {len(self.payload)} bytes. Expected 8 bytes based on RE findings.")
+
         logger.info(f"Attempting to wake camera (MAC: {self.mac_address})...")
 
         for attempt in range(1, retries + 1):
@@ -41,13 +50,11 @@ class BLEHandler:
                     logger.info("BLE Connected. Sending magic packet...")
 
                     # Write the payload to the characteristic
-                    # response=True ensures we wait for an acknowledgment (Write Request vs Write Command)
-                    # Adjust response=False if the protocol uses 'Write Command' (No Ack)
                     await client.write_gatt_char(self.char_uuid, self.payload, response=True)
 
-                    logger.info("Magic packet sent successfully.")
+                    logger.info(f"Magic packet ({config.BLE_PAYLOAD_HEX}) sent successfully.")
 
-                    # Some cameras might need a moment or a disconnect to trigger the action
+                    # Wait briefly before disconnecting to ensure processing
                     await asyncio.sleep(1)
 
                 logger.info("BLE Disconnected. Wakeup sequence complete.")

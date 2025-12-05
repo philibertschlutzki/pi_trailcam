@@ -13,21 +13,21 @@ logger = logging.getLogger("Main")
 
 from modules.ble_handler import BLEHandler
 from modules.wifi_handler import WifiHandler
-from modules.http_client import HttpClient
+from modules.camera_client import CameraClient
 import config
 
 async def main():
     logger.info("Starting KJK230 Camera Controller...")
 
     # 0. Check Configuration
-    if "XX:XX" in config.BLE_MAC_ADDRESS:
+    if "AA:BB" in config.BLE_MAC_ADDRESS:
         logger.critical("Configuration invalid! Please update config.py with real values from Reverse Engineering.")
         return
 
     # Initialize Modules
     ble = BLEHandler()
     wifi = WifiHandler()
-    http = HttpClient()
+    cam = CameraClient()
 
     # 1. Wake up the Camera via BLE
     logger.info(">>> STEP 1: Waking up Camera via BLE...")
@@ -54,23 +54,25 @@ async def main():
         wifi.restore_home_wifi()
         return
 
-    # 3. Access Files
-    logger.info(">>> STEP 3: Downloading Files...")
+    # 3. Connect to TCP Server and Control
+    logger.info(">>> STEP 3: Connecting to TCP Control Interface...")
 
-    # Wait for HTTP server to come up (DHCP usually takes a few seconds)
-    logger.info("Waiting for network stability...")
+    # Wait for network stability
     await asyncio.sleep(5)
 
-    if http.is_reachable():
-        files = http.list_files()
-        if files:
-            logger.info(f"Found {len(files)} files to process.")
-            for file_url in files:
-                http.download_file(file_url)
-        else:
-            logger.warning("No files found or unable to parse file list.")
+    if cam.connect():
+        # Perform Login
+        if cam.login():
+            # Get Device Info
+            cam.get_device_info()
+
+            # (Optional) Add more commands here (e.g. get file list if protocol known)
+
+            logger.info("Interaction complete.")
+
+        cam.close()
     else:
-        logger.error("Camera HTTP server is unreachable.")
+        logger.error("Failed to connect to Camera TCP Server.")
 
     # 4. Cleanup
     logger.info(">>> STEP 4: Cleanup & Disconnect...")

@@ -2,44 +2,39 @@
 
 # ==============================================================================
 # [CRITICAL] REVERSE ENGINEERING DATA REQUIRED
-# You must fill these values based on your findings from the HCI Snoop Log.
-# See README.md for instructions.
+# The user must sniff the BLE traffic to find the 8-byte payload.
 # ==============================================================================
 
 # BLE Configuration
 # The MAC address of the camera's BLE interface.
-BLE_MAC_ADDRESS = "XX:XX:XX:XX:XX:XX"
+BLE_MAC_ADDRESS = "AA:BB:CC:DD:EE:FF"
 
-# The Service UUID found during the write operation.
-SERVICE_UUID = "0000xxxx-0000-1000-8000-00805f9b34fb"
+# The Service UUID.
+BLE_SERVICE_UUID = "00008800-0000-1000-8000-00805f9b34fb"
 
 # The Characteristic UUID used to send the wakeup command.
-CHAR_UUID = "0000xxxx-0000-1000-8000-00805f9b34fb"
+BLE_CHAR_UUID = "00008801-0000-1000-8000-00805f9b34fb"
 
-# The "Magic Packet" payload. This is the hex byte sequence sent to the characteristic.
-# Example: bytearray.fromhex("aa01050000000000")
-WAKEUP_PAYLOAD = bytearray.fromhex("00000000")
+# The 8-byte "Magic Packet" payload.
+# REPLACE THIS with the hex string found in your HCI Snoop Log.
+BLE_PAYLOAD_HEX = "0000000000000000"
 
 # ==============================================================================
 # WIFI Configuration
 # ==============================================================================
 
 # The prefix of the Camera's WiFi SSID.
-# The script will scan for SSIDs starting with this string.
-WIFI_SSID_PREFIX = "KJK230-"
+WIFI_SSID_PREFIX = "KJK_"
 
-# The WiFi password for the camera.
-# Common defaults are '12345678', '1234567890', or empty.
-WIFI_PASSWORD = "12345678"
+# The WiFi password for the camera (Static based on findings).
+WIFI_PASSWORD = "85087127"
 
 # ==============================================================================
-# HTTP API Configuration
+# TCP API Configuration
 # ==============================================================================
 
-# The Base URL for the Camera's Web Server.
-# This usually includes the IP and the root path for commands or file access.
-# Examples: "http://192.168.1.1/cgi-bin/", "http://192.168.4.1/SD/"
-CAM_BASE_URL = "http://192.168.1.1/"
+# The Gateway IP Address of the Camera AP.
+CAM_IP = "192.168.43.1"
 
-# Directory to save downloaded files
-DOWNLOAD_DIR = "./downloads"
+# The TCP Port for the proprietary control protocol.
+CAM_PORT = 40611

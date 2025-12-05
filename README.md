@@ -1,21 +1,17 @@
 # KJK230 Trail Camera Controller (Raspberry Pi)
 
-This project provides a Python-based automation suite to control a **KJK230 Trail Camera** using a Raspberry Pi. It mimics the behavior of the proprietary "Trail Cam Go" app by interacting with the camera's Bluetooth Low Energy (BLE) interface to wake up its WiFi Access Point, connecting to it, and downloading media files.
+This project provides a Python-based automation suite to control a **KJK230 Trail Camera** using a Raspberry Pi. It mimics the behavior of the proprietary "Trail Cam Go" app by interacting with the camera's Bluetooth Low Energy (BLE) interface to wake up its WiFi Access Point and then communicating via a raw TCP socket protocol.
 
 ## ⚠️ Prerequisites & Disclaimer
 
 **This software is for educational and interoperability purposes.**
-You will need to perform some initial **Reverse Engineering** to find the unique keys and identifiers for your specific camera model. This guide assumes you are using an Android phone to capture the initial traffic.
+You will need to perform some initial **Reverse Engineering** to find the unique keys and identifiers for your specific camera model.
 
 ---
 
 ## 🛠️ Critical Reverse Engineering Guide
 
-Before running this code, you must obtain the following values:
-1.  **BLE Service UUID**
-2.  **BLE Characteristic UUID** (used for writing the wakeup command)
-3.  **Wakeup "Magic Packet"** (Hex payload)
-4.  **Camera IP Address & API Endpoints**
+Before running this code, you must obtain the **8-byte BLE Wakeup Payload** and your specific **BLE MAC Address**.
 
 ### Step 1: Enable HCI Snoop Logging (Android)
 1.  On your Android phone, go to **Settings > About Phone**.
@@ -28,30 +24,23 @@ Before running this code, you must obtain the following values:
 1.  Open the "Trail Cam Go" app.
 2.  Stand near the camera (ensure it is in "Standby" mode).
 3.  Trigger the "Connect" or "Turn on WiFi" action in the app.
-4.  Wait for the phone to connect to the camera's WiFi and show the live view or file list.
+4.  Wait for the phone to connect to the camera's WiFi.
 5.  **Stop** doing anything and close the app.
 6.  Go back to **Developer Options** and disable HCI logging.
 
 ### Step 3: Analyze the Log in Wireshark
-1.  Connect your phone to a PC/Mac via USB.
-2.  Extract the `btsnoop_hci.log` file (usually in `/sdcard/` or generated via `adb bugreport`).
-    *   *Tip: Use `adb pull /sdcard/btsnoop_hci.log` if you have ADB installed.*
-3.  Open the log file in **Wireshark**.
-4.  Filter for **Write Command** or **Write Request** (enter `btatt.opcode == 0x12` or `btatt.opcode == 0x52` in the filter bar).
-5.  Look for a packet sent **from your phone (Host)** to the **Camera (Remote)** right before the WiFi connection starts.
-6.  **Note down:**
-    *   **Destination MAC Address**: The BLE MAC address of the camera.
-    *   **Service UUID**: The 128-bit UUID of the service.
-    *   **Characteristic UUID**: The 128-bit UUID where the data was written.
-    *   **Value (Hex)**: The byte sequence sent (e.g., `aa010000...`). This is the `WAKEUP_PAYLOAD`.
-
-### Step 4: Find HTTP Endpoints
-1.  Once connected to the Camera's WiFi, you can use a Packet Capture app on your phone (like "PCAPdroid" or "NetCapture") OR simply use Wireshark on your PC if you connect your PC's WiFi to the Camera.
-2.  Perform actions in the app (List files, Download a photo).
-3.  Look for HTTP GET requests.
-4.  **Note down:**
-    *   **Camera IP**: Usually `192.168.1.1` or similar.
-    *   **Base URL**: E.g., `http://192.168.1.1/cgi-bin/` or `http://192.168.1.1/SD/`.
+1.  Extract the `btsnoop_hci.log` file from your phone to your PC.
+2.  Open the log file in **Wireshark**.
+3.  **FILTER:** Apply the filter `btatt.opcode == 0x12` (Write Request) or `btatt.opcode == 0x52` (Write Command).
+4.  **LOCATE THE PACKET:**
+    *   Find a packet sent from **Host (Phone)** to **Controller (Camera)** just before the WiFi connection begins.
+    *   Verify the **UUID** matches `00008801-0000-1000-8000-00805f9b34fb`.
+5.  **EXTRACT DATA:**
+    *   Look at the **Value** field.
+    *   It should be an **8-byte Hex String** (e.g., `aa01050000000000`).
+    *   **THIS IS YOUR `BLE_PAYLOAD_HEX`.**
+6.  **EXTRACT MAC:**
+    *   Note the **Destination Address** (MAC) of the packet. This is your `BLE_MAC_ADDRESS`.
 
 ---
 
@@ -88,4 +77,4 @@ Before running this code, you must obtain the following values:
 *   `config.py`: Configuration file for UUIDs, Keys, and WiFi creds.
 *   `modules/ble_handler.py`: Handles BLE connection and "Magic Packet" sending.
 *   `modules/wifi_handler.py`: Manages WiFi scanning and connection using `nmcli`.
-*   `modules/http_client.py`: Handles HTTP API communication (listing/downloading files).
+*   `modules/camera_client.py`: Handles TCP Socket communication (JSON Protocol).
