@@ -97,24 +97,41 @@ class CameraClient:
     def login(self):
         """
         Führt den Artemis-Handshake durch.
-        Sendet 'ARTEMIS' + Null-Bytes.
+        KORREKTUR: Sendet 'ARTEMIS' + \x02 + Padding auf 53 Bytes.
         """
         logger.info("Sende Login-Handshake (ARTEMIS)...")
         
-        # Payload aus deinen Logs rekonstruiert:
-        # String 'ARTEMIS' gefolgt von Version/Padding
-        payload = b'ARTEMIS\x00\x00\x00\x00' 
+        # 1. Der String "ARTEMIS" + Null-Terminator
+        magic_str = b'ARTEMIS\x00'
+        
+        # 2. Das kritische Byte 0x02 (aus dem Connect-Dump)
+        # Dies fehlte im vorherigen Versuch und ist wahrscheinlich die Version.
+        version_byte = b'\x02'
+        
+        # 3. Padding
+        # Der Original-Dump hatte eine Länge von ca. 53 Bytes Payload.
+        # Wir füllen den Rest mit Nullen auf, um sicherzugehen, dass die Kamera
+        # das Paket nicht wegen Unterlänge verwirft.
+        # 53 Bytes (Total) - 4 Bytes (Header) = 49 Bytes Payload
+        # Wir haben bisher 8 (ARTEMIS\0) + 1 (0x02) = 9 Bytes.
+        # Also fügen wir 40 Null-Bytes hinzu.
+        padding = b'\x00' * 40
+        
+        payload = magic_str + version_byte + padding
         
         # Type 0x00 für Commands
-        response = self.send_packet(payload, pkt_type=0x00)
+        # Wir versuchen es 3 mal, da UDP unzuverlässig ist
+        for attempt in range(3):
+            logger.info(f"Login Versuch {attempt+1}...")
+            response = self.send_packet(payload, pkt_type=0x00)
+            
+            if response:
+                logger.info(f"Login Antwort erhalten: {response.hex()}")
+                self.start_heartbeat()
+                return True
+            time.sleep(1)
         
-        if response:
-            logger.info(f"Login Antwort erhalten: {response.hex()}")
-            # Start Keep-Alive im Hintergrund, da Verbindung sonst abbricht
-            self.start_heartbeat()
-            return True
-        
-        logger.error("Keine Antwort auf Login.")
+        logger.error("Keine Antwort auf Login nach 3 Versuchen.")
         return False
 
     def start_heartbeat(self):
