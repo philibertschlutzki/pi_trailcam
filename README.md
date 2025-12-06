@@ -6,7 +6,7 @@ A complete, ready-to-run Python automation project for the KJK230 Trail Camera o
 This project automates the connection sequence:
 1.  **BLE Wakeup:** Finds and wakes the camera using Bluetooth Low Energy.
 2.  **WiFi Connection:** Automatically connects to the camera's AP.
-3.  **TCP Control:** Logs in and retrieves status via the proprietary JSON protocol.
+3.  **UDP Control:** Logs in, manages session heartbeat, and retrieves status via the proprietary binary/JSON protocol.
 
 ## Prerequisites
 
@@ -21,10 +21,22 @@ This project automates the connection sequence:
     git clone <repo_url>
     cd <repo_dir>
     ```
-2.  Install dependencies:
+
+2.  **Debian Bookworm (Raspberry Pi OS 12) & PEP 668 Note:**
+    On newer versions of Raspberry Pi OS, you must use a virtual environment.
+
     ```bash
+    # Create virtual environment
+    python3 -m venv venv
+
+    # Activate it
+    source venv/bin/activate
+
+    # Install dependencies inside venv
     pip3 install -r requirements.txt
     ```
+
+    *If you are on an older OS (Bullseye), you can simply run `pip3 install -r requirements.txt` globally.*
 
 ## Configuration
 
@@ -33,10 +45,11 @@ Edit `config.py` if you need to override defaults.
 
 ## Usage
 
-Run the main script with sudo (needed for BLE/WiFi access):
+**Important:** Because this script manages hardware (Bluetooth/WiFi), it requires root privileges (`sudo`). When using a virtual environment, you must point `sudo` to the python executable *inside* the venv.
 
 ```bash
-sudo python3 main.py
+# Example if you are in the project directory
+sudo ./venv/bin/python3 main.py
 ```
 
 ## Troubleshooting
