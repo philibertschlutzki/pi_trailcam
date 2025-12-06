@@ -3,7 +3,7 @@ import logging
 import sys
 import time
 
-# Configure logging to stdout
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -11,72 +11,68 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Main")
 
-from modules.ble_handler import BLEHandler
-from modules.wifi_handler import WifiHandler
+from modules.ble_manager import BLEManager
+from modules.wifi_manager import WiFiManager
 from modules.camera_client import CameraClient
 import config
 
 async def main():
     logger.info("Starting KJK230 Camera Controller...")
 
-    # 0. Check Configuration
-    if "AA:BB" in config.BLE_MAC_ADDRESS:
-        logger.critical("Configuration invalid! Please update config.py with real values from Reverse Engineering.")
-        return
-
-    # Initialize Modules
-    ble = BLEHandler()
-    wifi = WifiHandler()
-    cam = CameraClient()
-
-    # 1. Wake up the Camera via BLE
-    logger.info(">>> STEP 1: Waking up Camera via BLE...")
-    if await ble.wake_camera():
-        logger.info("Camera wakeup signal sent.")
+    # Step 1: Define MAC Address
+    mac_address = config.BLE_MAC_ADDRESS
+    if not mac_address:
+        logger.info("BLE MAC Address not in config. Scanning...")
+        mac_address = await BLEManager.scan_for_camera()
+        if not mac_address:
+            logger.critical("Could not find KJK Camera via BLE. Exiting.")
+            return
+        logger.info(f"Using found MAC Address: {mac_address}")
     else:
-        logger.error("Failed to wake camera. Aborting.")
+        logger.info(f"Using Configured MAC Address: {mac_address}")
+
+    # Step 2: Wake up Camera
+    logger.info(">>> STEP 2: Waking up Camera via BLE...")
+    if not await BLEManager.wake_camera(mac_address):
+        logger.error("Failed to wake camera. Exiting.")
         return
 
-    # 2. Wait for WiFi and Connect
-    logger.info(">>> STEP 2: Connecting to Camera WiFi...")
-    # Give the camera a few seconds to boot its AP
-    logger.info("Waiting 10s for Camera AP to initialize...")
+    # Step 3: Wait for WiFi
+    logger.info(">>> STEP 3: Waiting for Camera WiFi (10s delay)...")
     await asyncio.sleep(10)
 
-    ssid = wifi.find_camera_ssid()
-    if not ssid:
-        logger.error("Camera WiFi SSID not found. Is the camera on?")
-        return
+    wifi = WiFiManager()
+    if not wifi.connect_to_camera_wifi():
+         logger.error("Failed to connect to Camera WiFi. Exiting.")
+         return
 
-    if not wifi.connect_to_camera(ssid):
-        logger.error("Failed to establish WiFi connection. Aborting.")
-        # Try to restore home wifi just in case we got stuck halfway
-        wifi.restore_home_wifi()
-        return
+    # Step 4: Camera Client
+    logger.info(">>> STEP 4: Initializing Camera Client...")
+    client = CameraClient()
 
-    # 3. Connect to TCP Server and Control
-    logger.info(">>> STEP 3: Connecting to TCP Control Interface...")
+    if client.connect():
+        try:
+            # Step 5: Login
+            logger.info(">>> STEP 5: Logging in...")
+            if client.login():
 
-    # Wait for network stability
-    await asyncio.sleep(5)
+                # Step 6: Get Status
+                logger.info(">>> STEP 6: Getting Status...")
+                status = client.get_status()
+                logger.info(f"Camera Status: {status}")
 
-    if cam.connect():
-        # Perform Login
-        if cam.login():
-            # Get Device Info
-            cam.get_device_info()
+                # Optional: Take Photo
+                # client.take_photo()
 
-            # (Optional) Add more commands here (e.g. get file list if protocol known)
-
-            logger.info("Interaction complete.")
-
-        cam.close()
+            else:
+                logger.error("Login Failed.")
+        finally:
+            # Step 7: Close
+            logger.info(">>> STEP 7: Closing Connection...")
+            client.close()
     else:
-        logger.error("Failed to connect to Camera TCP Server.")
+        logger.error("Failed to connect to TCP server.")
 
-    # 4. Cleanup
-    logger.info(">>> STEP 4: Cleanup & Disconnect...")
-    wifi.restore_home_wifi()
     logger.info("Process Complete.")
 
 if __name__ == "__main__":
