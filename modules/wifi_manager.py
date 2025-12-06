@@ -10,8 +10,14 @@ class WiFiManager:
     Handles WiFi scanning and connection using NetworkManager (nmcli).
     """
 
-    def _run_command(self, command_list):
-        """Helper to run shell commands safely without shell=True."""
+    def _run_command(self, command_list, log_errors=True):
+        """
+        Helper to run shell commands safely without shell=True.
+        
+        Args:
+            command_list (list): The command and arguments.
+            log_errors (bool): If False, errors won't be logged (useful for cleanup commands).
+        """
         try:
             result = subprocess.run(
                 command_list,
@@ -22,9 +28,10 @@ class WiFiManager:
             )
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:
-            # Join the command list for readable logging
-            cmd_str = " ".join(command_list)
-            logger.error(f"Command failed: {cmd_str}\nError: {e.stderr}")
+            if log_errors:
+                # Join the command list for readable logging
+                cmd_str = " ".join(command_list)
+                logger.error(f"Command failed: {cmd_str}\nError: {e.stderr}")
             return None
 
     def connect_to_camera_wifi(self, timeout=60):
@@ -43,11 +50,11 @@ class WiFiManager:
 
         # 1. Scan loop
         while (time.time() - start_time) < timeout:
-            # Rescan
+            # Rescan to ensure fresh data
             self._run_command(["nmcli", "dev", "wifi", "rescan"])
             time.sleep(2)
 
-            # List
+            # List available networks
             output = self._run_command(["nmcli", "-t", "-f", "SSID", "dev", "wifi", "list"])
             if output:
                 ssids = output.split('\n')
@@ -68,7 +75,16 @@ class WiFiManager:
             logger.error("Timeout: Camera WiFi SSID not found.")
             return False
 
-        # 2. Connect
+        # 2. Cleanup old profiles (CRITICAL FIX for key-mgmt error)
+        # We try to delete any existing connection profile with this name.
+        # This forces nmcli to re-detect security settings (WPA2 etc.) instead of using a stale config.
+        logger.info(f"Cleaning up potential stale profiles for {found_ssid}...")
+        self._run_command(["nmcli", "connection", "delete", found_ssid], log_errors=False)
+        
+        # Give NetworkManager a moment to process the deletion
+        time.sleep(1)
+
+        # 3. Connect
         logger.info(f"Connecting to {found_ssid}...")
         # nmcli dev wifi connect <SSID> password <PASSWORD>
         cmd = ["nmcli", "dev", "wifi", "connect", found_ssid, "password", config.WIFI_PASSWORD]
