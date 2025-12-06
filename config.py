@@ -9,7 +9,7 @@
 BLE_SERVICE_UUID = "00008800-0000-1000-8000-00805f9b34fb"
 
 # The Characteristic UUID used to send the wakeup command.
-BLE_CHAR_UUID = "00008801-0000-1000-8000-00805f9b34fb"
+BLE_CHAR_UUID = "00000002-0000-1000-8000-00805f9b34fb"
 
 # The 8-byte "Magic Packet" payload.
 BLE_PAYLOAD = bytes.fromhex("0100000000000000")
@@ -39,4 +39,4 @@ CAM_PORT = 40611
 # ==============================================================================
 # If known, set the MAC address here. Otherwise, the script can scan for it.
 # Example: "AA:BB:CC:DD:EE:FF"
-BLE_MAC_ADDRESS = None
+BLE_MAC_ADDRESS = "C6:1E:0D:E0:32:E8"
