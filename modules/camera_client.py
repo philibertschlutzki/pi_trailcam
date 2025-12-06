@@ -72,7 +72,7 @@ class CameraClient:
             outer_header = self._get_outer_header(inner_packet, outer_type)
             final_packet = outer_header + inner_packet
 
-            # logger.debug(f"TX (Seq {self.seq_num}): {final_packet.hex()}")
+            logger.debug(f"TX (Seq {self.seq_num}): {final_packet.hex()}")
             self.sock.sendto(final_packet, (self.ip, self.port))
             self.seq_num += 1
 
@@ -81,7 +81,7 @@ class CameraClient:
 
             try:
                 data, _ = self.sock.recvfrom(2048)
-                # logger.debug(f"RX: {data.hex()}")
+                logger.debug(f"RX: {data.hex()}")
                 return data
             except socket.timeout:
                 logger.warning(f"Timeout (Seq {self.seq_num-1})")
@@ -92,25 +92,57 @@ class CameraClient:
             return None
 
     def login(self):
-        logger.info("Sende Login-Handshake (Replay Attack)...")
+        logger.info("Sende Login-Handshake...")
         
-        # Payload rekonstruiert aus tcpdump_1800_connect.log
+        # === KRITISCH: Payload aus erfolgreichem Smartphone-Dump extrahiert ===
         # String: ARTEMIS\0
         part1 = b'ARTEMIS\x00'
-        # Versionen / Flags (02 00 00 00 02 00 01 00)
-        part2 = b'\x02\x00\x00\x00\x02\x00\x01\x00'
-        # String Length (25 bytes)
+        
+        # FEHLER GEFUNDEN: Das sollte NICHT 02 00 00 00 02 00 01 00 sein!
+        # Aus dem funktionierenden Dump (Seq 5,6):
+        # d100 0005 4152 5445 4d49 5300 0200 0000
+        # 2b00 0000 2d00 0000 4933 6d62...
+        # Nach ARTEMIS: 02 00 00 00 | 2b 00 00 00 | 2d 00 00 00
+        # 0x2b = 43 (Version/Flag), 0x2d = 45
+        part2 = b'\x02\x00\x00\x00'  # Erste 4 Bytes nach ARTEMIS
+        part2_mystery = b'\x2b\x00\x00\x00\x2d\x00\x00\x00'  # Die eigentlich sendenden Bytes
+        
+        # String Length (25 bytes = 0x19)
         part3 = b'\x19\x00\x00\x00'
+        
         # Auth Token / Key (Base64 String + Null byte)
         # "MzlB36X/IVo8ZzI5rG9j1w=="
         part4 = b'MzlB36X/IVo8ZzI5rG9j1w==\x00'
         
-        payload = part1 + part2 + part3 + part4
+        # === EXPERIMENTELL: Ersten Login mit korrigierten Bytes versuchen ===
+        # Originale (fehlerhafte) Payload
+        payload_old = part1 + part2 + part3 + part4
+        
+        # Neue Payload mit den aus dem Dump extrahierten Bytes
+        payload_new = part1 + part2_mystery + part3 + part4
+        
+        logger.info(f"Original Payload: {payload_old.hex()}")
+        logger.info(f"Neue Payload:     {payload_new.hex()}")
         
         # Für Login nutzt die App im Dump den Outer Type 0xD0
         for attempt in range(3):
-            logger.info(f"Login Versuch {attempt+1}...")
-            response = self.send_packet(payload, inner_type=0x00, outer_type=0xD0)
+            logger.info(f"Login Versuch {attempt+1} (mit neuer Payload)...")
+            
+            # Versuche zuerst mit der korrigierten Payload
+            response = self.send_packet(payload_new, inner_type=0x00, outer_type=0xD0)
+            
+            if response:
+                logger.info(f"Login OK! Antwort erhalten: {response.hex()}")
+                self.start_heartbeat()
+                return True
+            time.sleep(1)
+        
+        logger.error("Login mit neuer Payload gescheitert. Versuche Original-Payload...")
+        
+        # Fallback: Original versuchen
+        for attempt in range(3):
+            logger.info(f"Fallback Login Versuch {attempt+1}...")
+            response = self.send_packet(payload_old, inner_type=0x00, outer_type=0xD0)
             
             if response:
                 logger.info(f"Login OK! Antwort erhalten: {response.hex()}")
