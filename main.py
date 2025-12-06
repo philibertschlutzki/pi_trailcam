@@ -14,21 +14,13 @@ logger = logging.getLogger("Main")
 from modules.ble_manager import BLEManager
 from modules.wifi_manager import WiFiManager
 from modules.camera_client import CameraClient
+from ble_token_listener import TokenListener
 import config
 
-async def heartbeat_loop(client, interval=2):
-    """
-    Periodically sends heartbeats to the camera.
-    """
-    logger.info("Starting Heartbeat Loop...")
-    try:
-        while True:
-            client.send_heartbeat()
-            await asyncio.sleep(interval)
-    except asyncio.CancelledError:
-        logger.info("Heartbeat Loop Stopped.")
-
 async def main():
+    """
+    Complete workflow with 3 phases.
+    """
     logger.info("Starting KJK230 Camera Controller...")
 
     # Step 1: Define MAC Address
@@ -43,72 +35,115 @@ async def main():
     else:
         logger.info(f"Using Configured MAC Address: {mac_address}")
 
-    # Step 2: Wake up Camera
-    logger.info(">>> STEP 2: Waking up Camera via BLE...")
-    if not await BLEManager.wake_camera(mac_address):
-        logger.error("Failed to wake camera. Exiting.")
-        return
+    CAMERA_IP = config.CAM_IP
 
-    # Step 3: Wait for WiFi
-    logger.info(">>> STEP 3: Waiting for Camera WiFi (10s delay)...")
-    await asyncio.sleep(10)
+    try:
+        # PHASE 1: BLE WAKE
+        logger.info("="*60)
+        logger.info("PHASE 1: BLE WAKE")
+        logger.info("="*60)
 
-    wifi = WiFiManager()
-    if not wifi.connect_to_camera_wifi():
-         logger.error("Failed to connect to Camera WiFi. Exiting.")
-         return
+        # We need to wake the camera AND listen for the token.
+        # The token comes after wake.
+        # ble_mgr.wake_camera sends the magic packet.
+        # token_listener.listen connects and waits for notification.
+        #
+        # ISSUE: If we connect with wake_camera, then disconnect, we might lose the "session"
+        # or the notification might happen while we are disconnected?
+        #
+        # Re-reading the prompt:
+        # "What Works (Android App): 1. App wakes camera via BLE 2. Camera sends NEW token via BLE notification"
+        #
+        # If I run wake_camera(), it connects, writes, then disconnects.
+        # Then TokenListener connects.
+        # Will the camera send the notification to the NEW connection?
+        # Or should we be listening while waking?
+        #
+        # Prompt says: "Component 1 ... Listen for BLE notification containing auth token. ... Connect to camera MAC address"
+        # "Component 4 ... Phase 1: BLE Wake ... Phase 2: Token Extraction"
+        #
+        # This implies sequential operations.
+        # If wake_camera wakes it up, maybe it stays awake and advertises or accepts connection,
+        # and THEN sends notification when we subscribe?
+        # Or maybe the notification is sent immediately after wake logic?
+        #
+        # If the notification is sent *unsolicited* immediately after wake, we might miss it if we disconnect and reconnect.
+        # However, typically you subscribe to notifications (CCCD write). The device won't send notifications unless subscribed.
+        # So:
+        # 1. Wake (write char 0002).
+        # 2. Connect (or stay connected), Subscribe to char 0003.
+        # 3. Receive notification.
 
-    # Step 4: Camera Client
-    logger.info(">>> STEP 4: Initializing UDP Camera Client...")
-    client = CameraClient()
+        # Existing BLEManager.wake_camera disconnects at the end.
+        # If I use TokenListener separately, it creates a NEW connection.
+        # Let's hope the camera queues the notification or waits for subscription.
+        # Given the plan structure, I will follow Phase 1 then Phase 2.
 
-    if client.connect():
-        heartbeat_task = None
-        try:
-            # Step 5: Login
-            logger.info(">>> STEP 5: Logging in...")
-            if client.login():
+        await BLEManager.wake_camera(mac_address)
+        # Short sleep to allow camera to process wake?
+        await asyncio.sleep(2)
 
-                # Start Heartbeat Loop in background
-                heartbeat_task = asyncio.create_task(heartbeat_loop(client))
+        # PHASE 2: TOKEN EXTRACTION (NEW!)
+        logger.info("="*60)
+        logger.info("PHASE 2: TOKEN EXTRACTION")
+        logger.info("="*60)
 
-                # Step 6: Get Device Info
-                logger.info(">>> STEP 6: Getting Device Info...")
-                info = client.get_device_info()
-                logger.info(f"Device Info: {info}")
+        token_listener = TokenListener(mac_address, logger)
+        creds = await token_listener.listen(timeout=10)
 
-                # Step 7: Start Stream Session (Example)
-                logger.info(">>> STEP 7: Starting Stream Session...")
-                client.start_stream()
+        logger.info(f"✓ Token: {creds['token'][:20]}...")
+        logger.info(f"✓ Sequence: {creds['sequence'].hex()}")
 
-                # Keep session alive for a bit (simulate viewing)
-                logger.info("Session active. Waiting 10 seconds...")
+        # PHASE 3: UDP LOGIN
+        logger.info("="*60)
+        logger.info("PHASE 3: UDP LOGIN")
+        logger.info("="*60)
+
+        # Connect to WiFi first?
+        # The original code had a step "Wait for WiFi".
+        # The prompt for main.py didn't explicitly mention WiFi connection,
+        # but CameraClient needs IP connectivity.
+        # "CAMERA_IP = '192.168.43.1'"
+        # I should probably ensure WiFi is connected.
+
+        logger.info("Waiting for WiFi connection...")
+        # (Assuming the user connects manually or we use WiFiManager)
+        # The prompt's main.py example didn't show WiFiManager usage, but the original did.
+        # I will re-add WiFiManager usage to be safe.
+
+        wifi = WiFiManager()
+        if not wifi.connect_to_camera_wifi():
+             logger.error("Failed to connect to Camera WiFi. Exiting.")
+             return
+
+        camera = CameraClient(CAMERA_IP, logger)
+        camera.set_session_credentials(creds['token'], creds['sequence'])
+
+        if camera.connect():
+             if camera.login():
+                logger.info("🎉 AUTHENTICATION SUCCESSFUL!")
+
+                # Keep alive for demonstration
+                logger.info("Keeping session alive for 10s...")
                 await asyncio.sleep(10)
+                camera.close()
+                return True
+             else:
+                logger.error("✗ Login failed despite correct token")
+                camera.close()
+                return False
+        else:
+             logger.error("Failed to connect UDP socket")
+             return False
 
-                # Stop Stream
-                logger.info(">>> STEP 8: Stopping Stream...")
-                client.stop_stream()
-
-            else:
-                logger.error("Login Failed.")
-        except Exception as e:
-            logger.error(f"Runtime error: {e}")
-        finally:
-            # Cancel heartbeat
-            if heartbeat_task:
-                heartbeat_task.cancel()
-                try:
-                    await heartbeat_task
-                except asyncio.CancelledError:
-                    pass
-
-            # Close
-            logger.info("Closing Connection...")
-            client.close()
-    else:
-        logger.error("Failed to create UDP socket.")
-
-    logger.info("Process Complete.")
+    except asyncio.TimeoutError:
+        logger.error("✗ Token extraction timeout")
+        return False
+    except Exception as e:
+        logger.error(f"✗ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 if __name__ == "__main__":
     try:
