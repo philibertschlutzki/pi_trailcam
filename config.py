@@ -39,4 +39,4 @@ CAM_PORT = 40611
 # ==============================================================================
 # If known, set the MAC address here. Otherwise, the script can scan for it.
 # Example: "AA:BB:CC:DD:EE:FF"
-BLE_MAC_ADDRESS = None
+BLE_MAC_ADDRESS = "C6:1E:0D:E0:32:E8"
