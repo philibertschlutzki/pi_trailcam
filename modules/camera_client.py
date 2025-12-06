@@ -27,7 +27,7 @@ class CameraClient:
         logger.info(f"Initialisiere UDP Socket zu {self.ip}:{self.port}...")
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.settimeout(5.0) # Etwas mehr Timeout für den ersten Connect
+            self.sock.settimeout(5.0)
             self.seq_num = 1
             return True
         except Exception as e:
@@ -68,7 +68,6 @@ class CameraClient:
             inner_packet = inner_header + payload
 
             # 2. Äußeres Paket bauen (F1...)
-            # Login nutzt meist outer_type 0xD0, Daten/Heartbeat 0xD1
             outer_header = self._get_outer_header(inner_packet, outer_type)
             final_packet = outer_header + inner_packet
 
@@ -91,66 +90,118 @@ class CameraClient:
             logger.error(f"Send Error: {e}")
             return None
 
+    def _build_login_payload(self, token_variant):
+        """
+        Erstellt Login-Payload nach verschiedenen Hypothesen.
+        
+        Smartphone-Dump (FUNKTIONIEREND):
+          d100 0005 4152 5445 4d49 5300 0200 0000
+          2b00 0000 2d00 0000 1900 0000 4933 6d62...
+          = ARTEMIS\0 + 02 00 00 00 + 2b 00 00 00 + 2d 00 00 00 + 19 00 00 00 + Token
+        
+        Raspberry-Dump (FEHLGESCHLAGEN):
+          d100 0001 4152 5445 4d49 5300 0200 0000
+          0200 0100 1900 0000 4d7a 6c42...
+          = ARTEMIS\0 + 02 00 00 00 + 02 00 01 00 + 19 00 00 00 + Token
+        """
+        
+        # Konstante Teile
+        artemis = b'ARTEMIS\x00'
+        flags_1 = b'\x02\x00\x00\x00'  # Erste 4 Bytes nach ARTEMIS (immer gleich)
+        token_len_field = b'\x19\x00\x00\x00'  # Längenfeld für Token (0x19 = 25)
+        token_short = b'MzlB36X/IVo8ZzI5rG9j1w==\x00'  # 25 Zeichen + \0
+        
+        if token_variant == 'original':
+            # ORIGINAL (aktueller, fehlgeschlagener Code)
+            # Nach Flags_1: 02 00 01 00 (FALSCH?)
+            mystery_bytes = b'\x02\x00\x01\x00'
+            logger.info("[VARIANT: ORIGINAL] Nutze bytes: 02 00 01 00")
+            return artemis + flags_1 + mystery_bytes + token_len_field + token_short
+        
+        elif token_variant == 'smartphone_dump':
+            # SMARTPHONE-DUMP (aus tcpdump extrahiert)
+            # Nach Flags_1: 2b 00 00 00 2d 00 00 00 (KORREKT?)
+            mystery_bytes = b'\x2b\x00\x00\x00\x2d\x00\x00\x00'
+            logger.info("[VARIANT: SMARTPHONE_DUMP] Nutze bytes: 2b 00 00 00 2d 00 00 00")
+            return artemis + flags_1 + mystery_bytes + token_len_field + token_short
+        
+        elif token_variant == 'mystery_2b_only':
+            # HYPOTHESE: Nur 2b ist relevant, 2d ist Token-Länge?
+            # 02 00 00 00 + 2b 00 00 00 + 19 00 00 00 (ohne 2d)
+            mystery_bytes = b'\x2b\x00\x00\x00'
+            logger.info("[VARIANT: MYSTERY_2B_ONLY] Nutze bytes: 2b 00 00 00")
+            return artemis + flags_1 + mystery_bytes + token_len_field + token_short
+        
+        elif token_variant == 'mystery_2d_only':
+            # HYPOTHESE: Nur 2d ist relevant?
+            mystery_bytes = b'\x2d\x00\x00\x00'
+            logger.info("[VARIANT: MYSTERY_2D_ONLY] Nutze bytes: 2d 00 00 00")
+            return artemis + flags_1 + mystery_bytes + token_len_field + token_short
+        
+        elif token_variant == 'no_mystery':
+            # HYPOTHESE: Keine Mystery-Bytes, direkt Länge?
+            logger.info("[VARIANT: NO_MYSTERY] Keine Mystery-Bytes, direkt Längenfeld")
+            return artemis + flags_1 + token_len_field + token_short
+        
+        elif token_variant == 'sequence_variant':
+            # HYPOTHESE: Mystery-Bytes sind Sequenznummern
+            # Ändert sich bei jedem Versuch: 03, 04, 05, 06
+            # Mapping zu Little-Endian oder Big-Endian?
+            mystery_bytes = b'\x03\x00\x00\x00\x04\x00\x00\x00'  # Seq 3, 4
+            logger.info("[VARIANT: SEQUENCE_VARIANT] Nutze bytes als Seq: 03 00 00 00 04 00 00 00")
+            return artemis + flags_1 + mystery_bytes + token_len_field + token_short
+        
+        else:
+            logger.error(f"Unbekante Variante: {token_variant}")
+            return None
+
     def login(self):
-        logger.info("Sende Login-Handshake...")
+        logger.info("\n" + "="*70)
+        logger.info("STARTE SYSTEMATISCHEN LOGIN-TEST")
+        logger.info("="*70)
         
-        # === KRITISCH: Payload aus erfolgreichem Smartphone-Dump extrahiert ===
-        # String: ARTEMIS\0
-        part1 = b'ARTEMIS\x00'
+        # Test-Varianten in Reihenfolge
+        variants = [
+            'smartphone_dump',     # WAHRSCHEINLICHSTE: Bytes aus funktionierendem Dump
+            'original',            # FALLBACK: Aktueller, fehlgeschlagener Code
+            'mystery_2b_only',     # Alternative 1
+            'mystery_2d_only',     # Alternative 2
+            'no_mystery',          # Alternative 3
+            'sequence_variant',    # Alternative 4 (Hypothese: Sequenznummern)
+        ]
         
-        # FEHLER GEFUNDEN: Das sollte NICHT 02 00 00 00 02 00 01 00 sein!
-        # Aus dem funktionierenden Dump (Seq 5,6):
-        # d100 0005 4152 5445 4d49 5300 0200 0000
-        # 2b00 0000 2d00 0000 4933 6d62...
-        # Nach ARTEMIS: 02 00 00 00 | 2b 00 00 00 | 2d 00 00 00
-        # 0x2b = 43 (Version/Flag), 0x2d = 45
-        part2 = b'\x02\x00\x00\x00'  # Erste 4 Bytes nach ARTEMIS
-        part2_mystery = b'\x2b\x00\x00\x00\x2d\x00\x00\x00'  # Die eigentlich sendenden Bytes
-        
-        # String Length (25 bytes = 0x19)
-        part3 = b'\x19\x00\x00\x00'
-        
-        # Auth Token / Key (Base64 String + Null byte)
-        # "MzlB36X/IVo8ZzI5rG9j1w=="
-        part4 = b'MzlB36X/IVo8ZzI5rG9j1w==\x00'
-        
-        # === EXPERIMENTELL: Ersten Login mit korrigierten Bytes versuchen ===
-        # Originale (fehlerhafte) Payload
-        payload_old = part1 + part2 + part3 + part4
-        
-        # Neue Payload mit den aus dem Dump extrahierten Bytes
-        payload_new = part1 + part2_mystery + part3 + part4
-        
-        logger.info(f"Original Payload: {payload_old.hex()}")
-        logger.info(f"Neue Payload:     {payload_new.hex()}")
-        
-        # Für Login nutzt die App im Dump den Outer Type 0xD0
-        for attempt in range(3):
-            logger.info(f"Login Versuch {attempt+1} (mit neuer Payload)...")
+        for variant_idx, variant in enumerate(variants, 1):
+            logger.info(f"\n--- Test {variant_idx}/{len(variants)}: {variant.upper()} ---")
             
-            # Versuche zuerst mit der korrigierten Payload
-            response = self.send_packet(payload_new, inner_type=0x00, outer_type=0xD0)
+            payload = self._build_login_payload(variant)
+            if payload is None:
+                continue
             
-            if response:
-                logger.info(f"Login OK! Antwort erhalten: {response.hex()}")
-                self.start_heartbeat()
-                return True
-            time.sleep(1)
-        
-        logger.error("Login mit neuer Payload gescheitert. Versuche Original-Payload...")
-        
-        # Fallback: Original versuchen
-        for attempt in range(3):
-            logger.info(f"Fallback Login Versuch {attempt+1}...")
-            response = self.send_packet(payload_old, inner_type=0x00, outer_type=0xD0)
+            logger.info(f"Payload ({len(payload)} Bytes): {payload.hex()}")
             
-            if response:
-                logger.info(f"Login OK! Antwort erhalten: {response.hex()}")
-                self.start_heartbeat()
-                return True
-            time.sleep(1)
+            # Versuche 3x mit dieser Variante
+            for attempt in range(3):
+                logger.info(f"  Versuch {attempt+1}/3...")
+                response = self.send_packet(payload, inner_type=0x00, outer_type=0xD0)
+                
+                if response:
+                    logger.info(f"\n🎉 LOGIN ERFOLGREICH mit Variante '{variant}'!")
+                    logger.info(f"Antwort ({len(response)} Bytes): {response.hex()}")
+                    logger.info("="*70)
+                    self.start_heartbeat()
+                    return True
+                
+                time.sleep(0.5)  # Kürzere Pause zwischen Versuchen
+            
+            logger.warning(f"  ✗ Variante '{variant}' erfolglos. Nächste...")
         
-        logger.error("Login gescheitert.")
+        logger.error("\n" + "="*70)
+        logger.error("❌ ALLE VARIANTEN FEHLGESCHLAGEN")
+        logger.error("="*70)
+        logger.error("Nächste Schritte:")
+        logger.error("1. BLE-Dump analysieren für echten Auth-Token")
+        logger.error("2. TCP-Dump des Smartphones genauer untersuchen")
+        logger.error("3. Neue Hypothesen entwickeln")
         return False
 
     def start_heartbeat(self):
@@ -163,8 +214,6 @@ class CameraClient:
         logger.info("Starte Heartbeat Loop (Alle 2s)...")
         while self.running:
             try:
-                # Einfacher Keep-Alive, oft leerer Payload oder '00'
-                # App sendet oft Pakete mit Type 1
                 self.send_packet(b'\x00\x00', inner_type=0x01, outer_type=0xD1, wait_for_response=False)
                 time.sleep(2)
             except Exception:
