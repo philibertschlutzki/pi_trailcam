@@ -16,6 +16,18 @@ from modules.wifi_manager import WiFiManager
 from modules.camera_client import CameraClient
 import config
 
+async def heartbeat_loop(client, interval=2):
+    """
+    Periodically sends heartbeats to the camera.
+    """
+    logger.info("Starting Heartbeat Loop...")
+    try:
+        while True:
+            client.send_heartbeat()
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:
+        logger.info("Heartbeat Loop Stopped.")
+
 async def main():
     logger.info("Starting KJK230 Camera Controller...")
 
@@ -47,31 +59,54 @@ async def main():
          return
 
     # Step 4: Camera Client
-    logger.info(">>> STEP 4: Initializing Camera Client...")
+    logger.info(">>> STEP 4: Initializing UDP Camera Client...")
     client = CameraClient()
 
     if client.connect():
+        heartbeat_task = None
         try:
             # Step 5: Login
             logger.info(">>> STEP 5: Logging in...")
             if client.login():
 
-                # Step 6: Get Status
-                logger.info(">>> STEP 6: Getting Status...")
-                status = client.get_status()
-                logger.info(f"Camera Status: {status}")
+                # Start Heartbeat Loop in background
+                heartbeat_task = asyncio.create_task(heartbeat_loop(client))
 
-                # Optional: Take Photo
-                # client.take_photo()
+                # Step 6: Get Device Info
+                logger.info(">>> STEP 6: Getting Device Info...")
+                info = client.get_device_info()
+                logger.info(f"Device Info: {info}")
+
+                # Step 7: Start Stream Session (Example)
+                logger.info(">>> STEP 7: Starting Stream Session...")
+                client.start_stream()
+
+                # Keep session alive for a bit (simulate viewing)
+                logger.info("Session active. Waiting 10 seconds...")
+                await asyncio.sleep(10)
+
+                # Stop Stream
+                logger.info(">>> STEP 8: Stopping Stream...")
+                client.stop_stream()
 
             else:
                 logger.error("Login Failed.")
+        except Exception as e:
+            logger.error(f"Runtime error: {e}")
         finally:
-            # Step 7: Close
-            logger.info(">>> STEP 7: Closing Connection...")
+            # Cancel heartbeat
+            if heartbeat_task:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Close
+            logger.info("Closing Connection...")
             client.close()
     else:
-        logger.error("Failed to connect to TCP server.")
+        logger.error("Failed to create UDP socket.")
 
     logger.info("Process Complete.")
 
