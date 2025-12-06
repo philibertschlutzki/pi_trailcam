@@ -1,208 +1,181 @@
 import socket
-import json
 import time
 import logging
 import struct
+import threading
 import config
 
+# Logging konfigurieren
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class CameraClient:
     """
-    Handles UDP Socket communication with the KJK230 Camera.
-    Protocol: Proprietary Binary Header (79 bytes) + JSON Payload.
+    Client für Kameras mit dem Artemis-Protokoll (Magic 0xD1).
+    Header-Struktur (4 Bytes):
+      Byte 0: 0xD1 (Magic)
+      Byte 1: Packet Type (0x00=Cmd, 0x01=Data/Ack)
+      Byte 2-3: Sequence Number (Big Endian)
     """
 
     def __init__(self):
         self.ip = config.CAM_IP
-        self.port = config.CAM_PORT
+        self.port = 40611  # Port aus deinen Dumps (40611 ist korrekt)
         self.sock = None
-        self.token = 0 # Default token is 0
+        self.seq_num = 1
+        self.running = False
+        self.keep_alive_thread = None
 
     def connect(self):
-        """
-        Initializes the UDP socket.
-        Note: UDP is connectionless, but we create the socket object here.
-        """
-        logger.info(f"Initializing UDP Socket for {self.ip}:{self.port}...")
+        """Initialisiert den UDP Socket."""
+        logger.info(f"Initialisiere UDP Socket zu {self.ip}:{self.port}...")
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.settimeout(3.0) # 3 second timeout for responses
+            self.sock.settimeout(3.0)
+            self.seq_num = 1
             return True
         except Exception as e:
-            logger.error(f"Failed to create UDP socket: {e}")
+            logger.error(f"Fehler beim Erstellen des Sockets: {e}")
             self.sock = None
             return False
 
     def close(self):
-        """Closes the UDP socket."""
+        """Schließt die Verbindung."""
+        self.running = False
         if self.sock:
             try:
                 self.sock.close()
             except Exception:
                 pass
             self.sock = None
-        logger.info("UDP Socket closed.")
+        logger.info("Socket geschlossen.")
 
-    def _get_header(self):
+    def _get_header(self, pkt_type):
         """
-        Constructs the 79-byte binary header required by the protocol.
-
-        Structure:
-        0-3:   EF AA 55 AA (Magic)
-        4-7:   00 00 00 00
-        8-11:  01 00 00 00 (Packet Type = 1, Little Endian)
-        12-78: 00 ... (Padding)
+        Erstellt den 4-Byte Header.
+        Struct Format: >BBH (Big Endian: U8, U8, U16)
         """
-        magic = b'\xEF\xAA\x55\xAA'
-        zeros = b'\x00\x00\x00\x00'
-        
-        # CORRECTED: Little Endian for Command Type 1 (01 00 00 00)
-        # Based on TCPDump analysis showing 01 00 00 00 at offset 0x24
-        pkt_type = b'\x01\x00\x00\x00' 
-        
-        padding = b'\x00' * (79 - 12) # 79 total size - 12 bytes used
+        magic = 0xD1
+        return struct.pack('>BBH', magic, pkt_type, self.seq_num)
 
-        return magic + zeros + pkt_type + padding
-
-    def send_command(self, cmd_dict):
-        """
-        Wraps the JSON command in the header and sends via UDP.
-        Waits for and parses the JSON response.
-
-        Args:
-            cmd_dict (dict): The command to send.
-
-        Returns:
-            dict: The JSON response parsed as a dictionary, or None if failure.
-        """
+    def send_packet(self, payload, pkt_type=0x00, wait_for_response=True):
+        """Sendet ein Paket mit dem korrekten Header."""
         if not self.sock:
-            # Attempt auto-reconnect/init
-            if not self.connect():
-                logger.error("Cannot send command: Socket not initialized.")
-                return None
-
-        # Inject Token if not present
-        if "token" not in cmd_dict:
-            cmd_dict["token"] = self.token
+            logger.error("Kein Socket verbunden.")
+            return None
 
         try:
-            # 1. Prepare Payload
-            # CRITICAL FIX: separators=(',', ':') removes whitespace.
-            # Many embedded cameras fail to parse JSON if it contains spaces.
-            json_str = json.dumps(cmd_dict, separators=(',', ':'))
-            json_bytes = json_str.encode('utf-8')
+            header = self._get_header(pkt_type)
+            packet = header + payload
+            
+            # Log nur für Command-Pakete, um Spam bei Video zu vermeiden
+            if pkt_type == 0x00:
+                logger.debug(f"Sende CMD (Seq {self.seq_num}): {packet.hex()}")
 
-            header = self._get_header()
-            packet = header + json_bytes
-
-            # 2. Send
-            # logger.debug(f"Sending (CmdId: {cmd_dict.get('cmdId')}): {json_str}")
             self.sock.sendto(packet, (self.ip, self.port))
+            self.seq_num += 1
 
-            # 3. Receive
+            if not wait_for_response:
+                return True
+
             try:
-                data, addr = self.sock.recvfrom(4096)
-            except socket.timeout:
-                # Some commands (like Heartbeat) might not always get a response or it might be lost
-                if cmd_dict.get('cmdId') == 525:
-                    logger.debug("Heartbeat sent (no response or timed out).")
+                data, _ = self.sock.recvfrom(2048)
+                # Validierung: Beginnt es mit 0xD1?
+                if len(data) >= 4 and data[0] == 0xD1:
+                    return data
                 else:
-                    logger.warning(f"Timeout waiting for response to CmdId {cmd_dict.get('cmdId')}")
-                return None
-
-            # 4. Parse Response
-            # The response likely has the same 79-byte header. We skip it.
-            if len(data) > 79:
-                response_payload = data[79:]
-                response_str = response_payload.decode('utf-8', errors='ignore').strip()
-                # Remove any null terminators if present
-                response_str = response_str.rstrip('\x00')
-
-                if not response_str:
-                    return None
-                
-                # Robust parsing: Find the last '}' to handle any trailing garbage bytes
-                try:
-                    end_idx = response_str.rindex('}') + 1
-                    response_str = response_str[:end_idx]
-                    return json.loads(response_str)
-                except (ValueError, IndexError):
-                    logger.warning(f"Failed to parse JSON response: {response_str}")
-                    return None
-            else:
-                logger.warning(f"Received short packet ({len(data)} bytes). Expected > 79.")
+                    logger.warning(f"Unbekannte Antwort: {data.hex()}")
+                    return data
+            except socket.timeout:
+                logger.warning(f"Timeout beim Warten auf Antwort (Seq {self.seq_num-1})")
                 return None
 
         except Exception as e:
-            logger.error(f"Error during send_command: {e}")
+            logger.error(f"Fehler beim Senden: {e}")
             return None
 
     def login(self):
         """
-        Performs the login handshake (cmdId: 0).
+        Führt den Artemis-Handshake durch.
+        Sendet 'ARTEMIS' + Null-Bytes.
         """
-        current_ts = int(time.time())
-        login_cmd = {
-            "cmdId": 0,
-            "usrName": "admin",
-            "password": "admin",
-            "needVideo": 0,
-            "needAudio": 0,
-            "utcTime": current_ts,
-            "supportHeartBeat": True
-        }
-
-        logger.info("Sending Login Command...")
+        logger.info("Sende Login-Handshake (ARTEMIS)...")
         
-        # Retry logic for Login as UDP packets can be lost
-        for attempt in range(3):
-            response = self.send_command(login_cmd)
-            if response:
-                logger.info(f"Login Response: {response}")
-                # Check for success (usually result: 0)
-                if response.get("result", -1) == 0:
-                    # Extract token if available
-                    if "token" in response:
-                        self.token = response["token"]
-                        logger.info(f"Token updated: {self.token}")
-                    return True
-            else:
-                time.sleep(1) # Wait before retry
-
-        logger.error("Login failed or invalid response.")
+        # Payload aus deinen Logs rekonstruiert:
+        # String 'ARTEMIS' gefolgt von Version/Padding
+        payload = b'ARTEMIS\x00\x00\x00\x00' 
+        
+        # Type 0x00 für Commands
+        response = self.send_packet(payload, pkt_type=0x00)
+        
+        if response:
+            logger.info(f"Login Antwort erhalten: {response.hex()}")
+            # Start Keep-Alive im Hintergrund, da Verbindung sonst abbricht
+            self.start_heartbeat()
+            return True
+        
+        logger.error("Keine Antwort auf Login.")
         return False
 
-    def send_heartbeat(self):
-        """
-        Sends the Heartbeat command (cmdId: 525).
-        Should be called regularly to keep connection alive.
-        """
-        cmd = {"cmdId": 525}
-        # logger.debug("Sending Heartbeat...")
-        self.send_command(cmd)
+    def start_heartbeat(self):
+        """Sendet regelmäßig Pakete, damit die Kamera nicht einschläft."""
+        self.running = True
+        self.keep_alive_thread = threading.Thread(target=self._heartbeat_loop)
+        self.keep_alive_thread.daemon = True
+        self.keep_alive_thread.start()
 
-    def get_device_info(self):
+    def _heartbeat_loop(self):
         """
-        Sends cmdId: 512 to get status (battery, sd card, etc).
-        Returns the dictionary response.
+        Simuliert die ACKs der App.
+        Die App sendet oft Type 0x01 Pakete als Heartbeat/ACK.
         """
-        cmd = {"cmdId": 512}
-        logger.info("Requesting Device Info...")
-        return self.send_command(cmd)
+        logger.info("Starte Heartbeat-Loop...")
+        while self.running:
+            try:
+                # Sende ein leeres Datenpaket oder einen Dummy-Payload
+                # Type 0x01 (Data) wird oft als Keep-Alive akzeptiert
+                dummy_payload = b'\x00\x00'
+                self.send_packet(dummy_payload, pkt_type=0x01, wait_for_response=False)
+                time.sleep(2) # Alle 2 Sekunden
+            except Exception as e:
+                logger.error(f"Heartbeat Fehler: {e}")
+                break
 
     def start_stream(self):
         """
-        Sends cmdId: 258 to Start Live View / Initialize Session.
+        Versuch, den Stream zu starten. 
+        (Befehl geraten basierend auf ähnlichen Kameras, da spezifischer Dump fehlt)
         """
-        cmd = {"cmdId": 258}
-        logger.info("Starting Live Stream Session...")
-        return self.send_command(cmd)
+        logger.info("Versuche Stream-Start...")
+        # Oft ist es ein Command (Type 0) mit Code 1 oder 2
+        # Wir probieren einen generischen Start-Payload
+        payload = b'\x01\x00\x00\x00' 
+        self.send_packet(payload, pkt_type=0x00, wait_for_response=False)
 
-    def stop_stream(self):
-        """
-        Sends cmdId: 259 to Stop Live View.
-        """
-        cmd = {"cmdId": 259}
-        logger.info("Stopping Live Stream Session...")
-        return self.send_command(cmd)
+    def get_device_info(self):
+        logger.info("Get Device Info (Noch nicht implementiert für Artemis)")
+        # Platzhalter
+        pass
+
+# --- Hauptprogramm zum Testen ---
+if __name__ == "__main__":
+    cam = CameraClient()
+    if cam.connect():
+        if cam.login():
+            logger.info("Login erfolgreich! Warte auf Daten...")
+            
+            # Test: Versuche Stream zu starten
+            cam.start_stream()
+            
+            # Lausche kurz auf eingehende Pakete (z.B. Video-Stream)
+            try:
+                for _ in range(10):
+                    try:
+                        data, addr = cam.sock.recvfrom(2048)
+                        logger.info(f"RX Paket ({len(data)} bytes) Typ: {hex(data[1])} Seq: {data[2]:02x}{data[3]:02x}")
+                    except socket.timeout:
+                        pass
+            except KeyboardInterrupt:
+                pass
+            
+        cam.close()
