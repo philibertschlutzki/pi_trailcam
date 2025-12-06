@@ -9,7 +9,7 @@
 BLE_SERVICE_UUID = "00008800-0000-1000-8000-00805f9b34fb"
 
 # The Characteristic UUID used to send the wakeup command.
-BLE_CHAR_UUID = "00008801-0000-1000-8000-00805f9b34fb"
+BLE_CHAR_UUID = "00000002-0000-1000-8000-00805f9b34fb"
 
 # The 8-byte "Magic Packet" payload.
 BLE_PAYLOAD = bytes.fromhex("0100000000000000")
