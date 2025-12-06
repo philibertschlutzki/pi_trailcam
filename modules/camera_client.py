@@ -51,19 +51,14 @@ class CameraClient:
         Structure:
         0-3:   EF AA 55 AA (Magic)
         4-7:   00 00 00 00
-        8-11:  00 00 00 01 (Packet Type?)
+        8-11:  00 00 00 01 (Packet Type)
         12-78: 00 ... (Padding)
         """
-        # < = Little Endian, I = Unsigned Int (4 bytes)
-        # However, many proprietary protocols use Big Endian (>) for networks.
-        # Given "0xEF 0xAA 0x55 0xAA" and standard hex representation usually implies byte order in documentation.
-        # Let's assume standard Network Byte Order (Big Endian) unless typically specified otherwise,
-        # BUT RE findings often list bytes as seen in hex dump (order preserved).
-        # We will build it byte by byte or using struct.
-
         magic = b'\xEF\xAA\x55\xAA'
         zeros = b'\x00\x00\x00\x00'
-        pkt_type = b'\x00\x00\x00\x01'
+        # Basierend auf TCPDump (00 00 00 01)
+        pkt_type = b'\x00\x00\x00\x01' 
+        
         padding = b'\x00' * (79 - 12) # 79 total size - 12 bytes used
 
         return magic + zeros + pkt_type + padding
@@ -80,8 +75,10 @@ class CameraClient:
             dict: The JSON response parsed as a dictionary, or None if failure.
         """
         if not self.sock:
-            logger.error("Cannot send command: Socket not initialized.")
-            return None
+            # Versuch einer automatischen Wiederverbindung/Initialisierung
+            if not self.connect():
+                logger.error("Cannot send command: Socket not initialized.")
+                return None
 
         # Inject Token if not present
         if "token" not in cmd_dict:
@@ -89,7 +86,9 @@ class CameraClient:
 
         try:
             # 1. Prepare Payload
-            json_str = json.dumps(cmd_dict)
+            # WICHTIG: separators=(',', ':') entfernt Leerzeichen. 
+            # Viele Embedded-Kameras parsen JSON nicht korrekt, wenn Leerzeichen enthalten sind.
+            json_str = json.dumps(cmd_dict, separators=(',', ':'))
             json_bytes = json_str.encode('utf-8')
 
             header = self._get_header()
@@ -118,12 +117,17 @@ class CameraClient:
                 # Remove any null terminators if present
                 response_str = response_str.rstrip('\x00')
 
-                # logger.debug(f"Received raw: {response_str}")
-
                 if not response_str:
                     return None
-
-                return json.loads(response_str)
+                
+                # Manchmal hängt noch Müll dran, wir suchen das letzte '}'
+                try:
+                    end_idx = response_str.rindex('}') + 1
+                    response_str = response_str[:end_idx]
+                    return json.loads(response_str)
+                except (ValueError, IndexError):
+                    logger.warning(f"Failed to parse JSON response: {response_str}")
+                    return None
             else:
                 logger.warning(f"Received short packet ({len(data)} bytes). Expected > 79.")
                 return None
@@ -148,7 +152,12 @@ class CameraClient:
         }
 
         logger.info("Sending Login Command...")
-        response = self.send_command(login_cmd)
+        # Mehrere Versuche beim Login, da UDP Pakete verloren gehen können
+        for _ in range(3):
+            response = self.send_command(login_cmd)
+            if response:
+                break
+            time.sleep(1)
 
         if response:
             logger.info(f"Login Response: {response}")
@@ -169,8 +178,6 @@ class CameraClient:
         Should be called regularly to keep connection alive.
         """
         cmd = {"cmdId": 525}
-        # logger.debug("Sending Heartbeat...")
-        # Heartbeats often don't return meaningful data, so we might ignore the return
         self.send_command(cmd)
 
     def get_device_info(self):
