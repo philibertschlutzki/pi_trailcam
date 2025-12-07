@@ -30,16 +30,29 @@ class TokenListener:
         - Concatenates multiple notifications
         - Detects complete token based on length field
         - Sets event when complete
+        - Logs detailed information for debugging
         """
-        self.logger.debug(f"Received notification from {sender}: {data.hex()} (len={len(data)})")
+        self.logger.info(f"[NOTIFICATION] Received {len(data)} bytes from {sender}")
+        self.logger.debug(f"  Hex: {data.hex()}")
         
         # Append to buffer
         self.captured_data += data
         
-        # Try to parse what we have so far
+        total_bytes = len(self.captured_data)
+        self.logger.debug(f"  Total accumulated: {total_bytes} bytes")
+        
+        # Check if token is complete
         if self._is_token_complete():
-            self.logger.debug("Token assembly complete, signaling event")
+            expected_total = 8 + struct.unpack("<I", self.captured_data[0:4])[0]
+            self.logger.info(f"[NOTIFICATION] Token is complete! ({total_bytes} bytes total)")
             self.event.set()
+        else:
+            # Log how many more bytes we need
+            if total_bytes >= 4:
+                token_len = struct.unpack("<I", self.captured_data[0:4])[0]
+                expected_total = 8 + token_len
+                remaining = expected_total - total_bytes
+                self.logger.debug(f"  Waiting for {remaining} more bytes...")
 
     def _is_token_complete(self) -> bool:
         """
@@ -71,10 +84,89 @@ class TokenListener:
         
         return has_complete
 
+    # FIX #18: Split into two methods to prevent race condition
+    async def start_listening(self):
+        """
+        Register notification handler IMMEDIATELY.
+        
+        This must be called BEFORE the camera sends token data.
+        Call this right after BLE wake, before waiting for token.
+        
+        This prevents race condition where:
+        - Old: Register handler → Wait (but camera already sent data)
+        - New: Register handler first (ready to receive) → Then wait
+        
+        Raises:
+            BleakError: If client not connected or subscription fails
+        """
+        if not self.client or not self.client.is_connected:
+            raise BleakError(f"Client is not connected to {self.device_mac}")
+        
+        self.logger.info(f"Subscribing to {self.NOTIFICATION_CHAR_UUID}...")
+        
+        try:
+            await self.client.start_notify(
+                self.NOTIFICATION_CHAR_UUID,
+                self._notification_handler
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to start notify on {self.NOTIFICATION_CHAR_UUID}: {e}")
+            raise BleakError(f"Could not subscribe to notification characteristic: {e}")
+        
+        self.logger.info("[HANDLER] Notification handler registered and ready to receive.")
+
+    async def wait_for_token(self, timeout=15) -> dict:
+        """
+        Wait for token notification to arrive.
+        
+        This must be called AFTER start_listening().
+        
+        Args:
+            timeout: Maximum time to wait in seconds (default 15s).
+                     Increased from 10s because camera needs time to power up
+                     and send token after magic packet.
+        
+        Returns:
+            {"token": "...", "sequence": b'...'}
+        
+        Raises:
+            asyncio.TimeoutError: If no complete token within timeout
+        """
+        self.logger.info("Waiting for token notification from camera...")
+        
+        try:
+            # Wait for handler to receive complete token
+            await asyncio.wait_for(self.event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            bytes_received = len(self.captured_data)
+            self.logger.error(
+                f"Token extraction timeout. "
+                f"Received {bytes_received} bytes so far (expected at least 53 bytes)."
+            )
+            # Try to cleanup subscription
+            try:
+                if self.client and self.client.is_connected:
+                    await self.client.stop_notify(self.NOTIFICATION_CHAR_UUID)
+            except Exception as e:
+                self.logger.warning(f"Failed to stop notify after timeout: {e}")
+            raise
+        
+        # Cleanup subscription on success
+        try:
+            if self.client and self.client.is_connected:
+                await self.client.stop_notify(self.NOTIFICATION_CHAR_UUID)
+        except Exception as e:
+            self.logger.warning(f"Failed to stop notify after success: {e}")
+        
+        return self._parse_payload(self.captured_data)
+
     async def listen(self, timeout=10) -> dict:
         """
-        Listen for BLE notification containing auth token.
-
+        Legacy method: Listen for BLE notification containing auth token.
+        
+        This method combines start_listening() and wait_for_token().
+        Use start_listening() + wait_for_token() instead for better control.
+        
         Returns:
             {"token": "I3mbwVIx...", "sequence": b'\x2b\x00\x00\x00'}
 
@@ -84,15 +176,19 @@ class TokenListener:
         """
         if self.client and self.client.is_connected:
             self.logger.info(f"Using existing connection to {self.device_mac}...")
-            return await self._listen_with_client(self.client, timeout)
+            await self.start_listening()
+            return await self.wait_for_token(timeout=timeout)
         else:
             self.logger.info(f"Connecting to {self.device_mac} to listen for token...")
             async with BleakClient(self.device_mac, timeout=20.0) as client:
-                return await self._listen_with_client(client, timeout)
+                self.client = client
+                await self.start_listening()
+                return await self.wait_for_token(timeout=timeout)
 
     async def _listen_with_client(self, client, timeout):
         """
         Internal method to listen using a specific client instance.
+        (Kept for backward compatibility, but not used in new code)
         """
         if not client.is_connected:
             raise BleakError(f"Client is not connected to {self.device_mac}")
