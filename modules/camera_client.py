@@ -8,6 +8,18 @@ import config
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# === ARTEMIS Login Sequence Variants ===
+# These represent the mystery bytes at position [12:16] in the ARTEMIS payload
+# From tcpdump analysis of successful authentication
+MYSTERY_VARIANTS = {
+    'MYSTERY_09_01': bytes([0x09, 0x00, 0x01, 0x00]),      # ✓ Aus tcpdump erfolgreich
+    'SMARTPHONE_DUMP': bytes([0x2b, 0x00, 0x2d, 0x00]),   # Aus Smartphone-Dump
+    'ORIGINAL': bytes([0x02, 0x00, 0x01, 0x00]),          # Original-Hypothese
+    'MYSTERY_2B_ONLY': bytes([0x2b, 0x00, 0x00, 0x00]),   # Nur 2b
+    'MYSTERY_2D_ONLY': bytes([0x2d, 0x00, 0x00, 0x00]),   # Nur 2d
+    'SEQUENCE_VARIANT': bytes([0x03, 0x00, 0x04, 0x00]),  # Sequenz-Hypothese
+}
+
 class CameraClient:
     """
     Client for cameras with the Artemis protocol (Wrapped F1... / D1...).
@@ -108,20 +120,23 @@ class CameraClient:
             self.logger.error(f"Send Error: {e}")
             return None
 
-    def _build_login_payload(self) -> bytes:
+    def _build_login_payload(self, variant='MYSTERY_09_01') -> bytes:
         """
         Build ARTEMIS binary login packet.
         
-        Uses extracted token + sequence, NOT hardcoded values!
+        Uses extracted token + sequence variant, NOT hardcoded values!
         
         Structure:
         - Protocol: "ARTEMIS\x00" (8 bytes)
         - Version: 0x02000000 (4 bytes)
-        - Sequence: from BLE (4 bytes)
+        - Sequence: from variant or BLE (4 bytes)
         - Token length: 0x2d000000 (4 bytes, little-endian 45)
         - Token: extracted token + null terminator
+        
+        Args:
+            variant: which mystery bytes variant to use (default: 'MYSTERY_09_01')
         """
-        if not self.session_token or not self.sequence_bytes:
+        if not self.session_token:
             raise ValueError(
                 "Session credentials not set! "
                 "Call set_session_credentials(token, sequence) first."
@@ -133,11 +148,15 @@ class CameraClient:
         # Version 0x02000000
         version = b'\x02\x00\x00\x00'
         
-        # Sequence from BLE
-        sequence = self.sequence_bytes
+        # Sequence from variant (or BLE if variant = 'BLE_DYNAMIC')
+        if variant == 'BLE_DYNAMIC' and self.sequence_bytes:
+            sequence = self.sequence_bytes
+        elif variant in MYSTERY_VARIANTS:
+            sequence = MYSTERY_VARIANTS[variant]
+        else:
+            sequence = MYSTERY_VARIANTS['MYSTERY_09_01']  # Default fallback
         
         # Token length (45 bytes = 0x2d) in little-endian
-        # 0x2d 00 00 00
         token_len_val = len(self.session_token)
         token_len_field = struct.pack('<I', token_len_val)
         
@@ -146,9 +165,12 @@ class CameraClient:
         
         return artemis + version + sequence + token_len_field + token_bytes
 
-    def login(self) -> bool:
+    def login(self, variant='MYSTERY_09_01') -> bool:
         """
-        Authenticate using extracted BLE token.
+        Authenticate using extracted BLE token with selected variant.
+        
+        Args:
+            variant: which mystery bytes variant to use (default: 'MYSTERY_09_01')
         
         Returns:
             True if login succeeds (camera responds)
@@ -158,32 +180,61 @@ class CameraClient:
             self.logger.error("No session token set!")
             return False
             
-        self.logger.info("\n" + "="*60)
-        self.logger.info("PHASE 3: UDP LOGIN")
-        self.logger.info("="*60)
+        self.logger.info("\n" + "="*70)
+        self.logger.info(f"PHASE 3: UDP LOGIN (Variant: {variant})")
+        self.logger.info("="*70)
 
-        # Force sequence number to 5 as per "Real Example" / Spec suggestion that it's constant 0005
-        # Although normally it increments, for the login packet we want to match the observed behavior
+        # Force sequence number to 5 as per "Real Example" / Spec suggestion
         self.seq_num = 5
 
         try:
-            payload = self._build_login_payload()
+            payload = self._build_login_payload(variant=variant)
             self.logger.info(f"Login Payload ({len(payload)} bytes): {payload.hex()}")
+            self.logger.info(f"Mystery Bytes [12:16]: {payload[12:16].hex().upper()}")
             
-            # outer_type=0xD0 based on existing code logic for login?
-            # Original code used 0xD0 for login.
+            # outer_type=0xD0 for login
             response = self.send_packet(payload, inner_type=0x00, outer_type=0xD0)
             
             if response:
-                self.logger.info("✓ LOGIN SUCCESSFUL")
+                self.logger.info(f"✓ LOGIN SUCCESSFUL with variant '{variant}'")
                 self.start_heartbeat()
                 return True
             else:
-                self.logger.error("✗ LOGIN FAILED - No response")
+                self.logger.warning(f"✗ LOGIN FAILED with variant '{variant}'")
                 return False
         except Exception as e:
             self.logger.error(f"✗ LOGIN ERROR: {e}")
             return False
+
+    def login_all_variants(self) -> bool:
+        """
+        Try all mystery variants in order until one succeeds.
+        Tests MYSTERY_09_01 first (from successful tcpdump).
+        """
+        self.logger.info("\n" + "="*70)
+        self.logger.info("STARTE SYSTEMATISCHEN VARIANT-TEST")
+        self.logger.info("="*70 + "\n")
+        
+        # Test MYSTERY_09_01 first (from tcpdump analysis)
+        variant_order = ['MYSTERY_09_01', 'ORIGINAL', 'SMARTPHONE_DUMP', 
+                         'MYSTERY_2B_ONLY', 'MYSTERY_2D_ONLY', 'SEQUENCE_VARIANT',
+                         'BLE_DYNAMIC']
+        
+        for idx, variant in enumerate(variant_order, 1):
+            total = len(variant_order)
+            self.logger.info(f"\n--- Test {idx}/{total}: {variant} ---")
+            self.logger.info(f"    Mystery Bytes: {MYSTERY_VARIANTS.get(variant, self.sequence_bytes).hex().upper()}")
+            
+            if self.login(variant=variant):
+                self.logger.info(f"\n✓✓✓ ERFOLG MIT VARIANTE: {variant} ✓✓✓")
+                return True
+            
+            time.sleep(1)  # Wait before next attempt
+        
+        self.logger.error("\n" + "="*70)
+        self.logger.error("❌ ALLE VARIANTEN FEHLGESCHLAGEN")
+        self.logger.error("="*70)
+        return False
 
     def start_heartbeat(self):
         self.running = True
