@@ -40,13 +40,22 @@ async def main():
 
     CAMERA_IP = config.CAM_IP
 
+    # Client holder for cleanup
+    client = None
+
     try:
         # PHASE 1: BLE WAKE
         logger.info("="*60)
         logger.info("PHASE 1: BLE WAKE")
         logger.info("="*60)
 
-        await BLEManager.wake_camera(mac_address)
+        # We keep the connection open to avoid "Device not found" in Phase 2
+        success, client = await BLEManager.wake_camera(mac_address, keep_connected=True)
+
+        if not success:
+            logger.error("Failed to wake camera or connect via BLE.")
+            return False
+
         # Short sleep to allow camera to process wake
         await asyncio.sleep(2)
 
@@ -56,7 +65,14 @@ async def main():
         logger.info("="*60)
 
         token_listener = TokenListener(mac_address, logger)
-        creds = await token_listener.listen(timeout=10)
+        # We pass the existing client
+        creds = await token_listener.listen(timeout=10, client=client)
+
+        # After token extraction, we can disconnect BLE
+        if client and client.is_connected:
+            logger.info("Disconnecting BLE to free up resources...")
+            await client.disconnect()
+            client = None
 
         logger.info(f"✓ Token: {creds['token'][:20]}...")
         logger.info(f"✓ Sequence from BLE: {creds['sequence'].hex()}")
@@ -103,6 +119,13 @@ async def main():
         import traceback
         traceback.print_exc()
         return False
+    finally:
+        # Ensure BLE client is disconnected if we crash
+        if client and client.is_connected:
+             try:
+                 await client.disconnect()
+             except Exception as cleanup_error:
+                 logger.warning(f"Error during cleanup disconnect: {cleanup_error}")
 
 if __name__ == "__main__":
     try:

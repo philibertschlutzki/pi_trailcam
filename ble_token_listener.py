@@ -21,9 +21,13 @@ class TokenListener:
         self.captured_data = data
         self.event.set()
 
-    async def listen(self, timeout=10) -> dict:
+    async def listen(self, timeout=10, client=None) -> dict:
         """
         Listen for BLE notification containing auth token.
+
+        Args:
+            timeout (int): Timeout in seconds.
+            client (BleakClient): Optional existing connected BleakClient.
 
         Returns:
             {"token": "I3mbwVIx...", "sequence": b'\x2b\x00\x00\x00'}
@@ -32,29 +36,34 @@ class TokenListener:
             asyncio.TimeoutError: If no notification within timeout
             BleakError: If BLE connection fails
         """
+        if client:
+            return await self._listen_with_client(client, timeout)
+
         self.logger.info(f"Connecting to {self.device_mac} to listen for token...")
-
-        async with BleakClient(self.device_mac, timeout=20.0) as client:
-            if not client.is_connected:
+        async with BleakClient(self.device_mac, timeout=20.0) as new_client:
+            if not new_client.is_connected:
                 raise BleakError(f"Failed to connect to {self.device_mac}")
+            return await self._listen_with_client(new_client, timeout)
 
-            self.logger.info(f"Connected. Subscribing to {self.NOTIFICATION_CHAR_UUID}...")
+    async def _listen_with_client(self, client, timeout):
+        """Internal helper to listen using an active client."""
+        self.logger.info(f"Subscribing to {self.NOTIFICATION_CHAR_UUID}...")
 
-            try:
-                await client.start_notify(self.NOTIFICATION_CHAR_UUID, self._notification_handler)
-            except Exception as e:
-                self.logger.error(f"Failed to start notify on {self.NOTIFICATION_CHAR_UUID}: {e}")
-                raise BleakError(f"Could not subscribe to notification characteristic: {e}")
+        try:
+            await client.start_notify(self.NOTIFICATION_CHAR_UUID, self._notification_handler)
+        except Exception as e:
+            self.logger.error(f"Failed to start notify on {self.NOTIFICATION_CHAR_UUID}: {e}")
+            raise BleakError(f"Could not subscribe to notification characteristic: {e}")
 
-            self.logger.info("Waiting for notification...")
-            try:
-                await asyncio.wait_for(self.event.wait(), timeout=timeout)
-            except asyncio.TimeoutError:
-                self.logger.error("Token extraction timeout")
-                await client.stop_notify(self.NOTIFICATION_CHAR_UUID)
-                raise
-
+        self.logger.info("Waiting for notification...")
+        try:
+            await asyncio.wait_for(self.event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            self.logger.error("Token extraction timeout")
             await client.stop_notify(self.NOTIFICATION_CHAR_UUID)
+            raise
+
+        await client.stop_notify(self.NOTIFICATION_CHAR_UUID)
 
         return self._parse_payload(self.captured_data)
 
