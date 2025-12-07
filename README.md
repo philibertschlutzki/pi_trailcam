@@ -10,7 +10,21 @@ Temu Product ID:KL2870699
 This project automates the connection sequence:
 1.  **BLE Wakeup:** Finds and wakes the camera using Bluetooth Low Energy.
 2.  **WiFi Connection:** Automatically connects to the camera's AP.
-3.  **UDP Control:** Logs in, manages session heartbeat, and retrieves status via the proprietary binary/JSON protocol.
+3.  **UDP Control:** Logs in, manages session heartbeat, and retrieves status via the proprietary binary/JSON protocol (Artemis over PPPP).
+
+## PPPP Protocol Layer
+This project implements the **PPPP (P2P Push Proxy Protocol)** wrapper required by the camera.
+The camera does not accept raw Artemis packets; they must be wrapped in PPPP headers.
+
+Structure:
+`[PPPP Outer Header] [PPPP Inner Header] [Artemis Payload]`
+
+- **Magic:** `0xF1`
+- **Outer Type:** `0xD1` (Standard), `0xD3` (Control), `0xD4` (Data)
+- **Inner Type:** Matches Outer Type
+- **Subcommands:** `0x00` (Discovery), `0x03` (Login), `0x01` (Heartbeat/ACK)
+
+See `modules/pppp_wrapper.py` for implementation details.
 
 ## Prerequisites
 
@@ -62,3 +76,7 @@ sudo ./venv/bin/python3 main.py
 ## Troubleshooting
 *   **WiFi Fails:** Ensure the camera is within range and no other device is currently connected to it.
 *   **BLE Fails:** Ensure `bluetoothd` is running (`systemctl status bluetooth`).
+*   **UDP/PPPP Fails:**
+    *   Check `modules/pppp_wrapper.py` logs (set logging to DEBUG).
+    *   Ensure Sequence Numbers are incrementing correctly.
+    *   Verify Magic Byte `0xF1` in responses.
