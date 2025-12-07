@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import struct
+import json
 from bleak import BleakClient, BleakError
 import config
 
@@ -304,7 +305,15 @@ class TokenListener:
     def _parse_payload(self, data: bytes) -> dict:
         """
         Parse token and sequence from complete notification payload.
-        Structure: [4 bytes: token_length] [4 bytes: sequence] [N bytes: token]
+        
+        FIX #20: Support both raw tokens and JSON-wrapped tokens.
+        
+        Structures supported:
+        1. Raw format: [4 bytes: token_length] [4 bytes: sequence] [N bytes: token]
+        2. JSON format: [4 bytes: json_length] [4 bytes: sequence] [JSON string with token field]
+        
+        JSON example:
+        {"ret":0, "ssid":"KJK_...", "token":"I3mbwVIx...", ...}
         
         FIX #19: Support both 45-byte and 72-byte tokens
         """
@@ -326,12 +335,9 @@ class TokenListener:
         # Extract sequence bytes
         sequence = data[4:8]
 
-        # Extract token
-        # The token starts at byte 8.
+        # Extract token data
         if len(data) < 8 + token_len:
-            # This should NOT happen anymore due to _is_token_complete()
             self.logger.error(f"FATAL: Data length {len(data)} < expected {8 + token_len}")
-            # Try to use whatever we have
             token_bytes = data[8:]
             self.logger.warning(f"Using partial token: {len(token_bytes)} bytes instead of {token_len}")
         else:
@@ -340,9 +346,45 @@ class TokenListener:
         # Decode as ASCII and strip nulls
         try:
             token_str = token_bytes.decode('ascii').rstrip('\x00')
+            
+            # FIX #20: Check if it's JSON and parse it
+            if token_str.startswith('{') and '}' in token_str:
+                self.logger.info(f"[PARSE] Detected JSON token format")
+                try:
+                    token_json = json.loads(token_str)
+                    self.logger.debug(f"[PARSE] Parsed JSON: {json.dumps(token_json, indent=2)[:200]}...")
+                    
+                    # Extract the actual token from common field names
+                    actual_token = None
+                    for field_name in ['token', 'data', 'key', 'auth_token', 'access_token']:
+                        if field_name in token_json:
+                            actual_token = token_json[field_name]
+                            self.logger.info(f"[PARSE] Extracted token from field '{field_name}'")
+                            break
+                    
+                    if actual_token:
+                        token_str = str(actual_token)
+                        self.logger.info(f"[PARSE] Using extracted token (length: {len(token_str)})")
+                    else:
+                        self.logger.warning(
+                            f"[PARSE] JSON has no recognized token field. "
+                            f"Available keys: {list(token_json.keys())}. "
+                            f"Using entire JSON as token."
+                        )
+                        # Try to use the entire JSON string as token
+                        token_str = json.dumps(token_json)
+                        
+                except json.JSONDecodeError as e:
+                    self.logger.warning(
+                        f"[PARSE] Failed to parse JSON token: {e}. "
+                        f"Using raw string as token."
+                    )
+            else:
+                self.logger.debug(f"[PARSE] Token is not JSON, using raw format")
+                    
         except UnicodeDecodeError:
             # Fallback if not pure ASCII, though it should be base64
-            self.logger.warning("Token bytes are not valid ASCII, using replace")
+            self.logger.warning("[PARSE] Token bytes are not valid ASCII, using replace")
             token_str = token_bytes.decode('ascii', errors='replace').rstrip('\x00')
 
         self.logger.debug(f"Raw BLE payload: {data.hex()}")
@@ -350,14 +392,13 @@ class TokenListener:
         self.logger.debug(f"Sequence bytes: {sequence.hex()}")
         self.logger.info(f"Success: Token extracted: {token_str[:20]}... (len={len(token_str)})")
 
-        # Validate token length matches expected
-        if len(token_str) not in self.EXPECTED_TOKEN_LENGTHS:
-            self.logger.warning(
-                f"Token length {len(token_str)} not in expected {self.EXPECTED_TOKEN_LENGTHS}. "
-                f"This might indicate an encoding issue."
-            )
-            # Don't fail, camera might use different encoding
-            # Just warn for debugging
+        # Validate token length matches expected (for raw tokens)
+        if not token_str.startswith('{'):
+            if len(token_str) not in self.EXPECTED_TOKEN_LENGTHS:
+                self.logger.warning(
+                    f"Token length {len(token_str)} not in expected {self.EXPECTED_TOKEN_LENGTHS}. "
+                    f"This might indicate an encoding issue."
+                )
         
         # Validate token is not empty
         if not token_str or token_str == '':
