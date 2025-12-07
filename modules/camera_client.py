@@ -153,8 +153,17 @@ class CameraClient:
         # FIX #22: REMOVED - Do not reset here!
         # self.pppp.reset_sequence(1)
         
+        # DEBUG: Log current PPPP Seq before wrapping
+        current_pppp_seq = self.pppp.get_sequence()
+        self.logger.info(f"[DISCOVERY DEBUG] PPPP Seq before wrap: 0x{current_pppp_seq:04X}")
+        
         # Create wrapped discovery packet
         packet = self.pppp.wrap_discovery(self.artemis_seq)
+        
+        # DEBUG: Log PPPP Seq after wrapping
+        new_pppp_seq = self.pppp.get_sequence()
+        self.logger.info(f"[DISCOVERY DEBUG] PPPP Seq after wrap: 0x{new_pppp_seq:04X}")
+        self.logger.info(f"[DISCOVERY] Sent packet: {packet.hex()}")
 
         # Increment Artemis sequence
         self.artemis_seq += 1
@@ -199,6 +208,7 @@ class CameraClient:
         start_time_total = time.time()
 
         # FIX #22: Initialize PPPP sequence once for the entire connection session
+        self.logger.info("[CONNECT] Resetting PPPP sequence to 1")
         self.pppp.reset_sequence(1)
 
         for attempt in range(max_retries):
