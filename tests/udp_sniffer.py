@@ -9,6 +9,9 @@ um ALLE Pakete mitzuschneiden.
 
 WARNUNG: ARP Spoofing nur in eigenen Netzwerken verwenden!
 Das Kamera-WLAN gehört zur Kamera und ist daher kein fremdes Netzwerk.
+
+192.168.43.20 - D0:D7:83:74:50:21 (Smartphone)
+192.168.43.1 - 1c:4e:a2:92:e0:ff (Kamera)
 """
 
 import socket
