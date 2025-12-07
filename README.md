@@ -15,7 +15,10 @@ This project automates the connection sequence:
 *   `nmcli` (NetworkManager) installed and managing interfaces.
 
 ## Installation
-
+0.1 Oneliner
+```bash
+sudo rm -rf pi_trailcam/ && git clone https://github.com/philibertschlutzki/pi_trailcam.git && cd pi_trailcam && python3 -m venv venv && source venv/bin/activate && pip3 install -r requirements.txt && sudo ./venv/bin/python3 main.py
+```
 1.  Clone the repo:
     ```bash
     git clone <repo_url>
