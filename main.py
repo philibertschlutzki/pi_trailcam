@@ -39,6 +39,7 @@ async def main():
         logger.info(f"Using Configured MAC Address: {mac_address}")
 
     CAMERA_IP = config.CAM_IP
+    ble_client = None
 
     try:
         # PHASE 1: BLE WAKE
@@ -46,8 +47,18 @@ async def main():
         logger.info("PHASE 1: BLE WAKE")
         logger.info("="*60)
 
-        await BLEManager.wake_camera(mac_address)
-        # Short sleep to allow camera to process wake
+        # Updated: Keep connection open for token extraction
+        success, ble_client = await BLEManager.wake_camera(mac_address, keep_connected=True)
+
+        if not success:
+            logger.error("Failed to wake camera or establish BLE connection.")
+            return
+
+        if not ble_client or not ble_client.is_connected:
+            logger.error("BLE Client not connected after wake phase.")
+            return
+
+        # Short sleep to allow camera to process wake (while keeping connection)
         await asyncio.sleep(2)
 
         # PHASE 2: TOKEN EXTRACTION
@@ -55,8 +66,14 @@ async def main():
         logger.info("PHASE 2: TOKEN EXTRACTION")
         logger.info("="*60)
 
-        token_listener = TokenListener(mac_address, logger)
+        # Pass the existing client to the listener
+        token_listener = TokenListener(mac_address, logger, client=ble_client)
         creds = await token_listener.listen(timeout=10)
+
+        # We can disconnect BLE now
+        logger.info("Token extracted. Disconnecting BLE...")
+        await ble_client.disconnect()
+        ble_client = None
 
         logger.info(f"✓ Token: {creds['token'][:20]}...")
         logger.info(f"✓ Sequence from BLE: {creds['sequence'].hex()}")
@@ -108,6 +125,14 @@ async def main():
         import traceback
         traceback.print_exc()
         return False
+    finally:
+        # Ensure BLE client is disconnected if something failed
+        if ble_client and ble_client.is_connected:
+            logger.info("Cleaning up BLE connection...")
+            try:
+                await ble_client.disconnect()
+            except Exception as e:
+                logger.warning(f"Error disconnecting BLE: {e}")
 
 if __name__ == "__main__":
     try:
