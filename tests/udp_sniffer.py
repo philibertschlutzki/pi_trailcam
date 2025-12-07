@@ -414,7 +414,7 @@ class WiFiConnector:
         return None
     
     def scan_network(self, interface='wlan0'):
-        """Scannt Netzwerk nach aktiven Hosts"""
+        """Scannt Netzwerk nach aktiven Hosts (mit begrenzten parallelen Prozessen)"""
         logger.info("Scanne Netzwerk nach Geräten...")
         own_ip = self.get_own_ip(interface)
         if not own_ip:
@@ -424,22 +424,39 @@ class WiFiConnector:
         # Ermittle Netzwerk-Präfix
         network_prefix = '.'.join(own_ip.split('.')[:-1])
         
-        # Ping alle IPs im Netzwerk (einfache Methode)
+        # Ping alle IPs im Netzwerk in BATCHES
+        # Um Ressourcen-Überlastung zu vermeiden
         logger.info(f"Sende Pings an {network_prefix}.0/24...")
-        processes = []
-        for i in range(1, 255):
-            ip = f"{network_prefix}.{i}"
-            if ip != own_ip:  # Eigene IP überspringen
-                proc = subprocess.Popen(
-                    ['ping', '-c', '1', '-W', '1', ip],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-                processes.append(proc)
         
-        # Warte auf alle Pings
-        for proc in processes:
-            proc.wait()
+        BATCH_SIZE = 20  # Maximal 20 gleichzeitige Pings
+        
+        for batch_start in range(1, 255, BATCH_SIZE):
+            batch_end = min(batch_start + BATCH_SIZE, 255)
+            processes = []
+            
+            for i in range(batch_start, batch_end):
+                ip = f"{network_prefix}.{i}"
+                if ip != own_ip:  # Eigene IP überspringen
+                    try:
+                        proc = subprocess.Popen(
+                            ['ping', '-c', '1', '-W', '1', ip],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL
+                        )
+                        processes.append(proc)
+                    except Exception as e:
+                        logger.debug(f"Fehler beim Starten von ping für {ip}: {e}")
+            
+            # Warte auf aktuellen Batch
+            for proc in processes:
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            
+            # Progress
+            progress = int((batch_end / 254) * 100)
+            logger.info(f"  Scan Fortschritt: {progress}%")
         
         time.sleep(1)
         
