@@ -66,6 +66,8 @@ class CameraClient:
     Inner Header (4 Bytes): [D1] [Type] [Seq_H] [Seq_L]
     
     IMPROVEMENTS:
+    - FIX #20: UDP socket now binds to source ports from DEVICE_PORTS
+    - Destination always uses CAM_PORT (40611) from config
     - State-Machine mit Validierung
     - Timeout-Context-Manager
     - Response-Validierung mit Seq-Check
@@ -75,7 +77,7 @@ class CameraClient:
 
     def __init__(self, camera_ip=None, logger=None):
         self.ip = camera_ip or config.CAM_IP
-        self.port = config.CAM_PORT
+        self.port = config.CAM_PORT  # This is the DESTINATION port (40611)
         self.sock = None
         self.seq_num = 1
         self.running = False
@@ -87,7 +89,7 @@ class CameraClient:
         self._lock = threading.RLock()  # Für Thread-Sicherheit
         self.last_response_seq = None  # Seq-Tracking
         self.token_timestamp = None  # Token-Alter tracken
-        self.active_port = None  # Welcher Port ist aktiv?
+        self.active_port = None  # Welcher SOURCE port ist aktiv?
         self.login_attempts = 0  # Login-Versuche zählen
         self.max_login_attempts = 3
 
@@ -154,8 +156,25 @@ class CameraClient:
                 self.sock = None
 
     def _create_socket(self, port: int, timeout: Optional[float] = None) -> bool:
-        """Erstellt Socket mit verbesserter Fehlerbehandlung"""
-        self.logger.info(f"[SOCKET] Initializing UDP to {self.ip}:{port}")
+        """
+        FIX #20: Creates UDP socket and binds to SOURCE port from DEVICE_PORTS.
+        Destination is always CAM_PORT (40611).
+        
+        The camera firewall/protocol stack requires clients to bind to specific
+        source ports. These are listed in DEVICE_PORTS. The destination is always
+        port 40611 on the camera (192.168.43.1).
+        
+        Args:
+            port: Local SOURCE port to bind to (from DEVICE_PORTS)
+            timeout: Socket timeout in seconds
+            
+        Returns:
+            True if socket created successfully, False otherwise
+        """
+        self.logger.info(
+            f"[SOCKET] Binding local UDP source port {port} → "
+            f"Destination {self.ip}:{config.CAM_PORT}"
+        )
         
         try:
             # Alten Socket komplett schließen
@@ -164,19 +183,37 @@ class CameraClient:
             # Neuen Socket erstellen
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             
+            # FIX #20: Allow reuse of address to prevent "Address already in use" errors
+            # This is important when retrying different source ports
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            
+            # FIX #20: Bind to the specific LOCAL (source) port
+            # Empty string means bind to all local interfaces (0.0.0.0)
+            self.sock.bind(('', port))
+            
             # Timeout setzen
             timeout_val = timeout if timeout is not None else config.ARTEMIS_LOGIN_TIMEOUT
             self.sock.settimeout(timeout_val)
             
             # State reset
             self.seq_num = 1
-            self.active_port = port
-            self.port = port
+            self.active_port = port  # Track which SOURCE port is active
+            # self.port stays as CAM_PORT (40611) - this is destination
             self.last_response_seq = None
             
-            self.logger.info(f"[SOCKET] Created with {timeout_val}s timeout, port {port}")
+            self.logger.info(
+                f"[SOCKET] Created successfully. "
+                f"Bind to local port {port}, sending to {self.ip}:{self.port}"
+            )
             return True
             
+        except OSError as e:
+            self.logger.error(
+                f"[SOCKET] Bind failed on local port {port}: {e}. "
+                f"This port may already be in use. Try again in a few seconds."
+            )
+            self._socket_force_close()
+            return False
         except Exception as e:
             self.logger.error(f"[SOCKET] Creation failed: {e}")
             self._socket_force_close()
@@ -207,7 +244,7 @@ class CameraClient:
         
         if response:
             self.logger.info(f"[DISCOVERY] ✓ Response received in {duration:.2f}s")
-            self._set_state(CameraState.DISCOVERED, f"on port {self.active_port}")
+            self._set_state(CameraState.DISCOVERED, f"on source port {self.active_port}")
             return True
         else:
             self.logger.warning(f"[DISCOVERY] ✗ Timeout after {duration:.2f}s")
@@ -215,8 +252,10 @@ class CameraClient:
 
     def connect_with_retries(self) -> bool:
         """
-        Attempts to connect using configured ports and exponential backoff.
+        Attempts to connect using configured SOURCE ports and exponential backoff.
         Performs discovery before considering connection 'established'.
+        
+        FIX #20: Iterates through DEVICE_PORTS as SOURCE ports, not destination.
         
         Returns: True if connection + discovery successful
         """
@@ -238,26 +277,28 @@ class CameraClient:
             self.logger.info(f"[CONNECT] Attempt {attempt + 1}/{max_retries} (elapsed: {elapsed:.1f}s)")
 
             for port_idx, port in enumerate(ports):
-                self.logger.info(f"[CONNECT] Trying port {port} ({port_idx+1}/{len(ports)})")
+                self.logger.info(
+                    f"[CONNECT] Trying source port {port} ({port_idx+1}/{len(ports)})"
+                )
                 
                 # Socket mit Discovery-Timeout erstellen
                 if self._create_socket(port, timeout=config.ARTEMIS_DISCOVERY_TIMEOUT):
                     if config.REQUIRE_DEVICE_DISCOVERY:
                         if self.discovery_phase():
-                            self.logger.info(f"[CONNECT] ✓ Device discovered on port {port}")
-                            self._set_state(CameraState.CONNECTED, f"port {port}")
+                            self.logger.info(f"[CONNECT] ✓ Device discovered on source port {port}")
+                            self._set_state(CameraState.CONNECTED, f"source port {port}")
                             
                             # Timeout für Login setzen
                             with TimeoutContext(self.sock, config.ARTEMIS_LOGIN_TIMEOUT, self.logger):
                                 pass  # Timeout wird gesetzt
                             return True
                         else:
-                            self.logger.warning(f"[CONNECT] Discovery failed on port {port}")
+                            self.logger.warning(f"[CONNECT] Discovery failed on source port {port}")
                             self._socket_force_close()
                     else:
                         # Skip discovery if configured
                         self.logger.info(f"[CONNECT] Discovery skipped (config)")
-                        self._set_state(CameraState.CONNECTED, f"port {port} (no discovery)")
+                        self._set_state(CameraState.CONNECTED, f"source port {port} (no discovery)")
                         with TimeoutContext(self.sock, config.ARTEMIS_LOGIN_TIMEOUT, self.logger):
                             pass
                         return True
@@ -355,7 +396,7 @@ class CameraClient:
             )
             self.logger.debug(f"[SEND] Raw: {final_packet.hex()}")
             
-            # Send packet
+            # Send packet to CAM_IP:CAM_PORT
             self.sock.sendto(final_packet, (self.ip, self.port))
             self.seq_num += 1
 
