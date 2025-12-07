@@ -3,6 +3,7 @@ import time
 import logging
 import struct
 import threading
+from enum import Enum, auto
 import config
 
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +21,15 @@ MYSTERY_VARIANTS = {
     'SEQUENCE_VARIANT': bytes([0x03, 0x00, 0x04, 0x00]),  # Sequenz-Hypothese
 }
 
+class CameraState(Enum):
+    DISCONNECTED = auto()
+    DISCOVERING = auto()
+    DISCOVERED = auto()
+    CONNECTING = auto()
+    CONNECTED = auto()
+    AUTHENTICATED = auto()
+    CONNECTION_FAILED = auto()
+
 class CameraClient:
     """
     Client for cameras with the Artemis protocol (Wrapped F1... / D1...).
@@ -29,7 +39,7 @@ class CameraClient:
 
     def __init__(self, camera_ip=None, logger=None):
         self.ip = camera_ip or config.CAM_IP
-        self.port = 40611
+        self.port = config.CAM_PORT
         self.sock = None
         self.seq_num = 1
         self.running = False
@@ -37,6 +47,16 @@ class CameraClient:
         self.logger = logger or logging.getLogger(__name__)
         self.session_token = None
         self.sequence_bytes = None
+        self._state = CameraState.DISCONNECTED
+
+    @property
+    def state(self):
+        return self._state
+
+    def _set_state(self, new_state):
+        if self._state != new_state:
+            self.logger.info(f"State transition: {self._state.name} -> {new_state.name}")
+            self._state = new_state
 
     def set_session_credentials(self, token: str, sequence: bytes):
         """
@@ -53,16 +73,106 @@ class CameraClient:
         self.session_token = token
         self.sequence_bytes = sequence
 
-    def connect(self):
-        self.logger.info(f"Initializing UDP Socket to {self.ip}:{self.port}...")
+    def _create_socket(self, port, timeout=None):
+        self.logger.info(f"Initializing UDP Socket to {self.ip}:{port}...")
         try:
+            if self.sock:
+                self.sock.close()
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.settimeout(5.0)
+            # Default to ARTEMIS_LOGIN_TIMEOUT if not specified, but usually we set specific timeouts per operation
+            timeout_val = timeout if timeout is not None else config.ARTEMIS_LOGIN_TIMEOUT
+            self.sock.settimeout(timeout_val)
             self.seq_num = 1
+            self.port = port
             return True
         except Exception as e:
             self.logger.error(f"Error creating socket: {e}")
             return False
+
+    def discovery_phase(self):
+        """
+        Sends a discovery packet (heartbeat/ping) and waits for a response.
+        Returns True if device responds within timeout.
+        """
+        self._set_state(CameraState.DISCOVERING)
+        self.logger.info("Starting ARTEMIS discovery phase...")
+        start_time = time.time()
+
+        # Use heartbeat packet as discovery ping
+        # Payload: b'\x00\x00', Inner Type: 0x01 (Heartbeat), Outer Type: 0xD1
+        # Use specific discovery timeout
+        if self.sock:
+            self.sock.settimeout(config.ARTEMIS_DISCOVERY_TIMEOUT)
+
+        response = self.send_packet(b'\x00\x00', inner_type=0x01, outer_type=0xD1, wait_for_response=True)
+
+        duration = time.time() - start_time
+        if response:
+            self.logger.info(f"Discovery response received in {duration:.2f}s")
+            self._set_state(CameraState.DISCOVERED)
+            return True
+        else:
+            self.logger.warning(f"Discovery timed out after {duration:.2f}s")
+            return False
+
+    def connect_with_retries(self):
+        """
+        Attempts to connect to the camera using configured ports and exponential backoff.
+        Performs discovery before considering the connection 'established' for login.
+        """
+        self._set_state(CameraState.CONNECTING)
+
+        ports = config.DEVICE_PORTS
+        max_retries = config.MAX_CONNECTION_RETRIES
+        backoff_sequence = config.RETRY_BACKOFF_SEQUENCE
+        start_time_total = time.time()
+
+        for attempt in range(max_retries):
+            # Check total time limit
+            if time.time() - start_time_total > config.MAX_TOTAL_CONNECTION_TIME:
+                self.logger.error("Max total connection time exceeded.")
+                self._set_state(CameraState.CONNECTION_FAILED)
+                return False
+
+            self.logger.info(f"Connection Attempt #{attempt + 1}/{max_retries}")
+
+            for port in ports:
+                self.logger.info(f"Trying port {port}...")
+                # Create socket with discovery timeout initially
+                if self._create_socket(port, timeout=config.ARTEMIS_DISCOVERY_TIMEOUT):
+                    if config.REQUIRE_DEVICE_DISCOVERY:
+                         if self.discovery_phase():
+                             self.logger.info(f"Device discovered on port {port}.")
+                             self._set_state(CameraState.CONNECTED)
+                             # Reset timeout for regular operations
+                             if self.sock:
+                                 self.sock.settimeout(config.ARTEMIS_LOGIN_TIMEOUT)
+                             return True
+                         else:
+                             self.logger.warning(f"Device not responsive on port {port}.")
+                    else:
+                        # Skip discovery if configured (fallback)
+                        self._set_state(CameraState.CONNECTED)
+                        if self.sock:
+                             self.sock.settimeout(config.ARTEMIS_LOGIN_TIMEOUT)
+                        return True
+
+            # If we are here, all ports failed for this attempt
+            if attempt < len(backoff_sequence):
+                wait_time = backoff_sequence[attempt]
+            else:
+                wait_time = backoff_sequence[-1]
+
+            self.logger.warning(f"Attempt #{attempt + 1} failed. Retrying in {wait_time}s...")
+            time.sleep(wait_time)
+
+        self.logger.error("Failed to connect after all retries.")
+        self._set_state(CameraState.CONNECTION_FAILED)
+        return False
+
+    # Deprecated: connect() replaced by connect_with_retries() but kept for compatibility if needed
+    def connect(self):
+         return self.connect_with_retries()
 
     def close(self):
         self.running = False
@@ -72,6 +182,7 @@ class CameraClient:
             except Exception:
                 pass
             self.sock = None
+        self._set_state(CameraState.DISCONNECTED)
         self.logger.info("Socket closed.")
 
     def _get_inner_header(self, pkt_type):
@@ -179,6 +290,10 @@ class CameraClient:
         if not self.session_token:
             self.logger.error("No session token set!")
             return False
+
+        if self._state not in [CameraState.CONNECTED, CameraState.DISCOVERED]:
+             self.logger.error(f"Cannot login in state {self._state.name}. Must be CONNECTED or DISCOVERED.")
+             return False
             
         self.logger.info("\n" + "="*70)
         self.logger.info(f"PHASE 3: UDP LOGIN (Variant: {variant})")
@@ -186,6 +301,10 @@ class CameraClient:
 
         # Force sequence number to 5 as per "Real Example" / Spec suggestion
         self.seq_num = 5
+
+        # Ensure login timeout is set
+        if self.sock:
+             self.sock.settimeout(config.ARTEMIS_LOGIN_TIMEOUT)
 
         try:
             payload = self._build_login_payload(variant=variant)
@@ -197,10 +316,12 @@ class CameraClient:
             
             if response:
                 self.logger.info(f"✓ LOGIN SUCCESSFUL with variant '{variant}'")
+                self._set_state(CameraState.AUTHENTICATED)
                 self.start_heartbeat()
                 return True
             else:
                 self.logger.warning(f"✗ LOGIN FAILED with variant '{variant}'")
+                # Don't change state to FAILED here, as we might try other variants
                 return False
         except Exception as e:
             self.logger.error(f"✗ LOGIN ERROR: {e}")
@@ -234,6 +355,7 @@ class CameraClient:
         self.logger.error("\n" + "="*70)
         self.logger.error("❌ ALL VARIANTS FAILED")
         self.logger.error("="*70)
+        self._set_state(CameraState.CONNECTION_FAILED)
         return False
 
     def start_heartbeat(self):
@@ -243,10 +365,10 @@ class CameraClient:
         self.keep_alive_thread.start()
 
     def _heartbeat_loop(self):
-        self.logger.info("Starting Heartbeat Loop (Every 2s)...")
+        self.logger.info(f"Starting Heartbeat Loop (Every {config.ARTEMIS_KEEPALIVE_INTERVAL}s)...")
         while self.running:
             try:
                 self.send_packet(b'\x00\x00', inner_type=0x01, outer_type=0xD1, wait_for_response=False)
-                time.sleep(2)
+                time.sleep(config.ARTEMIS_KEEPALIVE_INTERVAL)
             except Exception:
                 break
