@@ -1,6 +1,8 @@
 # KJK230 Trail Camera Controller
 
 A complete, ready-to-run Python automation project for the KJK230 Trail Camera on Raspberry Pi.
+<img width="440" height="487" alt="image" src="https://github.com/user-attachments/assets/140db893-2e28-41f1-bbde-465088706415" />
+
 
 ## Overview
 This project automates the connection sequence:
