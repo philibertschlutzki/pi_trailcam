@@ -70,13 +70,13 @@ async def main():
         token_listener = TokenListener(mac_address, logger, client=ble_client)
         creds = await token_listener.listen(timeout=10)
 
-        # We can disconnect BLE now
+        # We can disconnect BLE now with proper error handling
         logger.info("Token extracted. Disconnecting BLE...")
-        await ble_client.disconnect()
+        await _disconnect_ble_safely(ble_client)
         ble_client = None
 
-        logger.info(f"✓ Token: {creds['token'][:20]}...")
-        logger.info(f"✓ Sequence from BLE: {creds['sequence'].hex()}")
+        logger.info(f"Success: Token: {creds['token'][:20]}...")
+        logger.info(f"Success: Sequence from BLE: {creds['sequence'].hex()}")
 
         # PHASE 3: UDP LOGIN
         logger.info("="*60)
@@ -96,16 +96,16 @@ async def main():
         if camera.connect_with_retries():
             # Attempt standard login first
             if camera.login():
-                logger.info("\n" + "🎉 "*20)
+                logger.info("\n" + "SUCCESS "*10)
                 logger.info("AUTHENTICATION SUCCESSFUL!")
-                logger.info("🎉 "*20 + "\n")
+                logger.info("SUCCESS "*10 + "\n")
             # Fallback to variant testing if standard login fails
             elif camera.try_all_variants():
-                logger.info("\n" + "🎉 "*20)
+                logger.info("\n" + "SUCCESS "*10)
                 logger.info("AUTHENTICATION SUCCESSFUL (via fallback)!")
-                logger.info("🎉 "*20 + "\n")
+                logger.info("SUCCESS "*10 + "\n")
             else:
-                logger.error("✗ Login failed with all variants")
+                logger.error("FAILED: Login failed with all variants")
                 camera.close()
                 return False
 
@@ -119,10 +119,10 @@ async def main():
             return False
 
     except asyncio.TimeoutError:
-        logger.error("✗ Token extraction timeout")
+        logger.error("FAILED: Token extraction timeout")
         return False
     except Exception as e:
-        logger.error(f"✗ Error: {e}")
+        logger.error(f"FAILED: Error: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -130,10 +130,42 @@ async def main():
         # Ensure BLE client is disconnected if something failed
         if ble_client and ble_client.is_connected:
             logger.info("Cleaning up BLE connection...")
-            try:
-                await ble_client.disconnect()
-            except Exception as e:
-                logger.warning(f"Error disconnecting BLE: {e}")
+            await _disconnect_ble_safely(ble_client)
+
+
+async def _disconnect_ble_safely(client):
+    """
+    Safely disconnect BLE client with comprehensive error handling.
+    
+    Handles known issues with:
+    - EOFError from dbus-fast on abnormal disconnects (Pi Zero 2W)
+    - TimeoutError if camera killed connection
+    - Incomplete reads when connection is already dead
+    
+    Args:
+        client (BleakClient): The BLE client to disconnect
+    """
+    if not client:
+        return
+    
+    try:
+        if client.is_connected:
+            await client.disconnect()
+            logger.debug("BLE client disconnected successfully")
+    except EOFError:
+        # Known issue: dbus-fast unmarshaller gets EOFError when
+        # camera or BLE stack kills connection abnormally
+        logger.warning("BLE disconnect: Ignored EOFError (camera killed connection)")
+    except asyncio.TimeoutError:
+        # Connection timeout during disconnect
+        logger.warning("BLE disconnect: Timeout - treating as disconnected")
+    except asyncio.IncompleteReadError as e:
+        # Connection broken mid-read
+        logger.warning(f"BLE disconnect: Connection broken during read - {e}")
+    except Exception as e:
+        # Any other exception during disconnect
+        logger.warning(f"BLE disconnect: Unexpected error (treating as safe) - {type(e).__name__}: {e}")
+
 
 if __name__ == "__main__":
     try:
