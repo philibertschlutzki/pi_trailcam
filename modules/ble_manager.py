@@ -37,15 +37,26 @@ class BLEManager:
             return None
 
     @staticmethod
-    async def wake_camera(mac_address, retries=3):
+    async def wake_camera(mac_address, retries=3, keep_connected=False):
         """
         Connects to the camera via BLE and writes the magic packet to turn on WiFi.
         Uses manual connection handling to avoid EOFError on Pi Zero 2W.
+
+        Args:
+            mac_address (str): The MAC address of the camera.
+            retries (int): Number of retries.
+            keep_connected (bool): If True, returns (True, client) on success and does NOT disconnect.
+                                   If False, returns (True, None) on success and disconnects.
+
+        Returns:
+            tuple: (success (bool), client (BleakClient or None))
         """
         logger.info(f"Attempting to wake camera (MAC: {mac_address})...")
 
         for attempt in range(1, retries + 1):
             client = None
+            should_disconnect = True # Default to disconnect unless success + keep_connected
+
             try:
                 logger.debug(f"Connection attempt {attempt}/{retries}")
                 
@@ -72,15 +83,23 @@ class BLEManager:
                 await asyncio.sleep(1.0)
                 
                 logger.info("BLE operation successful.")
-                return True
+
+                if keep_connected:
+                    logger.info("Keeping BLE connection open for next phase.")
+                    should_disconnect = False
+                    return True, client
+
+                return True, None
 
             except BleakError as e:
                 logger.error(f"BLE Error on attempt {attempt}: {e}")
+                should_disconnect = True # Ensure disconnect on error
                 # Kurze Pause vor dem nächsten Versuch
                 await asyncio.sleep(2)
             
             except Exception as e:
                 logger.exception(f"Unexpected error during BLE wakeup: {e}")
+                should_disconnect = True # Ensure disconnect on error
                 # Bei unerwarteten Fehlern brechen wir oft besser ab oder versuchen es erneut
                 # Hier: weiter zum nächsten Versuch nach Pause
                 await asyncio.sleep(2)
@@ -88,7 +107,7 @@ class BLEManager:
             finally:
                 # 4. Sicheres, manuelles Trennen
                 # Dieser Block fängt den EOFError ab, der den Pi zum Absturz bringt
-                if client:
+                if should_disconnect and client:
                     try:
                         # Wir prüfen, ob wir überhaupt disconnecten müssen
                         if client.is_connected:
@@ -100,4 +119,4 @@ class BLEManager:
                         logger.warning(f"Minor error during disconnect cleanup: {e}")
 
         logger.error("All BLE wakeup attempts failed.")
-        return False
+        return False, None
