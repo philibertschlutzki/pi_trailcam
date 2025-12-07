@@ -14,21 +14,16 @@ logger = logging.getLogger("Main")
 from modules.ble_manager import BLEManager
 from modules.wifi_manager import WiFiManager
 from modules.camera_client import CameraClient
+from ble_token_listener import TokenListener
 import config
 
-async def heartbeat_loop(client, interval=2):
-    """
-    Periodically sends heartbeats to the camera.
-    """
-    logger.info("Starting Heartbeat Loop...")
-    try:
-        while True:
-            client.send_heartbeat()
-            await asyncio.sleep(interval)
-    except asyncio.CancelledError:
-        logger.info("Heartbeat Loop Stopped.")
-
 async def main():
+    """
+    Complete workflow with 3 phases.
+    Phase 1: BLE Wake
+    Phase 2: Token Extraction via BLE
+    Phase 3: UDP Login with variant testing
+    """
     logger.info("Starting KJK230 Camera Controller...")
 
     # Step 1: Define MAC Address
@@ -43,72 +38,71 @@ async def main():
     else:
         logger.info(f"Using Configured MAC Address: {mac_address}")
 
-    # Step 2: Wake up Camera
-    logger.info(">>> STEP 2: Waking up Camera via BLE...")
-    if not await BLEManager.wake_camera(mac_address):
-        logger.error("Failed to wake camera. Exiting.")
-        return
+    CAMERA_IP = config.CAM_IP
 
-    # Step 3: Wait for WiFi
-    logger.info(">>> STEP 3: Waiting for Camera WiFi (10s delay)...")
-    await asyncio.sleep(10)
+    try:
+        # PHASE 1: BLE WAKE
+        logger.info("="*60)
+        logger.info("PHASE 1: BLE WAKE")
+        logger.info("="*60)
 
-    wifi = WiFiManager()
-    if not wifi.connect_to_camera_wifi():
-         logger.error("Failed to connect to Camera WiFi. Exiting.")
-         return
+        await BLEManager.wake_camera(mac_address)
+        # Short sleep to allow camera to process wake
+        await asyncio.sleep(2)
 
-    # Step 4: Camera Client
-    logger.info(">>> STEP 4: Initializing UDP Camera Client...")
-    client = CameraClient()
+        # PHASE 2: TOKEN EXTRACTION
+        logger.info("="*60)
+        logger.info("PHASE 2: TOKEN EXTRACTION")
+        logger.info("="*60)
 
-    if client.connect():
-        heartbeat_task = None
-        try:
-            # Step 5: Login
-            logger.info(">>> STEP 5: Logging in...")
-            if client.login():
+        token_listener = TokenListener(mac_address, logger)
+        creds = await token_listener.listen(timeout=10)
 
-                # Start Heartbeat Loop in background
-                heartbeat_task = asyncio.create_task(heartbeat_loop(client))
+        logger.info(f"✓ Token: {creds['token'][:20]}...")
+        logger.info(f"✓ Sequence from BLE: {creds['sequence'].hex()}")
 
-                # Step 6: Get Device Info
-                logger.info(">>> STEP 6: Getting Device Info...")
-                info = client.get_device_info()
-                logger.info(f"Device Info: {info}")
+        # PHASE 3: UDP LOGIN WITH VARIANT TESTING
+        logger.info("="*60)
+        logger.info("PHASE 3: UDP LOGIN WITH VARIANT TESTING")
+        logger.info("="*60)
 
-                # Step 7: Start Stream Session (Example)
-                logger.info(">>> STEP 7: Starting Stream Session...")
-                client.start_stream()
+        logger.info("Waiting for WiFi connection...")
+        wifi = WiFiManager()
+        if not wifi.connect_to_camera_wifi():
+            logger.error("Failed to connect to Camera WiFi. Exiting.")
+            return
 
-                # Keep session alive for a bit (simulate viewing)
-                logger.info("Session active. Waiting 10 seconds...")
+        camera = CameraClient(CAMERA_IP, logger)
+        camera.set_session_credentials(creds['token'], creds['sequence'])
+
+        if camera.connect():
+            # Try all variants starting with MYSTERY_09_01 (from tcpdump)
+            if camera.login_all_variants():
+                logger.info("\n" + "🎉 "*20)
+                logger.info("AUTHENTICATION SUCCESSFUL!")
+                logger.info("🎉 "*20 + "\n")
+
+                # Keep alive for demonstration
+                logger.info("Keeping session alive for 10s...")
                 await asyncio.sleep(10)
-
-                # Stop Stream
-                logger.info(">>> STEP 8: Stopping Stream...")
-                client.stop_stream()
-
+                camera.close()
+                return True
             else:
-                logger.error("Login Failed.")
-        except Exception as e:
-            logger.error(f"Runtime error: {e}")
-        finally:
-            # Cancel heartbeat
-            if heartbeat_task:
-                heartbeat_task.cancel()
-                try:
-                    await heartbeat_task
-                except asyncio.CancelledError:
-                    pass
+                logger.error("✗ Login failed with all variants")
+                camera.close()
+                return False
+        else:
+            logger.error("Failed to connect UDP socket")
+            return False
 
-            # Close
-            logger.info("Closing Connection...")
-            client.close()
-    else:
-        logger.error("Failed to create UDP socket.")
-
-    logger.info("Process Complete.")
+    except asyncio.TimeoutError:
+        logger.error("✗ Token extraction timeout")
+        return False
+    except Exception as e:
+        logger.error(f"✗ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 if __name__ == "__main__":
     try:
