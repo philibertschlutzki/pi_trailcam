@@ -6,6 +6,7 @@ import threading
 from enum import Enum, auto
 from typing import Optional, Tuple
 import config
+from modules.pppp_wrapper import PPPPWrapper
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -66,7 +67,7 @@ class CameraClient:
         self.ip = camera_ip or config.CAM_IP
         self.port = config.CAM_PORT
         self.sock = None
-        self.seq_num = 1
+        # self.seq_num = 1  # DEPRECATED: Handled by PPPPWrapper
         self.running = False
         self.keep_alive_thread = None
         self.logger = logger or logging.getLogger(__name__)
@@ -79,6 +80,10 @@ class CameraClient:
         self.active_port = None
         self.login_attempts = 0
         self.max_login_attempts = 3
+
+        # PPPP Integration
+        self.pppp = PPPPWrapper(logger=self.logger)
+        self.artemis_seq = 0x001B  # Initial Artemis Sequence (will be incremented)
 
     @property
     def state(self):
@@ -131,35 +136,44 @@ class CameraClient:
 
     def discovery_phase(self) -> bool:
         """
-        Sends the OFFICIAL discovery packet (0xF1E00000).
-        
-        Based on tcpdump analysis:
-        17:55:23.927 IP ... > ...40611: UDP, length 4
-        0x0000: f1e0 0000
-        
-        This is a minimal "Knock" packet without ARTEMIS inner header.
+        Sends the PPPP wrapped discovery packet.
         """
         self._set_state(CameraState.DISCOVERING, "starting discovery")
-        self.logger.info("[DISCOVERY] Sending F1 E0 00 00 Ping...")
+        self.logger.info("[DISCOVERY] Sending PPPP Discovery...")
+
+        # Reset PPPP sequence for new session
+        self.pppp.reset_sequence(1)
         
-        # FIX #21: Use exact byte sequence from tcpdump
-        # F1 (Magic) E0 (Type) 00 00 (Length 0)
-        discovery_packet = b'\xF1\xE0\x00\x00'
+        # Create wrapped discovery packet
+        packet = self.pppp.wrap_discovery(self.artemis_seq)
+
+        # Increment Artemis sequence
+        self.artemis_seq += 1
         
         start_time = time.time()
         
         try:
             with TimeoutContext(self.sock, config.ARTEMIS_DISCOVERY_TIMEOUT, self.logger):
-                self.sock.sendto(discovery_packet, (self.ip, self.port))
-                self.logger.debug(f"[DISCOVERY] Sent: {discovery_packet.hex()}")
+                self.sock.sendto(packet, (self.ip, self.port))
+                self.logger.debug(f"[DISCOVERY] Sent: {packet.hex()}")
                 
                 # Expect response
                 data, addr = self.sock.recvfrom(2048)
                 duration = time.time() - start_time
                 
-                self.logger.info(f"[DISCOVERY] ✓ Response: {data.hex()} from {addr} in {duration:.2f}s")
-                self._set_state(CameraState.DISCOVERED, f"on source port {self.active_port}")
-                return True
+                # Unwrap and validate
+                try:
+                    response = self.pppp.unwrap_pppp(data)
+                    if response['subcommand'] == 0x01: # Discovery ACK
+                        self.logger.info(f"[DISCOVERY] ✓ Response: {data.hex()} from {addr} in {duration:.2f}s")
+                        self._set_state(CameraState.DISCOVERED, f"on source port {self.active_port}")
+                        return True
+                    else:
+                        self.logger.warning(f"[DISCOVERY] Unexpected subcommand: 0x{response['subcommand']:02X}")
+                except ValueError as ve:
+                    self.logger.error(f"[DISCOVERY] Invalid response: {ve}")
+
+                return False
                 
         except socket.timeout:
             duration = time.time() - start_time
@@ -207,35 +221,6 @@ class CameraClient:
         self._socket_force_close()
         self._set_state(CameraState.DISCONNECTED, "closed")
 
-    def _get_inner_header(self, pkt_type: int) -> bytes:
-        magic = 0xD1
-        header = struct.pack('>BBH', magic, pkt_type, self.seq_num)
-        return header
-
-    def _get_outer_header(self, inner_packet: bytes, outer_type: int) -> bytes:
-        magic = 0xF1
-        length = len(inner_packet)
-        return struct.pack('>BBH', magic, outer_type, length)
-
-    def send_packet(self, payload: bytes, inner_type: int = 0x00, outer_type: int = 0xD1, 
-                   wait_for_response: bool = True, description: str = "Unknown") -> Optional[bytes]:
-        if not self.sock: return None
-        try:
-            inner = self._get_inner_header(inner_type) + payload
-            outer = self._get_outer_header(inner, outer_type)
-            packet = outer + inner
-            
-            self.logger.debug(f"[SEND] {description} ({len(packet)} bytes)")
-            self.sock.sendto(packet, (self.ip, self.port))
-            self.seq_num += 1
-            
-            if wait_for_response:
-                data, _ = self.sock.recvfrom(2048)
-                return data
-            return True
-        except Exception as e:
-            self.logger.error(f"[SEND] Error: {e}")
-            return None
 
     def _build_login_payload(self, variant: str = 'MYSTERY_09_01') -> bytes:
         if not self.session_token: raise ValueError("No token")
@@ -256,23 +241,33 @@ class CameraClient:
     def login(self, variant: str = 'MYSTERY_09_01') -> bool:
         if not self.session_token: return False
         
-        # FIX #21: Reset sequence to 5 for login packet as seen in tcpdump
-        # D1 00 00 05 -> Seq 5
-        self.seq_num = 5
-        
         try:
-            payload = self._build_login_payload(variant)
+            # Build Artemis payload
+            artemis_payload = self._build_login_payload(variant)
+
+            # Wrap in PPPP
+            packet = self.pppp.wrap_login(artemis_payload)
+
             self.logger.info(f"[LOGIN] Sending Login (Variant: {variant})...")
+            self.sock.sendto(packet, (self.ip, self.port))
             
-            response = self.send_packet(
-                payload, inner_type=0x00, outer_type=0xD0, description="Login"
-            )
+            # Receive response
+            data, _ = self.sock.recvfrom(2048)
+
+            # Unwrap
+            response = self.pppp.unwrap_pppp(data)
             
-            if response and len(response) > 4:
+            if response['subcommand'] == 0x04: # Login ACK
                 self.logger.info("[LOGIN] ✓ SUCCESS")
                 self._set_state(CameraState.AUTHENTICATED, f"variant {variant}")
                 self.start_heartbeat()
                 return True
+            else:
+                self.logger.warning(f"[LOGIN] Failed. Subcommand: 0x{response['subcommand']:02X}")
+                return False
+
+        except socket.timeout:
+            self.logger.error("[LOGIN] Timeout")
             return False
         except Exception as e:
             self.logger.error(f"[LOGIN] Error: {e}")
@@ -289,8 +284,11 @@ class CameraClient:
         while self.running:
             try:
                 if self._state == CameraState.AUTHENTICATED:
-                    self.send_packet(b'\x00\x00', inner_type=0x01, outer_type=0xD1, 
-                                   wait_for_response=False, description="Heartbeat")
+                    packet = self.pppp.wrap_heartbeat(self.artemis_seq)
+                    if self.sock:
+                        self.sock.sendto(packet, (self.ip, self.port))
+                        self.logger.debug(f"[HEARTBEAT] Sent seq {self.artemis_seq}")
                 time.sleep(config.ARTEMIS_KEEPALIVE_INTERVAL)
-            except:
+            except Exception as e:
+                self.logger.error(f"[HEARTBEAT] Error: {e}")
                 break

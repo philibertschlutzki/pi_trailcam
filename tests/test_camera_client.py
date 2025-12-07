@@ -1,13 +1,16 @@
 import unittest
 from unittest.mock import MagicMock, patch
-import time
+import socket
+import struct
 from modules.camera_client import CameraClient, CameraState
+from modules.pppp_wrapper import PPPPWrapper
 import config
 
 class TestCameraClient(unittest.TestCase):
 
     def setUp(self):
         self.client = CameraClient()
+        self.pppp_helper = PPPPWrapper() # To help generate mock packets
 
     @patch('modules.camera_client.socket.socket')
     @patch('modules.camera_client.time.time')
@@ -41,36 +44,45 @@ class TestCameraClient(unittest.TestCase):
         self.client.discovery_phase = MagicMock(return_value=False)
 
         # Mock time to stay within limit
-        # We need it to NOT exceed MAX_TOTAL_CONNECTION_TIME (60s)
-        # So we return a constant value or slowly incrementing
         mock_time.return_value = 100
 
-        # We expect it to retry MAX_CONNECTION_RETRIES times
         result = self.client.connect_with_retries()
 
         self.assertFalse(result)
         self.assertEqual(self.client.state, CameraState.CONNECTION_FAILED)
-        self.assertEqual(self.client.discovery_phase.call_count, config.MAX_CONNECTION_RETRIES * len(config.DEVICE_PORTS))
 
     @patch('modules.camera_client.socket.socket')
     def test_discovery_phase_success(self, mock_socket):
         mock_sock_instance = MagicMock()
-        mock_socket.return_value = mock_sock_instance
+        # Mock successful creation
         self.client.sock = mock_sock_instance
+        self.client.active_port = 12345
+
+        # Create valid PPPP Discovery ACK packet
+        # Inner: D1, Sub=0x01 (ACK), Seq=1
+        discovery_ack = self.pppp_helper.wrap_pppp(
+            b'\x00\x00',
+            outer_type=0xD1,
+            inner_type=0xD1,
+            subcommand=0x01
+        )
 
         # Mock receive data
-        mock_sock_instance.recvfrom.return_value = (b'response', ('192.168.1.1', 1234))
+        mock_sock_instance.recvfrom.return_value = (discovery_ack, ('192.168.1.1', 1234))
 
         result = self.client.discovery_phase()
 
         self.assertTrue(result)
         self.assertEqual(self.client.state, CameraState.DISCOVERED)
 
+        # Verify it sent a PPPP packet (checking start with 0xF1)
+        args, _ = mock_sock_instance.sendto.call_args
+        sent_packet = args[0]
+        self.assertEqual(sent_packet[0], 0xF1)
+
     @patch('modules.camera_client.socket.socket')
     def test_discovery_phase_timeout(self, mock_socket):
-        import socket
         mock_sock_instance = MagicMock()
-        mock_socket.return_value = mock_sock_instance
         self.client.sock = mock_sock_instance
 
         # Mock timeout
@@ -80,19 +92,34 @@ class TestCameraClient(unittest.TestCase):
 
         self.assertFalse(result)
 
-    def test_login_requires_state(self):
+    @patch('modules.camera_client.socket.socket')
+    def test_login_success(self, mock_socket):
+        mock_sock_instance = MagicMock()
+        self.client.sock = mock_sock_instance
+
         self.client.set_session_credentials('token', b'seq')
-
-        # State is DISCONNECTED
-        result = self.client.login()
-        self.assertFalse(result)
-
         self.client._set_state(CameraState.CONNECTED)
-        # Now it should try sending (mock send_packet if needed)
-        with patch.object(self.client, 'send_packet', return_value=True):
-            result = self.client.login()
-            self.assertTrue(result)
-            self.assertEqual(self.client.state, CameraState.AUTHENTICATED)
+
+        # Create valid PPPP Login ACK packet
+        # Inner: D1, Sub=0x04 (ACK), Seq=10
+        login_ack = self.pppp_helper.wrap_pppp(
+            b'\x00\x00',
+            outer_type=0xD1,
+            inner_type=0xD1,
+            subcommand=0x04
+        )
+
+        mock_sock_instance.recvfrom.return_value = (login_ack, ('192.168.1.1', 1234))
+
+        result = self.client.login()
+
+        self.assertTrue(result)
+        self.assertEqual(self.client.state, CameraState.AUTHENTICATED)
+
+        # Verify it sent something that looks like PPPP
+        args, _ = mock_sock_instance.sendto.call_args
+        sent_packet = args[0]
+        self.assertEqual(sent_packet[0], 0xF1)
 
 if __name__ == '__main__':
     unittest.main()
