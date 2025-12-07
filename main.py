@@ -14,7 +14,7 @@ logger = logging.getLogger("Main")
 from modules.ble_manager import BLEManager
 from modules.wifi_manager import WiFiManager
 from modules.camera_client import CameraClient
-from ble_token_listener import TokenListener
+from modules.ble_token_listener import TokenListener
 import config
 
 async def main():
@@ -61,9 +61,9 @@ async def main():
         logger.info(f"✓ Token: {creds['token'][:20]}...")
         logger.info(f"✓ Sequence from BLE: {creds['sequence'].hex()}")
 
-        # PHASE 3: UDP LOGIN WITH VARIANT TESTING
+        # PHASE 3: UDP LOGIN
         logger.info("="*60)
-        logger.info("PHASE 3: UDP LOGIN WITH VARIANT TESTING")
+        logger.info("PHASE 3: UDP LOGIN")
         logger.info("="*60)
 
         logger.info("Waiting for WiFi connection...")
@@ -76,21 +76,26 @@ async def main():
         camera.set_session_credentials(creds['token'], creds['sequence'])
 
         if camera.connect():
-            # Try all variants starting with MYSTERY_09_01 (from tcpdump)
-            if camera.login_all_variants():
+            # Attempt standard login first
+            if camera.login():
                 logger.info("\n" + "🎉 "*20)
                 logger.info("AUTHENTICATION SUCCESSFUL!")
                 logger.info("🎉 "*20 + "\n")
-
-                # Keep alive for demonstration
-                logger.info("Keeping session alive for 10s...")
-                await asyncio.sleep(10)
-                camera.close()
-                return True
+            # Fallback to variant testing if standard login fails
+            elif camera.try_all_variants():
+                logger.info("\n" + "🎉 "*20)
+                logger.info("AUTHENTICATION SUCCESSFUL (via fallback)!")
+                logger.info("🎉 "*20 + "\n")
             else:
                 logger.error("✗ Login failed with all variants")
                 camera.close()
                 return False
+
+            # Keep alive for demonstration
+            logger.info("Keeping session alive for 10s...")
+            await asyncio.sleep(10)
+            camera.close()
+            return True
         else:
             logger.error("Failed to connect UDP socket")
             return False
