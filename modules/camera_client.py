@@ -206,13 +206,13 @@ class CameraClient:
             self.logger.error(f"✗ LOGIN ERROR: {e}")
             return False
 
-    def login_all_variants(self) -> bool:
+    def try_all_variants(self) -> bool:
         """
         Try all mystery variants in order until one succeeds.
         Tests MYSTERY_09_01 first (from successful tcpdump).
         """
         self.logger.info("\n" + "="*70)
-        self.logger.info("STARTE SYSTEMATISCHEN VARIANT-TEST")
+        self.logger.info("STARTING FALLBACK VARIANT TEST")
         self.logger.info("="*70 + "\n")
         
         # Test MYSTERY_09_01 first (from tcpdump analysis)
@@ -222,17 +222,17 @@ class CameraClient:
         
         for idx, variant in enumerate(variant_order, 1):
             total = len(variant_order)
-            self.logger.info(f"\n--- Test {idx}/{total}: {variant} ---")
+            self.logger.info(f"\n--- Fallback attempt {idx}/{total}: {variant} ---")
             self.logger.info(f"    Mystery Bytes: {MYSTERY_VARIANTS.get(variant, self.sequence_bytes).hex().upper()}")
             
             if self.login(variant=variant):
-                self.logger.info(f"\n✓✓✓ ERFOLG MIT VARIANTE: {variant} ✓✓✓")
+                self.logger.info(f"\n✓✓✓ SUCCESS WITH VARIANT: {variant} ✓✓✓")
                 return True
             
             time.sleep(1)  # Wait before next attempt
         
         self.logger.error("\n" + "="*70)
-        self.logger.error("❌ ALLE VARIANTEN FEHLGESCHLAGEN")
+        self.logger.error("❌ ALL VARIANTS FAILED")
         self.logger.error("="*70)
         return False
 
