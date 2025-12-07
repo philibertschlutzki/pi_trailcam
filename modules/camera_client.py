@@ -61,6 +61,10 @@ class CameraClient:
     FIX #21: Discovery Packet Format
     Official App uses a minimal F1 E0 00 00 packet for discovery.
     No inner D1 header, no payload. Just 4 bytes.
+    
+    FIX #22: PPPP Sequence Management
+    PPPP sequence number is per-session, not per-attempt.
+    Resetting on each port retry caused all packets to have Seq=0x0001.
     """
 
     def __init__(self, camera_ip=None, logger=None):
@@ -137,12 +141,17 @@ class CameraClient:
     def discovery_phase(self) -> bool:
         """
         Sends the PPPP wrapped discovery packet.
+        
+        FIX #22: Do NOT reset pppp_seq here!
+        PPPP sequence is per-session, not per-attempt.
+        Resetting caused all discovery packets to have Seq=0x0001
+        which the camera rejects as duplicate/corrupted.
         """
         self._set_state(CameraState.DISCOVERING, "starting discovery")
         self.logger.info("[DISCOVERY] Sending PPPP Discovery...")
 
-        # Reset PPPP sequence for new session
-        self.pppp.reset_sequence(1)
+        # FIX #22: REMOVED - Do not reset here!
+        # self.pppp.reset_sequence(1)
         
         # Create wrapped discovery packet
         packet = self.pppp.wrap_discovery(self.artemis_seq)
@@ -188,6 +197,9 @@ class CameraClient:
         ports = config.DEVICE_PORTS
         max_retries = config.MAX_CONNECTION_RETRIES
         start_time_total = time.time()
+
+        # FIX #22: Initialize PPPP sequence once for the entire connection session
+        self.pppp.reset_sequence(1)
 
         for attempt in range(max_retries):
             elapsed = time.time() - start_time_total
