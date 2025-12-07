@@ -65,6 +65,9 @@ class CameraClient:
     FIX #22: PPPP Sequence Management
     PPPP sequence number is per-session, not per-attempt.
     Resetting on each port retry caused all packets to have Seq=0x0001.
+    
+    FIX #23: Artemis Sequence from BLE
+    Use BLE-provided sequence bytes for Discovery/Login instead of hardcoded 0x001B.
     """
 
     def __init__(self, camera_ip=None, logger=None):
@@ -87,7 +90,7 @@ class CameraClient:
 
         # PPPP Integration
         self.pppp = PPPPWrapper(logger=self.logger)
-        self.artemis_seq = 0x001B  # Initial Artemis Sequence (will be incremented)
+        self.artemis_seq = 0x001B  # Fallback if BLE sequence not available
 
     @property
     def state(self):
@@ -101,14 +104,33 @@ class CameraClient:
                 self._state = new_state
 
     def set_session_credentials(self, token: str, sequence: bytes, use_ble_dynamic: bool = True):
+        """
+        Set session credentials from BLE.
+        
+        FIX #23: Parse sequence bytes and set artemis_seq for Discovery/Login.
+        The sequence is typically 4 bytes in little-endian format.
+        """
         with self._lock:
             self.session_token = token
             self.sequence_bytes = sequence if use_ble_dynamic else None
             self.token_timestamp = time.time()
-            self.logger.info(
-                f"[CREDENTIALS] Token={token[:20]}..., "
-                f"Sequence={sequence.hex().upper() if sequence else 'NONE'}"
-            )
+            
+            # FIX #23: Parse sequence bytes and set artemis_seq
+            if sequence and len(sequence) >= 4:
+                # Sequence is 4 bytes, little-endian
+                # e.g., 48 00 00 00 -> 0x00000048 = 72 decimal
+                self.artemis_seq = struct.unpack('<I', sequence[:4])[0]
+                self.logger.info(
+                    f"[CREDENTIALS] Token={token[:20]}..., "
+                    f"Sequence={sequence.hex().upper()}, "
+                    f"Artemis Seq=0x{self.artemis_seq:04X} ({self.artemis_seq})"
+                )
+            else:
+                self.logger.warning(
+                    f"[CREDENTIALS] Token={token[:20]}..., "
+                    f"Sequence={sequence.hex().upper() if sequence else 'NONE'}, "
+                    f"Using fallback Artemis Seq=0x{self.artemis_seq:04X}"
+                )
 
     def _socket_force_close(self):
         if self.sock:
@@ -146,6 +168,8 @@ class CameraClient:
         PPPP sequence is per-session, not per-attempt.
         Resetting caused all discovery packets to have Seq=0x0001
         which the camera rejects as duplicate/corrupted.
+        
+        FIX #23: Use BLE-provided artemis_seq instead of hardcoded value.
         """
         self._set_state(CameraState.DISCOVERING, "starting discovery")
         self.logger.info("[DISCOVERY] Sending PPPP Discovery...")
@@ -156,6 +180,7 @@ class CameraClient:
         # DEBUG: Log current PPPP Seq before wrapping
         current_pppp_seq = self.pppp.get_sequence()
         self.logger.info(f"[DISCOVERY DEBUG] PPPP Seq before wrap: 0x{current_pppp_seq:04X}")
+        self.logger.info(f"[DISCOVERY DEBUG] Artemis Seq to use: 0x{self.artemis_seq:04X}")
         
         # Create wrapped discovery packet
         packet = self.pppp.wrap_discovery(self.artemis_seq)
@@ -165,7 +190,7 @@ class CameraClient:
         self.logger.info(f"[DISCOVERY DEBUG] PPPP Seq after wrap: 0x{new_pppp_seq:04X}")
         self.logger.info(f"[DISCOVERY] Sent packet: {packet.hex()}")
 
-        # Increment Artemis sequence
+        # Increment Artemis sequence for next packet
         self.artemis_seq += 1
         
         start_time = time.time()
