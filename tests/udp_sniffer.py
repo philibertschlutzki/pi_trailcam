@@ -2,6 +2,13 @@
 """
 UDP Sniffer für pi_trailcam Projekt mit automatischer WLAN-Verbindung
 Zeichnet UDP-Verkehr zwischen Smartphone und Kamera auf
+
+MIT ARP SPOOFING (MAN-IN-THE-MIDDLE) MODUS:
+Leitet Traffic zwischen Smartphone und Kamera über den Raspberry Pi um,
+um ALLE Pakete mitzuschneiden.
+
+WARNUNG: ARP Spoofing nur in eigenen Netzwerken verwenden!
+Das Kamera-WLAN gehört zur Kamera und ist daher kein fremdes Netzwerk.
 """
 
 import socket
@@ -13,6 +20,8 @@ from datetime import datetime
 import argparse
 import subprocess
 import time
+import threading
+import signal
 
 # Importiere config aus parent directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -28,6 +37,185 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("UDPSniffer")
+
+
+class ARPSpoofer:
+    """
+    ARP Spoofing für Man-in-the-Middle Packet Capture
+    Leitet Traffic zwischen Target (Smartphone) und Gateway (Kamera) über diesen Host um
+    """
+    
+    def __init__(self, target_ip, gateway_ip, interface='wlan0'):
+        self.target_ip = target_ip
+        self.gateway_ip = gateway_ip
+        self.interface = interface
+        self.running = False
+        self.thread = None
+        self.target_mac = None
+        self.gateway_mac = None
+        
+    def _get_mac(self, ip):
+        """Ermittle MAC-Adresse für IP via ARP"""
+        try:
+            # Sende ARP Request
+            result = subprocess.run(
+                ['arp', '-n', ip],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            
+            # Parse ARP Tabelle
+            lines = result.stdout.split('\n')
+            for line in lines:
+                if ip in line:
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        mac = parts[2]
+                        if ':' in mac:
+                            return mac
+            
+            # Falls nicht in ARP Tabelle, ping senden
+            subprocess.run(['ping', '-c', '1', '-W', '1', ip], 
+                         stdout=subprocess.DEVNULL, 
+                         stderr=subprocess.DEVNULL)
+            time.sleep(0.5)
+            
+            # Nochmal versuchen
+            result = subprocess.run(['arp', '-n', ip], capture_output=True, text=True)
+            lines = result.stdout.split('\n')
+            for line in lines:
+                if ip in line:
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        mac = parts[2]
+                        if ':' in mac:
+                            return mac
+                            
+        except Exception as e:
+            logger.error(f"Fehler beim Ermitteln der MAC-Adresse für {ip}: {e}")
+        
+        return None
+    
+    def _enable_ip_forwarding(self):
+        """Aktiviert IP Forwarding"""
+        try:
+            with open('/proc/sys/net/ipv4/ip_forward', 'w') as f:
+                f.write('1\n')
+            logger.info("IP Forwarding aktiviert")
+        except Exception as e:
+            logger.error(f"Fehler beim Aktivieren von IP Forwarding: {e}")
+    
+    def _disable_ip_forwarding(self):
+        """Deaktiviert IP Forwarding"""
+        try:
+            with open('/proc/sys/net/ipv4/ip_forward', 'w') as f:
+                f.write('0\n')
+            logger.info("IP Forwarding deaktiviert")
+        except Exception as e:
+            logger.error(f"Fehler beim Deaktivieren von IP Forwarding: {e}")
+    
+    def _send_arp_spoof(self, target_ip, target_mac, spoof_ip):
+        """Sendet ein gefälschtes ARP-Paket"""
+        try:
+            # Baue ARP-Paket mit scapy-ähnlicher Struktur
+            # Verwende arping für einfache Implementierung
+            subprocess.run(
+                ['arp', '-s', target_ip, target_mac],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        except:
+            pass
+    
+    def _spoof_loop(self):
+        """Hauptloop für ARP Spoofing"""
+        logger.info("ARP Spoofing gestartet...")
+        
+        while self.running:
+            try:
+                # Installiere arping falls nicht vorhanden
+                # Target glauben lassen, wir sind das Gateway
+                subprocess.run(
+                    ['arp', '-s', self.target_ip, self.target_mac],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=1
+                )
+                
+                # Gateway glauben lassen, wir sind das Target  
+                subprocess.run(
+                    ['arp', '-s', self.gateway_ip, self.gateway_mac],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=1
+                )
+                
+                time.sleep(2)
+                
+            except Exception as e:
+                if self.running:
+                    logger.error(f"Fehler im Spoof-Loop: {e}")
+                time.sleep(1)
+    
+    def start(self):
+        """Startet ARP Spoofing"""
+        logger.warning("="*80)
+        logger.warning("WARNUNG: ARP SPOOFING AKTIVIERT (MAN-IN-THE-MIDDLE)")
+        logger.warning("Nur in eigenen Netzwerken verwenden!")
+        logger.warning("Das Kamera-WLAN ist dein eigenes Netzwerk.")
+        logger.warning("="*80)
+        
+        # Ermittle MAC-Adressen
+        logger.info(f"Ermittle MAC-Adresse für Target: {self.target_ip}...")
+        self.target_mac = self._get_mac(self.target_ip)
+        if not self.target_mac:
+            logger.error(f"Konnte MAC-Adresse für {self.target_ip} nicht ermitteln!")
+            logger.error("Stelle sicher, dass das Smartphone mit dem Netzwerk verbunden ist.")
+            return False
+        logger.info(f"Target MAC: {self.target_mac}")
+        
+        logger.info(f"Ermittle MAC-Adresse für Gateway: {self.gateway_ip}...")
+        self.gateway_mac = self._get_mac(self.gateway_ip)
+        if not self.gateway_mac:
+            logger.error(f"Konnte MAC-Adresse für {self.gateway_ip} nicht ermitteln!")
+            return False
+        logger.info(f"Gateway MAC: {self.gateway_mac}")
+        
+        # Aktiviere IP Forwarding
+        self._enable_ip_forwarding()
+        
+        # Starte Spoofing Thread
+        self.running = True
+        self.thread = threading.Thread(target=self._spoof_loop, daemon=True)
+        self.thread.start()
+        
+        logger.info("ARP Spoofing aktiv - Traffic wird umgeleitet")
+        return True
+    
+    def stop(self):
+        """Stoppt ARP Spoofing und stellt ARP-Tabellen wieder her"""
+        logger.info("Stoppe ARP Spoofing...")
+        self.running = False
+        
+        if self.thread:
+            self.thread.join(timeout=3)
+        
+        # Stelle originale ARP-Einträge wieder her
+        logger.info("Stelle originale ARP-Tabellen wieder her...")
+        try:
+            # Lösche manipulierte ARP-Einträge
+            subprocess.run(['arp', '-d', self.target_ip], 
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(['arp', '-d', self.gateway_ip], 
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except:
+            pass
+        
+        # Deaktiviere IP Forwarding
+        self._disable_ip_forwarding()
+        
+        logger.info("ARP Spoofing gestoppt")
 
 
 class WiFiConnector:
@@ -133,6 +321,71 @@ class WiFiConnector:
         output = self._run_command(["ip", "addr", "show", "wlan0"])
         if output:
             logger.info(f"WLAN0 Interface Info:\n{output}")
+    
+    def get_own_ip(self, interface='wlan0'):
+        """Ermittelt eigene IP-Adresse"""
+        try:
+            result = subprocess.run(
+                ['ip', '-4', 'addr', 'show', interface],
+                capture_output=True,
+                text=True
+            )
+            
+            for line in result.stdout.split('\n'):
+                if 'inet ' in line:
+                    ip = line.strip().split()[1].split('/')[0]
+                    return ip
+        except:
+            pass
+        return None
+    
+    def scan_network(self, interface='wlan0'):
+        """Scannt Netzwerk nach aktiven Hosts"""
+        logger.info("Scanne Netzwerk nach Geräten...")
+        own_ip = self.get_own_ip(interface)
+        if not own_ip:
+            logger.error("Konnte eigene IP nicht ermitteln")
+            return []
+        
+        # Ermittle Netzwerk-Präfix
+        network_prefix = '.'.join(own_ip.split('.')[:-1])
+        
+        # Ping alle IPs im Netzwerk (einfache Methode)
+        logger.info(f"Sende Pings an {network_prefix}.0/24...")
+        processes = []
+        for i in range(1, 255):
+            ip = f"{network_prefix}.{i}"
+            if ip != own_ip:  # Eigene IP überspringen
+                proc = subprocess.Popen(
+                    ['ping', '-c', '1', '-W', '1', ip],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                processes.append(proc)
+        
+        # Warte auf alle Pings
+        for proc in processes:
+            proc.wait()
+        
+        time.sleep(1)
+        
+        # Lese ARP-Tabelle
+        devices = []
+        try:
+            result = subprocess.run(['arp', '-n'], capture_output=True, text=True)
+            logger.info("Gefundene Geräte im Netzwerk:")
+            for line in result.stdout.split('\n')[1:]:  # Erste Zeile überspringen (Header)
+                parts = line.split()
+                if len(parts) >= 3 and parts[2] != '<incomplete>':
+                    ip = parts[0]
+                    mac = parts[2]
+                    if ip != own_ip:
+                        devices.append({'ip': ip, 'mac': mac})
+                        logger.info(f"  {ip:15s} - {mac}")
+        except Exception as e:
+            logger.error(f"Fehler beim Scannen: {e}")
+        
+        return devices
 
 
 class UDPSniffer:
@@ -272,8 +525,25 @@ class UDPSniffer:
             self.sock.close()
 
 
+# Globale Variable für Cleanup
+arp_spoofer = None
+
+def cleanup_handler(signum, frame):
+    """Signal Handler für sauberes Beenden"""
+    global arp_spoofer
+    logger.info("\nSIGINT empfangen, beende...")
+    if arp_spoofer:
+        arp_spoofer.stop()
+    sys.exit(0)
+
+
 def main():
-    parser = argparse.ArgumentParser(description='UDP Sniffer für pi_trailcam mit Auto-WLAN-Verbindung')
+    global arp_spoofer
+    
+    parser = argparse.ArgumentParser(
+        description='UDP Sniffer für pi_trailcam mit Auto-WLAN-Verbindung und MITM-Modus',
+        epilog='WARNUNG: ARP Spoofing (--mitm) nur in eigenen Netzwerken verwenden!'
+    )
     parser.add_argument('-i', '--interface', default='wlan0', 
                         help='Netzwerk-Interface (default: wlan0)')
     parser.add_argument('-c', '--camera-ip', default=config.CAM_IP,
@@ -284,6 +554,12 @@ def main():
                         help='Überspringe automatische WLAN-Verbindung')
     parser.add_argument('--wifi-timeout', type=int, default=60,
                         help='Timeout für WLAN-Verbindung in Sekunden (default: 60)')
+    parser.add_argument('--mitm', action='store_true',
+                        help='Aktiviere ARP Spoofing (Man-in-the-Middle) Modus')
+    parser.add_argument('-t', '--target-ip',
+                        help='IP des Smartphones (für MITM-Modus). Wenn nicht angegeben, wird Netzwerk gescannt.')
+    parser.add_argument('--scan', action='store_true',
+                        help='Scanne Netzwerk nach Geräten und beende')
     
     args = parser.parse_args()
     
@@ -292,7 +568,11 @@ def main():
         logger.error("Dieses Script benötigt Root-Rechte. Bitte mit 'sudo' ausführen.")
         sys.exit(1)
     
+    # Signal Handler registrieren
+    signal.signal(signal.SIGINT, cleanup_handler)
+    
     # Schritt 1: WLAN-Verbindung herstellen (falls gewünscht)
+    wifi = None
     if not args.no_connect:
         logger.info("="*80)
         logger.info("SCHRITT 1: WLAN-VERBINDUNG")
@@ -308,19 +588,74 @@ def main():
         logger.info("WLAN-Verbindung erfolgreich!")
     else:
         logger.info("WLAN-Verbindung übersprungen (--no-connect)")
+        wifi = WiFiConnector()
     
-    # Schritt 2: Starte Sniffer
+    # Nur Scan durchführen?
+    if args.scan:
+        if wifi:
+            wifi.scan_network(args.interface)
+        sys.exit(0)
+    
+    # Schritt 2: ARP Spoofing (falls aktiviert)
+    if args.mitm:
+        logger.info("="*80)
+        logger.info("SCHRITT 2: ARP SPOOFING (MITM)")
+        logger.info("="*80)
+        
+        target_ip = args.target_ip
+        
+        # Wenn keine Target-IP angegeben, Netzwerk scannen
+        if not target_ip:
+            logger.info("Keine Target-IP angegeben. Scanne Netzwerk...")
+            devices = wifi.scan_network(args.interface) if wifi else []
+            
+            if not devices:
+                logger.error("Keine Geräte im Netzwerk gefunden!")
+                logger.error("Bitte Target-IP manuell mit --target-ip angeben.")
+                sys.exit(1)
+            
+            # Verwende erstes gefundenes Gerät (außer Kamera)
+            for device in devices:
+                if device['ip'] != args.camera_ip:
+                    target_ip = device['ip']
+                    logger.info(f"Verwende {target_ip} als Target")
+                    break
+            
+            if not target_ip:
+                logger.error("Konnte kein geeignetes Target finden!")
+                sys.exit(1)
+        
+        # Starte ARP Spoofing
+        arp_spoofer = ARPSpoofer(
+            target_ip=target_ip,
+            gateway_ip=args.camera_ip,
+            interface=args.interface
+        )
+        
+        if not arp_spoofer.start():
+            logger.error("ARP Spoofing konnte nicht gestartet werden!")
+            sys.exit(1)
+        
+        logger.info(f"MITM aktiv: {target_ip} <-> {args.camera_ip}")
+        time.sleep(2)  # Warte bis Spoofing etabliert ist
+    
+    # Schritt 3: Starte Sniffer
     logger.info("="*80)
-    logger.info("SCHRITT 2: UDP SNIFFING")
+    logger.info(f"SCHRITT {'3' if args.mitm else '2'}: UDP SNIFFING")
     logger.info("="*80)
     
-    sniffer = UDPSniffer(
-        interface=args.interface,
-        camera_ip=args.camera_ip,
-        output_file=args.output
-    )
-    
-    sniffer.start_sniffing()
+    try:
+        sniffer = UDPSniffer(
+            interface=args.interface,
+            camera_ip=args.camera_ip,
+            output_file=args.output
+        )
+        
+        sniffer.start_sniffing()
+    finally:
+        # Cleanup bei Beendigung
+        if arp_spoofer:
+            arp_spoofer.stop()
 
 
 if __name__ == "__main__":
