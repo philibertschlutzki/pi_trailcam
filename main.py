@@ -58,17 +58,25 @@ async def main():
             logger.error("BLE Client not connected after wake phase.")
             return
 
-        # Short sleep to allow camera to process wake (while keeping connection)
-        await asyncio.sleep(2)
-
         # PHASE 2: TOKEN EXTRACTION
         logger.info("="*60)
         logger.info("PHASE 2: TOKEN EXTRACTION")
         logger.info("="*60)
 
-        # Pass the existing client to the listener
+        # FIX #18: Register notification handler IMMEDIATELY
+        # (before camera sends data, which happens ~1-5 seconds after magic packet)
+        # This prevents race condition where camera sends token before handler is ready
         token_listener = TokenListener(mac_address, logger, client=ble_client)
-        creds = await token_listener.listen(timeout=10)
+        
+        logger.info("Registering notification handler...")
+        await token_listener.start_listening()
+        logger.info("Notification handler is ready to receive token.")
+
+        # Now wait for camera to send token notification
+        # (camera sends token ~1-5 seconds after magic packet)
+        # Timeout increased to 15s because camera needs time to power up
+        logger.info("Waiting for camera to send token notification...")
+        creds = await token_listener.wait_for_token(timeout=15)
 
         # We can disconnect BLE now with proper error handling
         logger.info("Token extracted. Disconnecting BLE...")
