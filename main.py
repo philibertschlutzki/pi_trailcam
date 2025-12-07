@@ -92,7 +92,8 @@ async def main():
         camera = CameraClient(CAMERA_IP, logger)
         camera.set_session_credentials(creds['token'], creds['sequence'])
 
-        if camera.connect():
+        # Use connect_with_retries which includes discovery
+        if camera.connect_with_retries():
             # Attempt standard login first
             if camera.login():
                 logger.info("\n" + "🎉 "*20)
@@ -114,7 +115,7 @@ async def main():
             camera.close()
             return True
         else:
-            logger.error("Failed to connect UDP socket")
+            logger.error("Failed to connect UDP socket (Discovery/Connection failed)")
             return False
 
     except asyncio.TimeoutError:
