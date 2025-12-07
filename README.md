@@ -4,7 +4,7 @@ A complete, ready-to-run Python automation project for the KJK230 Trail Camera o
 
 <img width="440" height="487" alt="image" src="https://github.com/user-attachments/assets/140db893-2e28-41f1-bbde-465088706415" />
 
-Temu Product ID:KL2870699
+Temu Product ID: KL2870699
 
 ## Overview
 This project automates the connection sequence:
@@ -33,6 +33,11 @@ See `modules/pppp_wrapper.py` for implementation details.
 *   `nmcli` (NetworkManager) installed and managing interfaces.
 
 ## Installation
+
+0.0.1 Oneliner Sniffer
+```bash
+sudo rm -rf pi_trailcam/ && git clone https://github.com/philibertschlutzki/pi_trailcam.git && cd pi_trailcam && python3 -m venv venv && source venv/bin/activate && pip3 install -r requirements.txt && sudo python3 tests/udp_sniffer.py --mitm --target-ip 192.168.43.20 -c 192.168.43.1
+```
 0.1 Oneliner
 ```bash
 sudo rm -rf pi_trailcam/ && git clone https://github.com/philibertschlutzki/pi_trailcam.git && cd pi_trailcam && python3 -m venv venv && source venv/bin/activate && pip3 install -r requirements.txt && sudo ./venv/bin/python3 main.py
