@@ -9,10 +9,13 @@ class TokenListener:
     # This should be verified with ble_characteristic_scanner.py
     NOTIFICATION_CHAR_UUID = "00000003-0000-1000-8000-00805f9b34fb"
     
-    # Known token size from camera protocol (base64 encoded with padding)
-    EXPECTED_TOKEN_LENGTH = 45
-    # Minimum valid token in first packet (at least token_len + 8 bytes header)
-    MIN_VALID_PACKET_SIZE = 12
+    # Known token sizes from camera protocol (base64 encoded with padding)
+    # Camera can send either 45 or 72 byte tokens depending on encoding
+    EXPECTED_TOKEN_LENGTHS = (45, 72)  # Accept both
+    # Minimum valid packet: 8 bytes header + at least 45 bytes token
+    MIN_VALID_PACKET_SIZE = 8 + 45
+    # Maximum valid packet: 8 bytes header + max 72 bytes token
+    MAX_VALID_PACKET_SIZE = 8 + 72
 
     def __init__(self, device_mac: str, logger=None, client=None):
         self.device_mac = device_mac
@@ -43,46 +46,118 @@ class TokenListener:
         
         # Check if token is complete
         if self._is_token_complete():
-            expected_total = 8 + struct.unpack("<I", self.captured_data[0:4])[0]
-            self.logger.info(f"[NOTIFICATION] Token is complete! ({total_bytes} bytes total)")
+            # Get expected length for logging
+            if total_bytes >= 4:
+                token_len = struct.unpack("<I", self.captured_data[0:4])[0]
+                expected_total = 8 + token_len
+            else:
+                expected_total = total_bytes
+            self.logger.info(f"[NOTIFICATION] Token is complete! ({total_bytes} bytes total, expected {expected_total})")
             self.event.set()
         else:
             # Log how many more bytes we need
             if total_bytes >= 4:
-                token_len = struct.unpack("<I", self.captured_data[0:4])[0]
-                expected_total = 8 + token_len
-                remaining = expected_total - total_bytes
-                self.logger.debug(f"  Waiting for {remaining} more bytes...")
+                try:
+                    token_len = struct.unpack("<I", self.captured_data[0:4])[0]
+                    expected_total = 8 + token_len
+                    remaining = expected_total - total_bytes
+                    self.logger.debug(f"  Waiting for {remaining} more bytes... (token_len={token_len})")
+                except Exception as e:
+                    self.logger.debug(f"  Error parsing token_len: {e}")
 
     def _is_token_complete(self) -> bool:
         """
         Check if we have received the complete token.
         
-        Token structure:
+        FIX #19: Handle both fixed-size tokens and variable-length tokens.
+        
+        Token structure (Option 1 - Variable length):
         - Bytes 0-3: token length (little-endian uint32)
         - Bytes 4-7: sequence (4 bytes)
         - Bytes 8+: token data (variable length based on length field)
         
+        Token structure (Option 2 - Fixed size fallback):
+        - If we have 53+ bytes, assume token is complete (45 bytes token + 8 header)
+        - If we have 80+ bytes, definitely complete (72 bytes token + 8 header)
+        
         Returns:
-            True if we have at least (8 + token_len) bytes
+            True if we have received the complete token
         """
-        if len(self.captured_data) < 8:
+        total = len(self.captured_data)
+        
+        # Need at least 8 bytes for header
+        if total < 8:
             return False
         
-        # Parse token length from header
+        # FIX #19: Try to parse token_len, but also have fallback
         try:
             token_len = struct.unpack("<I", self.captured_data[0:4])[0]
-        except struct.error:
-            return False
+            
+            # Safety check: token_len should be reasonable (45-72 bytes)
+            if token_len < 45 or token_len > 100:
+                self.logger.debug(
+                    f"Token length field suspicious: {token_len}. "
+                    f"Falling back to size-based detection (total={total})"
+                )
+                # Fallback to size-based detection
+                return self._is_token_complete_by_size(total)
+            
+            # Normal path: check if we have all data
+            expected_total = 8 + token_len
+            has_complete = total >= expected_total
+            
+            if has_complete:
+                self.logger.debug(
+                    f"Token complete (length-based): {total} >= {expected_total} "
+                    f"(token_len={token_len})"
+                )
+            
+            return has_complete
+            
+        except struct.error as e:
+            self.logger.debug(f"Failed to parse token_len: {e}")
+            # Fallback to size-based detection
+            return self._is_token_complete_by_size(total)
+    
+    def _is_token_complete_by_size(self, total: int) -> bool:
+        """
+        Fallback: Detect token completion by total size.
         
-        # Check if we have all data: 8 bytes header + token_len bytes
-        expected_total = 8 + token_len
-        has_complete = len(self.captured_data) >= expected_total
+        Expected sizes:
+        - 53 bytes: 45-byte token + 8-byte header (minimum)
+        - 80 bytes: 72-byte token + 8-byte header (typical)
         
-        if has_complete:
-            self.logger.debug(f"Token complete: {len(self.captured_data)} >= {expected_total}")
+        Args:
+            total: Total accumulated bytes
+            
+        Returns:
+            True if size suggests token is complete
+        """
+        # If we have 80 bytes or more, token is definitely complete
+        if total >= self.MAX_VALID_PACKET_SIZE:
+            self.logger.debug(
+                f"Token complete (size-based max): {total} >= {self.MAX_VALID_PACKET_SIZE}"
+            )
+            return True
         
-        return has_complete
+        # If we have 53+ bytes and last 3 notifications match (pattern suggests completion)
+        # This is a heuristic: if we got 4x20 bytes from notifications, it's complete
+        if total >= self.MIN_VALID_PACKET_SIZE:
+            # Only return True if we're confident
+            # For now, be conservative and require 80 bytes
+            self.logger.debug(
+                f"Token might be complete (size-based min): {total} >= {self.MIN_VALID_PACKET_SIZE}, "
+                f"but waiting for more data to be sure"
+            )
+            # Actually, let's be more aggressive here:
+            # If we got notifications and size is reasonable, mark complete
+            if total >= 53:  # At least 45-byte token + 8 header
+                self.logger.debug(
+                    f"Token complete (size-based fallback): {total} >= 53"
+                )
+                return True
+        
+        return False
 
     # FIX #18: Split into two methods to prevent race condition
     async def start_listening(self):
@@ -143,6 +218,10 @@ class TokenListener:
                 f"Token extraction timeout. "
                 f"Received {bytes_received} bytes so far (expected at least 53 bytes)."
             )
+            if bytes_received > 0:
+                self.logger.error(
+                    f"Raw data (hex): {self.captured_data.hex()}"
+                )
             # Try to cleanup subscription
             try:
                 if self.client and self.client.is_connected:
@@ -226,6 +305,8 @@ class TokenListener:
         """
         Parse token and sequence from complete notification payload.
         Structure: [4 bytes: token_length] [4 bytes: sequence] [N bytes: token]
+        
+        FIX #19: Support both 45-byte and 72-byte tokens
         """
         if not data:
             raise ValueError("Received empty data payload")
@@ -234,7 +315,13 @@ class TokenListener:
             raise ValueError(f"Payload too short: {len(data)} bytes (expected >= 8)")
 
         # Extract token_length (little-endian)
-        token_len = struct.unpack("<I", data[0:4])[0]
+        try:
+            token_len = struct.unpack("<I", data[0:4])[0]
+        except struct.error as e:
+            self.logger.error(f"Failed to parse token_len: {e}")
+            # Try fallback: assume 72-byte token
+            token_len = 72
+            self.logger.warning(f"Using fallback token_len: {token_len}")
 
         # Extract sequence bytes
         sequence = data[4:8]
@@ -244,9 +331,11 @@ class TokenListener:
         if len(data) < 8 + token_len:
             # This should NOT happen anymore due to _is_token_complete()
             self.logger.error(f"FATAL: Data length {len(data)} < expected {8 + token_len}")
-            raise ValueError(f"Incomplete token data: {len(data)} < {8 + token_len}")
-
-        token_bytes = data[8:8+token_len]
+            # Try to use whatever we have
+            token_bytes = data[8:]
+            self.logger.warning(f"Using partial token: {len(token_bytes)} bytes instead of {token_len}")
+        else:
+            token_bytes = data[8:8+token_len]
 
         # Decode as ASCII and strip nulls
         try:
@@ -262,8 +351,11 @@ class TokenListener:
         self.logger.info(f"Success: Token extracted: {token_str[:20]}... (len={len(token_str)})")
 
         # Validate token length matches expected
-        if len(token_str) != self.EXPECTED_TOKEN_LENGTH:
-            self.logger.warning(f"Token length {len(token_str)} != {self.EXPECTED_TOKEN_LENGTH}")
+        if len(token_str) not in self.EXPECTED_TOKEN_LENGTHS:
+            self.logger.warning(
+                f"Token length {len(token_str)} not in expected {self.EXPECTED_TOKEN_LENGTHS}. "
+                f"This might indicate an encoding issue."
+            )
             # Don't fail, camera might use different encoding
             # Just warn for debugging
         
