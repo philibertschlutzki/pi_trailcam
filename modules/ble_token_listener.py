@@ -312,8 +312,18 @@ class TokenListener:
         1. Raw format: [4 bytes: token_length] [4 bytes: sequence] [N bytes: token]
         2. JSON format: [4 bytes: json_length] [4 bytes: sequence] [JSON string with token field]
         
-        JSON example:
-        {"ret":0, "ssid":"KJK_...", "token":"I3mbwVIx...", ...}
+        JSON Parsing Logic:
+        - Detects JSON format by checking for '{' and '}' characters.
+        - Parses the JSON string to extract the actual token.
+        - Checks multiple candidate fields: `token`, `data`, `key`, `auth_token`, `access_token`.
+        - Prioritizes 'token' field if present (e.g., {"ret":0, "ssid":"...", "token":"..."}).
+        - Fallback: Uses full JSON string if no specific field found.
+
+        Why JSON?
+        Newer firmware versions wrap the token in JSON to include additional metadata
+        (like SSID, return codes) which provides context for the connection.
+
+        See PROTOCOL_ANALYSIS.md for detailed token context.
         
         FIX #19: Support both 45-byte and 72-byte tokens
         """

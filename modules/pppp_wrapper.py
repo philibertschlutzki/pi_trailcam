@@ -7,6 +7,11 @@ TCPDump captures from the TrailCam Go app.
 PPPP is a proprietary protocol by Tutk/CS2 Network used for P2P communication
 with IoT cameras. The Artemis protocol runs as payload inside PPPP packets.
 
+Protocol Phases (from PROTOCOL_ANALYSIS.md):
+    1. Initialization (Wake-up): Uses Type 0xE1 to wake up the camera UDP stack.
+    2. Discovery: Uses Type 0xD1 to verify device presence.
+    3. Login: Uses Type 0xD0 (Outer) to authenticate.
+
 Packet Structure:
     ┌────────────────────────────────────────┐
     │  PPPP Outer Header (4 bytes)          │
@@ -26,6 +31,13 @@ Packet Structure:
     │  Artemis Payload (Variable)            │
     │  - Discovery, Login, Commands, etc.    │
     └────────────────────────────────────────┘
+
+# Packet Types (from PROTOCOL_ANALYSIS.md Section 3.1):
+# 0xD1: Standard Session Data (Discovery, Command)
+# 0xD0: Login Handshake (Specific to Artemis)
+# 0xE1: Initialization / Wake-up
+# 0xD3: Control / Heartbeat
+# 0xD4: Large Data Transfer (Video/Images)
 
 Usage:
     >>> from modules.pppp_wrapper import PPPPWrapper
@@ -62,11 +74,11 @@ class PPPPWrapper:
     """Wrapper for PPPP protocol layer.
     
     This class handles wrapping and unwrapping of Artemis protocol packets
-    in PPPP headers. It maintains the PPPP sequence number and provides
-    convenience methods for common packet types.
+    in PPPP headers. It maintains the PPPP sequence number (transport layer)
+    which is distinct from the Artemis sequence number (application layer).
     
     Attributes:
-        pppp_seq (int): Current PPPP sequence number (increments with each packet)
+        pppp_seq (int): Current PPPP transport sequence number (increments with each packet)
         logger: Logger instance for debugging
     """
     
@@ -171,6 +183,7 @@ class PPPPWrapper:
     def wrap_init(self) -> bytes:
         """Wrap initialization packet.
 
+        Phase 1 of Connection: Initialization.
         Sends a special PPPP packet (Type 0xE1) to wake up the camera's UDP stack.
         Payload is empty.
 
@@ -219,14 +232,17 @@ class PPPPWrapper:
     def wrap_login(self, artemis_payload: bytes) -> bytes:
         """Wrap login packet.
         
-        Login packets contain the full Artemis login structure:
-        - "ARTEMIS\x00" magic
-        - Version (4 bytes)
-        - Mystery/Sequence bytes (8 bytes from BLE)
-        - Token length (4 bytes)
-        - Token string
+        Phase 3 of Connection: Login.
+        Login packets contain the full Artemis login structure.
         
-        Analysis shows Login uses Outer Type 0xD0.
+        Analysis shows Login uses Outer Type 0xD0 (Artemis-specific handshake)
+        instead of the standard 0xD1. This differs from generic PPPP implementations
+        but is critical for the camera to accept the credentials.
+
+        Structure:
+        - Outer Type: 0xD0
+        - Inner Type: 0xD1
+        - Subcommand: 0x03 (Login)
 
         Args:
             artemis_payload: Complete Artemis login payload (built by caller)
