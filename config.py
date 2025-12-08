@@ -64,7 +64,7 @@ MAX_TOTAL_CONNECTION_TIME = 90  # seconds (increased from 60 to allow more retri
 # FIX #25: Port order optimization
 # Observed from official app logs: port 57743 was successful
 # Moved 57743 to first position based on empirical data
-DEVICE_PORTS = [57743, 40611, 59130, 3014, 47304, 59775]
+DEVICE_PORTS = [59130, 3014, 47304, 59775, 57743]
 
 # Connection Validation
 REQUIRE_DEVICE_DISCOVERY = True
