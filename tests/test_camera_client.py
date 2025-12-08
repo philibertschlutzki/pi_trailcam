@@ -20,6 +20,9 @@ class TestCameraClient(unittest.TestCase):
         mock_sock_instance = MagicMock()
         mock_socket.return_value = mock_sock_instance
 
+        # FIX: Mock getsockname to return a valid tuple
+        mock_sock_instance.getsockname.return_value = ('0.0.0.0', 12345)
+
         # Setup mock for discovery_phase to return True immediately
         self.client.discovery_phase = MagicMock(return_value=True)
 
@@ -39,6 +42,9 @@ class TestCameraClient(unittest.TestCase):
         # Mock socket
         mock_sock_instance = MagicMock()
         mock_socket.return_value = mock_sock_instance
+
+        # FIX: Mock getsockname to return a valid tuple
+        mock_sock_instance.getsockname.return_value = ('0.0.0.0', 12345)
 
         # Setup mock for discovery_phase to return False (fail)
         self.client.discovery_phase = MagicMock(return_value=False)
