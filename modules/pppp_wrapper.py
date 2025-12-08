@@ -12,13 +12,13 @@ Packet Structure:
     │  PPPP Outer Header (4 bytes)          │
     ├────────────────────────────────────────┤
     │  Byte 0:    0xF1 (Magic)               │
-    │  Byte 1:    0xD1/0xD3 (Command Type)   │
+    │  Byte 1:    Type (D1, D0, E1, etc.)    │
     │  Bytes 2-3: Length (Big Endian)        │
     └────────────────────────────────────────┘
     ┌────────────────────────────────────────┐
     │  PPPP Inner Header (4 bytes)           │
     ├────────────────────────────────────────┤
-    │  Byte 4:    0xD1/0xD3 (Session Type)   │
+    │  Byte 4:    Session Type (D1, E1, etc.)│
     │  Byte 5:    Subcommand                 │
     │  Bytes 6-7: PPPP Sequence (Big Endian) │
     └────────────────────────────────────────┘
@@ -31,6 +31,9 @@ Usage:
     >>> from modules.pppp_wrapper import PPPPWrapper
     >>> pppp = PPPPWrapper()
     >>> 
+    >>> # Wrap init packet
+    >>> init = pppp.wrap_init()
+    >>>
     >>> # Wrap discovery packet
     >>> discovery = pppp.wrap_discovery(artemis_seq=0x001B)
     >>> print(discovery.hex())
@@ -72,13 +75,16 @@ class PPPPWrapper:
     
     # Outer Command Types
     OUTER_TYPE_STANDARD = 0xD1  # Standard commands
+    OUTER_TYPE_LOGIN = 0xD0     # Login command (Analysis Finding)
     OUTER_TYPE_CONTROL = 0xD3   # Control messages
     OUTER_TYPE_DATA = 0xD4      # Data transfer
+    OUTER_TYPE_INIT = 0xE1      # Initialization (Wakeup)
     
     # Inner Session Types (usually same as outer)
     INNER_TYPE_STANDARD = 0xD1
     INNER_TYPE_CONTROL = 0xD3
     INNER_TYPE_DATA = 0xD4
+    INNER_TYPE_INIT = 0xE1
     
     # Subcommands
     SUBCOMMAND_DISCOVERY = 0x00
@@ -86,6 +92,7 @@ class PPPPWrapper:
     SUBCOMMAND_LOGIN = 0x03
     SUBCOMMAND_LOGIN_ACK = 0x04
     SUBCOMMAND_HEARTBEAT = 0x01
+    SUBCOMMAND_INIT = 0x00
     
     def __init__(self, logger: Optional[logging.Logger] = None):
         """Initialize PPPP wrapper.
@@ -161,6 +168,27 @@ class PPPPWrapper:
         
         return packet
     
+    def wrap_init(self) -> bytes:
+        """Wrap initialization packet.
+
+        Sends a special PPPP packet (Type 0xE1) to wake up the camera's UDP stack.
+        Payload is empty.
+
+        Structure:
+        Outer: F1 E1 00 04
+        Inner: E1 00 [Seq]
+        Payload: None
+
+        Returns:
+            PPPP-wrapped init packet.
+        """
+        return self.wrap_pppp(
+            b'',
+            outer_type=self.OUTER_TYPE_INIT,
+            inner_type=self.INNER_TYPE_INIT,
+            subcommand=self.SUBCOMMAND_INIT
+        )
+
     def wrap_discovery(self, artemis_seq: int) -> bytes:
         """Wrap discovery packet.
         
@@ -198,23 +226,20 @@ class PPPPWrapper:
         - Token length (4 bytes)
         - Token string
         
+        Analysis shows Login uses Outer Type 0xD0.
+
         Args:
             artemis_payload: Complete Artemis login payload (built by caller)
         
         Returns:
             PPPP-wrapped login packet
-        
-        Example:
-            >>> pppp = PPPPWrapper()
-            >>> # Build Artemis login payload first
-            >>> artemis_login = build_artemis_login(token, sequence)
-            >>> packet = pppp.wrap_login(artemis_login)
         """
+        # Note: Analysis shows Login usually uses Outer 0xD0, Inner 0xD1, Sub 0x03
         return self.wrap_pppp(
             artemis_payload,
-            outer_type=self.OUTER_TYPE_STANDARD,
-            inner_type=self.INNER_TYPE_STANDARD,
-            subcommand=self.SUBCOMMAND_LOGIN
+            outer_type=self.OUTER_TYPE_LOGIN,  # 0xD0
+            inner_type=self.INNER_TYPE_STANDARD, # 0xD1
+            subcommand=self.SUBCOMMAND_LOGIN   # 0x03
         )
     
     def wrap_heartbeat(self, artemis_seq: int) -> bytes:
