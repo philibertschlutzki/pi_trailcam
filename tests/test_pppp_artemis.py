@@ -101,7 +101,7 @@ class PPPPArtemisTest:
             
             # Expected structure from TCPDump:
             # f1 d1 00 06  d1 00 00 01  00 1b
-            expected = bytes.fromhex('f1d10006d10000010001b')
+            expected = bytes.fromhex('f1d10006d1000001001b')
             
             # Verify structure
             assert len(packet) >= 10, f"Packet too short: {len(packet)} bytes"
@@ -164,7 +164,8 @@ class PPPPArtemisTest:
             # Check PPPP Outer Header
             outer_magic, outer_type, length = struct.unpack('>BBH', packet[0:4])
             assert outer_magic == 0xF1, f"Wrong outer magic: 0x{outer_magic:02X}"
-            assert outer_type == 0xD1, f"Wrong outer type: 0x{outer_type:02X}"
+            # FIX: Login uses Outer Type 0xD0 (Analysis Finding)
+            assert outer_type == 0xD0, f"Wrong outer type: 0x{outer_type:02X}"
             assert length == len(artemis_payload) + 4, f"Wrong length: {length}"
             
             # Check PPPP Inner Header
@@ -200,7 +201,7 @@ class PPPPArtemisTest:
         try:
             # Real packet from TCPDump:
             # f1 d1 00 06  d1 00 00 01  00 1b
-            test_packet = bytes.fromhex('f1d10006d10000010001b')
+            test_packet = bytes.fromhex('f1d10006d1000001001b')
             
             # Unwrap
             parsed = self.pppp.unwrap_pppp(test_packet)
