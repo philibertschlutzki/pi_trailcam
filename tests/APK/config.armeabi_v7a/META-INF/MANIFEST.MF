@@ -1,0 +1,41 @@
+Manifest-Version: 1.0
+
+Name: AndroidManifest.xml
+SHA1-Digest: gHYC5htuVaWKfn4IMc0fhTeBrcU=
+
+Name: lib/armeabi-v7a/libArLink.so
+SHA1-Digest: 2LK4Ift//EBNVL56G6rg/QU1jvE=
+
+Name: lib/armeabi-v7a/libBaiduMapSDK_base_v7_6_6.so
+SHA1-Digest: Vf1N4Z1wLcU6/CpyJgZUllv6WtQ=
+
+Name: lib/armeabi-v7a/libBaiduMapSDK_map_v7_6_6.so
+SHA1-Digest: gT0Z2S5rQvtqKbwo25ogTxRq5Qs=
+
+Name: lib/armeabi-v7a/libMP4Codec.so
+SHA1-Digest: PMSCsjStZ/+H2CkWCZ+Jf2BtATE=
+
+Name: lib/armeabi-v7a/libapms.so
+SHA1-Digest: Y8J165XXEuuFaLvYqnnuqLmJc84=
+
+Name: lib/armeabi-v7a/libc++_shared.so
+SHA1-Digest: sE3qltlkLnpcBjNMvJNuPfRlbgg=
+
+Name: lib/armeabi-v7a/libfaad.so
+SHA1-Digest: RhTTirCLX8nLQP5mbMdfDmldXAk=
+
+Name: lib/armeabi-v7a/liblocSDK8b.so
+SHA1-Digest: fPAAm4lpPZHzymfkiRIHk0Ag5PA=
+
+Name: lib/armeabi-v7a/libtiny_magic.so
+SHA1-Digest: Jwp/rsP0dBsxF0vYHVRqlfPQaW8=
+
+Name: lib/armeabi-v7a/libvideodecoder.so
+SHA1-Digest: J+szOMdtux1R70Ls/n4mCe7JVYs=
+
+Name: lib/armeabi-v7a/libyolov5ncnn.so
+SHA1-Digest: 7sYxUVjApy+DWKMHpn7C+wCjXLA=
+
+Name: stamp-cert-sha256
+SHA1-Digest: 5vTkm69vqAbusD/fho7oWwc7j+I=
+
