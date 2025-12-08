@@ -321,18 +321,17 @@ class CameraClient:
 
     def _discover_device_internal(self, source_port: int = 0) -> bool:
         """
-        FIX #31: Robust Discovery with port binding.
+        FIX #35: Send init burst ONCE to primary port, not per destination port.
         
-        Args:
-            source_port: Local UDP port to bind to.
-                        0 = OS assigns dynamically
-                        >0 = Force bind to specific port (for reconnects)
+        Root Cause: Repeated init bursts (5 per port × 6 ports) caused PPPP
+        sequence overflow (6, 12, 18, 24, 30, ...) before first discovery completes.
         
-        The camera maintains firewall entries per (IP, Port) pair.
-        Changing the client's source port breaks session tracking.
+        Solution: Match Android app behavior - single init burst to primary port 40611,
+        then scan all ports with discovery only (no additional init per port).
         
-        Returns:
-            bool: True if device discovered and port identified.
+        Evidence from logs:
+        - Android Success (v2): Single init, immediate discovery success
+        - Python Failure (#35): 30 init packets, PPPP seq=6,12,18,... discovery fails
         """
         self._set_state(CameraState.DISCOVERING, "scanning ports")
 
@@ -365,15 +364,21 @@ class CameraClient:
             self.active_port = source_port
             self.logger.info(f"[DISCOVERY] Reusing cached source port: {source_port}")
 
+        # FIX #35: Send init burst ONCE to primary port BEFORE scanning all ports
+        # This matches Android app behavior and keeps PPPP sequence low
+        self.logger.info(f"[INIT] Sending wakeup burst to primary port {target_ports[0]} (ONCE for all ports)...")
+        self._send_init_packets(dest_port=target_ports[0])
+
+        # Brief pause to allow camera UDP stack initialization
+        time.sleep(0.5)
+
         self.logger.info(f"[DISCOVERY] Scanning {len(target_ports)} destination ports...")
 
         for port in target_ports:
             self.logger.info(f"[DISCOVERY] Trying destination port {port}...")
 
-            # Send wakeup burst to this port
-            self._send_init_packets(dest_port=port)
-
-            # Send discovery packet
+            # FIX #35: Discovery ONLY - no additional init burst per port
+            # PPPP sequence stays low (1, 2, 3, ... instead of 6, 12, 18, ...)
             if self.discovery_phase(dest_port=port):
                 self.logger.info(
                     f"[DISCOVERY] ✓ FOUND CAMERA on destination port {port} "
