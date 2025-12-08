@@ -191,10 +191,11 @@ class CameraClient:
             self._socket_force_close()
             return False
 
-    def _send_init_packets(self) -> bool:
+    def _send_init_packets(self, dest_port: Optional[int] = None) -> bool:
         """
         FIX #24: Send initialization packets (0xE1) to wake camera UDP stack.
         FIX #25: Enhanced logging for diagnostics
+        FIX #29: Send wakeup burst (5-10 packets) to "knock" on the port.
         
         These packets must be sent BEFORE discovery phase.
         TCPDump shows official app sends 2-3 init packets before discovery:
@@ -206,19 +207,20 @@ class CameraClient:
         Returns:
             bool: True if init packets were sent successfully
         """
+        target_port = dest_port if dest_port else self.port
         self._set_state(CameraState.INITIALIZING, "sending UDP init packets")
-        self.logger.info("[INIT] Sending initialization packets to wake camera UDP stack...")
+        self.logger.info(f"[INIT] Sending wakeup burst to {self.ip}:{target_port}...")
         
         try:
             with TimeoutContext(self.sock, config.ARTEMIS_DISCOVERY_TIMEOUT, self.logger):
-                # Send 2 init packets (as seen in TCPDump)
-                for i in range(2):
+                # FIX #29: Increased burst size to 5 to ensure wakeup
+                for i in range(5):
                     init_packet = self.pppp.wrap_init()
-                    self.sock.sendto(init_packet, (self.ip, self.port))
-                    self.logger.debug(f"[INIT] Sent packet {i+1}/2: {init_packet.hex()}")
-                    time.sleep(0.1)  # 100ms delay between packets
+                    self.sock.sendto(init_packet, (self.ip, target_port))
+                    self.logger.debug(f"[INIT] Sent packet {i+1}/5: {init_packet.hex()}")
+                    time.sleep(0.05)  # 50ms delay between packets
                 
-                self.logger.info("[INIT] ✓ Initialization packets sent successfully")
+                self.logger.info("[INIT] ✓ Wakeup burst sent successfully")
                 return True
                 
         except Exception as e:
@@ -226,7 +228,7 @@ class CameraClient:
             # Don't fail connection on init errors - camera might already be awake
             return True
 
-    def discovery_phase(self) -> bool:
+    def discovery_phase(self, dest_port: Optional[int] = None) -> bool:
         """
         Sends the PPPP wrapped discovery packet.
         
@@ -251,11 +253,12 @@ class CameraClient:
         
         # Create wrapped discovery packet
         packet = self.pppp.wrap_discovery(self.artemis_seq)
-        
+        target_port = dest_port if dest_port else self.port
+
         # DEBUG: Log PPPP Seq after wrapping
         new_pppp_seq = self.pppp.get_sequence()
         self.logger.debug(f"[DISCOVERY DEBUG] PPPP Seq after wrap: 0x{new_pppp_seq:04X}")
-        self.logger.info(f"[DISCOVERY] Sent packet: {packet.hex()}")
+        self.logger.info(f"[DISCOVERY] Sending to {self.ip}:{target_port} - Packet: {packet.hex()}")
 
         # Increment Artemis sequence for next packet
         self.artemis_seq += 1
@@ -264,7 +267,7 @@ class CameraClient:
         
         try:
             with TimeoutContext(self.sock, config.ARTEMIS_DISCOVERY_TIMEOUT, self.logger):
-                self.sock.sendto(packet, (self.ip, self.port))
+                self.sock.sendto(packet, (self.ip, target_port))
                 self.logger.debug(f"[DISCOVERY] Sent: {packet.hex()}")
                 
                 # Expect response
@@ -293,20 +296,56 @@ class CameraClient:
             self.logger.error(f"[DISCOVERY] Error: {e}")
             return False
 
+    def discover_device(self) -> bool:
+        """
+        FIX #29: Robust Discovery & Port Scanning.
+
+        Instead of assuming a fixed port or source-port binding, this method
+        scans a list of potential destination ports on the camera.
+        It uses a random source port (bound to 0.0.0.0).
+
+        Returns:
+            bool: True if device discovered and port identified.
+        """
+        self._set_state(CameraState.DISCOVERING, "scanning ports")
+
+        # Ports to scan (Destination ports on Camera)
+        target_ports = [
+            40611,    # From log
+            32100,    # CS2P2P Standard
+            32108,    # Broadcast Discovery Standard
+            10000,
+            80,
+            57743     # iOS success port
+        ]
+
+        # Create a socket bound to random port
+        if not self._create_socket(0, timeout=2.0): # Short timeout for scan
+            return False
+
+        self.logger.info(f"[DISCOVERY] Starting Scan on {len(target_ports)} ports...")
+
+        for port in target_ports:
+            self.logger.info(f"[DISCOVERY] Scanning Destination Port {port}...")
+
+            # Send wakeup burst to this port
+            self._send_init_packets(dest_port=port)
+
+            # Send discovery
+            if self.discovery_phase(dest_port=port):
+                self.logger.info(f"[DISCOVERY] ✓ FOUND CAMERA on Port {port}")
+                self.port = port # Update the class port
+                self.active_port = port # Just for record
+                return True
+
+        return False
+
     def connect_with_retries(self) -> bool:
         """
         FIX #24: Connection flow with init packets:
-        1. Reset PPPP sequence (once per session)
-        2. For each port:
-           a. Create socket
-           b. Send init packets (NEW!)
-           c. Send discovery
-           d. If success, return
-        
-        FIX #25: Enhanced diagnostics and improved error messages
+        FIX #29: Integrated robust discovery.
         """
         self._set_state(CameraState.CONNECTING, "starting retry loop")
-        ports = config.DEVICE_PORTS
         max_retries = config.MAX_CONNECTION_RETRIES
         start_time_total = time.time()
 
@@ -323,22 +362,19 @@ class CameraClient:
 
             self.logger.info(f"[CONNECT] Attempt {attempt + 1}/{max_retries}")
 
-            for port in ports:
-                if self._create_socket(port, timeout=config.ARTEMIS_DISCOVERY_TIMEOUT):
-                    # FIX #24: Send initialization packets BEFORE discovery
-                    self._send_init_packets()
-                    
-                    if self.discovery_phase():
-                        self.logger.info(f"[CONNECT] ✓ Connected on source port {port}")
-                        self._set_state(CameraState.CONNECTED, f"source port {port}")
-                        # Set login timeout
-                        self.sock.settimeout(config.ARTEMIS_LOGIN_TIMEOUT)
-                        return True
-                    else:
-                        self._socket_force_close()
+            # Use new discovery method
+            if self.discover_device():
+                 self.logger.info(f"[CONNECT] ✓ Connected to camera on port {self.port}")
+                 self._set_state(CameraState.CONNECTED, f"dest port {self.port}")
+                 # Set login timeout
+                 self.sock.settimeout(config.ARTEMIS_LOGIN_TIMEOUT)
+                 return True
+            else:
+                 self.logger.warning("[CONNECT] Discovery scan failed this attempt.")
+                 self._socket_force_close()
 
             backoff = config.RETRY_BACKOFF_SEQUENCE[min(attempt, len(config.RETRY_BACKOFF_SEQUENCE)-1)]
-            self.logger.info(f"[CONNECT] All ports failed, waiting {backoff}s before retry...")
+            self.logger.info(f"[CONNECT] Waiting {backoff}s before retry...")
             time.sleep(backoff)
 
         self._set_state(CameraState.CONNECTION_FAILED, "all retries exhausted")
