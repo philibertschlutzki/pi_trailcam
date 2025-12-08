@@ -15,6 +15,13 @@ Key design principles from libArLink.so:
   3. Parallel threads that race to connect
   4. First successful thread wins, others are terminated
   5. Automatic cleanup and port reclamation on failure
+
+LAN Mode Findings (from 2025-12-08 log analysis):
+  - Camera typically listens on port 40611 (UDP)
+  - App binds to ephemeral port (e.g., 35281)
+  - Connection is direct LAN-P2P without relay
+  - Typical connection time: <1 second in local network
+  - Example: localAddr:(192.168.43.1:35281), remoteAddr:(192.168.43.1:40611)
 """
 
 import socket
@@ -26,10 +33,15 @@ from enum import Enum
 import logging
 
 
+# Default LAN ports prioritized by actual log analysis
+# Port 40611 is PRIMARY based on paste.txt evidence
+DEFAULT_LAN_PORTS = (40611, 32100, 32108, 10000, 80, 57743)
+
+
 class ConnectionMode(Enum):
     """Connection modes matching libArLink.so terminology."""
     P2P = "p2p"          # Direct peer-to-peer UDP
-    LAN = "lan"          # LAN direct UDP
+    LAN = "lan"          # LAN direct UDP (same as P2P but local network)
     RELAY = "relay"      # TCP relay through server
 
 
@@ -80,7 +92,7 @@ class ParallelConnectionManager:
     Attributes:
         logger: Logger instance for debug output
         camera_ip: Target camera IP address
-        destination_ports: List of ports to try (in order)
+        destination_ports: List of ports to try (prioritized by log analysis)
         relay_server: Optional relay server info
         max_connection_time: Maximum total time to attempt connections
     """
@@ -88,7 +100,7 @@ class ParallelConnectionManager:
     def __init__(
         self,
         camera_ip: str,
-        destination_ports: Tuple[int, ...] = (40611, 32100, 32108, 10000, 80, 57743),
+        destination_ports: Tuple[int, ...] = DEFAULT_LAN_PORTS,
         max_connection_time: float = 30.0,
         logger: Optional[logging.Logger] = None,
     ):
@@ -96,7 +108,7 @@ class ParallelConnectionManager:
         
         Args:
             camera_ip: Target camera IP address
-            destination_ports: Tuple of ports to try (first is primary)
+            destination_ports: Tuple of ports to try (40611 is PRIMARY)
             max_connection_time: Max seconds to spend on connection attempts
             logger: Optional logger instance
         """
@@ -124,6 +136,11 @@ class ParallelConnectionManager:
         threads all attempt connection simultaneously. The first successful
         thread wins, and the others are terminated.
         
+        Based on log analysis:
+        - LAN mode typically succeeds within 1 second on port 40611
+        - P2P/Relay only needed for remote connections
+        - Local network: LAN thread wins, P2P/Relay cancelled
+        
         Args:
             enable_p2p: Start P2P direct connection thread
             enable_lan: Start LAN direct connection thread  
@@ -134,11 +151,15 @@ class ParallelConnectionManager:
             where connection_info contains:
               - mode: ConnectionMode that succeeded
               - port: Local source port used
+              - destination_port: Destination port (e.g., 40611)
               - elapsed_time: Total connection time
               - threads_info: Info about all threads
         """
         self._start_time = time.time()
-        self.logger.info("[CONNECT] Starting parallel connection attempt...")
+        self.logger.info(
+            f"[CONNECT] Starting parallel connection to {self.camera_ip}. "
+            f"Trying ports: {self.destination_ports}"
+        )
 
         threads_to_start = []
 
@@ -254,7 +275,8 @@ class ParallelConnectionManager:
                         info.timestamp_ended = time.time()
                         self.logger.info(
                             f"[P2P] ✓ P2P connection succeeded: "
-                            f"port={local_port}, dest_port={dest_port}, "
+                            f"localAddr:({self.camera_ip}:{local_port}), "
+                            f"remoteAddr:({self.camera_ip}:{dest_port}), "
                             f"time={info.elapsed_time:.2f}s"
                         )
                         return
@@ -289,12 +311,21 @@ class ParallelConnectionManager:
         """LAN direct connection thread.
         
         Identical logic to P2P but marked as LAN mode for statistics/diagnostics.
+        Based on log analysis, this typically succeeds quickly on port 40611.
+        
+        Expected behavior (from paste.txt):
+        - Start lan connect to:LBCS-000000-CCCJJ, connectType:1
+        - Lan connect to remote success, mode:P2P, cost time:0
+        - localAddr:(192.168.43.1:35281), remoteAddr:(192.168.43.1:40611)
         """
         info = self._thread_infos["lanConnectThread"]
         info.state = ConnectionThreadState.RUNNING
         info.timestamp_started = time.time()
 
-        self.logger.debug("[LAN] Starting LAN direct connection thread")
+        self.logger.info(
+            f"[LAN] Start lan connect to:{self.camera_ip}, "
+            f"connectType:1, primary_port:{self.destination_ports[0]}"
+        )
 
         try:
             for dest_port in self.destination_ports:
@@ -317,8 +348,7 @@ class ParallelConnectionManager:
                     info.destination_port = dest_port
 
                     self.logger.debug(
-                        f"[LAN] Attempt {info.retry_count + 1}: "
-                        f"local_port={local_port}, dest_port={dest_port}"
+                        f"[LAN] Start connect by lan, port:{local_port} -> {dest_port}"
                     )
 
                     if self._try_discovery(
@@ -329,10 +359,13 @@ class ParallelConnectionManager:
                         info.state = ConnectionThreadState.SUCCESS
                         info.timestamp_ended = time.time()
                         self.logger.info(
-                            f"[LAN] ✓ LAN connection succeeded: "
-                            f"port={local_port}, dest_port={dest_port}, "
-                            f"time={info.elapsed_time:.2f}s"
+                            f"[LAN] ✓ Lan connect to remote success, mode:P2P, "
+                            f"cost time:{info.elapsed_time:.0f}, "
+                            f"localAddr:({self.camera_ip}:{local_port}), "
+                            f"remoteAddr:({self.camera_ip}:{dest_port})"
                         )
+                        self.logger.info("[LAN] LAN connect wait ACK success")
+                        self.logger.info("[LAN] lan connect success")
                         return
 
                     sock.close()
@@ -420,6 +453,9 @@ class ParallelConnectionManager:
             # Check if any thread succeeded
             if self._winning_thread_name:
                 winning_info = self._thread_infos[self._winning_thread_name]
+                self.logger.info(
+                    f"[CONNECT] Connect success. Winning thread: {self._winning_thread_name}"
+                )
                 return (
                     True,
                     {
