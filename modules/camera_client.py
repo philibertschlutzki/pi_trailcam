@@ -86,6 +86,12 @@ class CameraClient:
     - Reordered DEVICE_PORTS with 57743 first (proven successful)
     - Extended MAX_TOTAL_CONNECTION_TIME from 60 to 90 seconds
     - Improved diagnostic logging for init phase
+    
+    FIX #31: Source Port Caching for Reconnect Reliability
+    - Cache client source port after first successful connection
+    - Reuse cached port on reconnect attempts
+    - Camera maintains firewall entries per (client_ip, client_port) pair
+    - Changing source port breaks session tracking
     """
 
     def __init__(self, camera_ip=None, logger=None):
@@ -298,20 +304,37 @@ class CameraClient:
 
     def discover_device(self) -> bool:
         """
-        FIX #29: Robust Discovery & Port Scanning.
+        FIX #31: Discovery with dynamic source port handling.
+        
+        This method wraps the internal discovery implementation.
+        For first connection: port=0 (OS assigns)
+        For reconnect: port=cached (reuse same port)
+        
+        Returns:
+            bool: True if device discovered and port identified.
+        """
+        return self._discover_device_internal(source_port=0)
 
-        Instead of assuming a fixed port or source-port binding, this method
-        scans a list of potential destination ports on the camera.
-        It uses a random source port (bound to 0.0.0.0).
-
+    def _discover_device_internal(self, source_port: int = 0) -> bool:
+        """
+        FIX #31: Robust Discovery with port binding.
+        
+        Args:
+            source_port: Local UDP port to bind to.
+                        0 = OS assigns dynamically
+                        >0 = Force bind to specific port (for reconnects)
+        
+        The camera maintains firewall entries per (IP, Port) pair.
+        Changing the client's source port breaks session tracking.
+        
         Returns:
             bool: True if device discovered and port identified.
         """
         self._set_state(CameraState.DISCOVERING, "scanning ports")
 
-        # Ports to scan (Destination ports on Camera)
+        # Destination ports to try on camera
         target_ports = [
-            40611,    # From log
+            40611,    # From logs - THIS IS THE SERVER LISTENING PORT
             32100,    # CS2P2P Standard
             32108,    # Broadcast Discovery Standard
             10000,
@@ -319,31 +342,57 @@ class CameraClient:
             57743     # iOS success port
         ]
 
-        # Create a socket bound to random port
-        if not self._create_socket(0, timeout=2.0): # Short timeout for scan
+        # Create socket with specified source port
+        if not self._create_socket(source_port, timeout=2.0):
+            self.logger.error(f"[DISCOVERY] Failed to bind source port {source_port}")
             return False
 
-        self.logger.info(f"[DISCOVERY] Starting Scan on {len(target_ports)} ports...")
+        # FIX #31: After binding, read the actual assigned local port
+        if source_port == 0:
+            try:
+                actual_local_ip, actual_local_port = self.sock.getsockname()
+                self.active_port = actual_local_port
+                self.logger.info(f"[DISCOVERY] OS assigned local source port: {actual_local_port}")
+            except Exception as e:
+                self.logger.error(f"[DISCOVERY] Failed to read assigned port: {e}")
+                return False
+        else:
+            # Port was explicitly specified, use it
+            self.active_port = source_port
+            self.logger.info(f"[DISCOVERY] Reusing cached source port: {source_port}")
+
+        self.logger.info(f"[DISCOVERY] Scanning {len(target_ports)} destination ports...")
 
         for port in target_ports:
-            self.logger.info(f"[DISCOVERY] Scanning Destination Port {port}...")
+            self.logger.info(f"[DISCOVERY] Trying destination port {port}...")
 
             # Send wakeup burst to this port
             self._send_init_packets(dest_port=port)
 
-            # Send discovery
+            # Send discovery packet
             if self.discovery_phase(dest_port=port):
-                self.logger.info(f"[DISCOVERY] ✓ FOUND CAMERA on Port {port}")
-                self.port = port # Update the class port
-                self.active_port = port # Just for record
+                self.logger.info(
+                    f"[DISCOVERY] ✓ FOUND CAMERA on destination port {port} "
+                    f"with source port {self.active_port}"
+                )
+                self.port = port
                 return True
 
         return False
 
     def connect_with_retries(self) -> bool:
         """
-        FIX #24: Connection flow with init packets:
-        FIX #29: Integrated robust discovery.
+        FIX #31: Connection with source port caching.
+        
+        CRITICAL: The camera maintains firewall entries based on (client_ip, client_port).
+        If we change the source port on reconnect, the camera will drop packets.
+        
+        Solution:
+        1. First attempt: Let OS assign source port (port=0)
+        2. Cache this port
+        3. On reconnects: Explicitly bind to cached port (not port=0)
+        
+        This ensures the camera always receives packets from the same source address.
         """
         self._set_state(CameraState.CONNECTING, "starting retry loop")
         max_retries = config.MAX_CONNECTION_RETRIES
@@ -353,28 +402,62 @@ class CameraClient:
         self.logger.info("[CONNECT] Resetting PPPP sequence to 1")
         self.pppp.reset_sequence(1)
 
+        # FIX #31: Cache the source port across reconnect attempts
+        cached_source_port = None
+        is_first_attempt = True
+
         for attempt in range(max_retries):
             elapsed = time.time() - start_time_total
             if elapsed > config.MAX_TOTAL_CONNECTION_TIME:
                 self._set_state(CameraState.CONNECTION_FAILED, "total timeout")
-                self.logger.error(f"[CONNECT] Total connection time exceeded ({elapsed:.1f}s > {config.MAX_TOTAL_CONNECTION_TIME}s)")
+                self.logger.error(
+                    f"[CONNECT] Total connection time exceeded "
+                    f"({elapsed:.1f}s > {config.MAX_TOTAL_CONNECTION_TIME}s)"
+                )
                 return False
 
             self.logger.info(f"[CONNECT] Attempt {attempt + 1}/{max_retries}")
 
-            # Use new discovery method
-            if self.discover_device():
-                 self.logger.info(f"[CONNECT] ✓ Connected to camera on port {self.port}")
-                 self._set_state(CameraState.CONNECTED, f"dest port {self.port}")
-                 # Set login timeout
-                 self.sock.settimeout(config.ARTEMIS_LOGIN_TIMEOUT)
-                 return True
+            # FIX #31: Decide which source port to use
+            if is_first_attempt:
+                # First attempt: Let OS assign port
+                source_port = 0
+                self.logger.debug("[CONNECT] First attempt - requesting OS-assigned source port")
             else:
-                 self.logger.warning("[CONNECT] Discovery scan failed this attempt.")
-                 self._socket_force_close()
+                # Reconnect attempts: Reuse the cached port
+                source_port = cached_source_port
+                self.logger.debug(
+                    f"[CONNECT] Reconnect attempt - reusing cached source port {source_port}"
+                )
 
-            backoff = config.RETRY_BACKOFF_SEQUENCE[min(attempt, len(config.RETRY_BACKOFF_SEQUENCE)-1)]
-            self.logger.info(f"[CONNECT] Waiting {backoff}s before retry...")
+            # Try to discover device with this source port
+            if self._discover_device_internal(source_port=source_port):
+                # Success! Cache the port for future reconnects
+                cached_source_port = self.active_port
+                self.logger.info(
+                    f"[CONNECT] ✓ Successfully connected on source port {self.active_port}"
+                )
+                self._set_state(CameraState.CONNECTED, f"dest port {self.port}")
+                self.sock.settimeout(config.ARTEMIS_LOGIN_TIMEOUT)
+                is_first_attempt = False
+                return True
+            else:
+                self.logger.warning("[CONNECT] Discovery scan failed this attempt.")
+                self._socket_force_close()
+                is_first_attempt = False
+
+            backoff = config.RETRY_BACKOFF_SEQUENCE[
+                min(attempt, len(config.RETRY_BACKOFF_SEQUENCE) - 1)
+            ]
+            
+            if cached_source_port:
+                self.logger.info(
+                    f"[CONNECT] Waiting {backoff}s before retry... "
+                    f"(will reuse source port {cached_source_port})"
+                )
+            else:
+                self.logger.info(f"[CONNECT] Waiting {backoff}s before retry...")
+            
             time.sleep(backoff)
 
         self._set_state(CameraState.CONNECTION_FAILED, "all retries exhausted")
