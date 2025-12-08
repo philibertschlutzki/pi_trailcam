@@ -44,17 +44,27 @@ BLE_MAC_ADDRESS = "C6:1E:0D:E0:32:E8"
 # ==============================================================================
 # ARTEMIS Protocol Configuration
 # ==============================================================================
-ARTEMIS_DISCOVERY_TIMEOUT = 3  # seconds
+
+# FIX #25: Camera UDP stack initialization timing
+# After BLE wakeup, the camera's UDP stack needs time to initialize.
+# Original app (TrailCam Go) shows ~7-8 second delay before successful discovery.
+# This delay is applied AFTER WiFi connection established.
+CAMERA_STARTUP_DELAY = 8  # seconds
+
+ARTEMIS_DISCOVERY_TIMEOUT = 5  # seconds (increased from 3)
 ARTEMIS_LOGIN_TIMEOUT = 5  # seconds
 ARTEMIS_KEEPALIVE_INTERVAL = 3  # seconds (heartbeat)
 
 # Connection Retry Configuration
 MAX_CONNECTION_RETRIES = 5
 RETRY_BACKOFF_SEQUENCE = [1, 2, 4, 8, 16]  # seconds
-MAX_TOTAL_CONNECTION_TIME = 60  # seconds
+MAX_TOTAL_CONNECTION_TIME = 90  # seconds (increased from 60 to allow more retries)
 
 # Device Ports to Try (in order of likelihood)
-DEVICE_PORTS = [40611, 59130, 3014, 47304, 59775, 57743]
+# FIX #25: Port order optimization
+# Observed from official app logs: port 57743 was successful
+# Moved 57743 to first position based on empirical data
+DEVICE_PORTS = [57743, 40611, 59130, 3014, 47304, 59775]
 
 # Connection Validation
 REQUIRE_DEVICE_DISCOVERY = True
