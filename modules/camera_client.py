@@ -60,6 +60,11 @@ class CameraClient:
     """
     Client for cameras with the Artemis protocol.
     
+    Connection Flow (PROTOCOL_ANALYSIS Section 4):
+    Phase 1: Initialization (0xE1) - Wakes up the camera UDP stack.
+    Phase 2: Discovery (0xD1) - Verifies device presence and establishes path.
+    Phase 3: Login (0xD0) - Authenticates using token and sequence from BLE.
+
     FIX #21: Discovery Packet Format
     Official App uses a minimal F1 E0 00 00 packet for discovery.
     
@@ -111,6 +116,11 @@ class CameraClient:
     def set_session_credentials(self, token: str, sequence: bytes, use_ble_dynamic: bool = True):
         """
         Set session credentials from BLE.
+
+        Token Format Support:
+        The camera supports both JSON and raw binary formats for the token.
+        Parsing logic is handled in `ble_token_listener.py`.
+        This method receives the extracted token string ready for use.
         
         FIX #23: Parse sequence bytes and set artemis_seq for Discovery/Login.
         The sequence is typically 4 bytes in little-endian format.
@@ -147,6 +157,16 @@ class CameraClient:
                 self.sock = None
 
     def _create_socket(self, port: int, timeout: Optional[float] = None) -> bool:
+        """
+        Creates and binds the UDP socket.
+
+        Why Source Port Binding?
+        The camera uses a firewall mechanism that only responds to packets
+        from specific source ports (port-knocking pattern).
+        See FIXES_ISSUE_20.md Section "Why Source Port Binding Works" for details.
+
+        The list of allowed source ports is defined in `config.DEVICE_PORTS`.
+        """
         self.logger.info(
             f"[SOCKET] Binding local UDP source port {port} → Destination {self.ip}:{config.CAM_PORT}"
         )

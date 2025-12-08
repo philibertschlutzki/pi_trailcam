@@ -16,15 +16,42 @@ This project automates the connection sequence:
 This project implements the **PPPP (P2P Push Proxy Protocol)** wrapper required by the camera.
 The camera does not accept raw Artemis packets; they must be wrapped in PPPP headers.
 
+### Protocol Stack (PPPP + Artemis)
+
+The connection process follows a strict 3-phase sequence:
+
+1.  **Phase 1: Initialization (0xE1)**
+    *   Sends magic packets to wake up the camera's UDP stack.
+    *   Required before any discovery can happen.
+2.  **Phase 2: Discovery (0xD1)**
+    *   Verifies device presence using the Artemis sequence number.
+3.  **Phase 3: Login (0xD0)**
+    *   Authenticates using the BLE token.
+    *   **Crucial:** Uses Outer Type `0xD0` (Artemis-specific) instead of standard `0xD1`.
+
 Structure:
 `[PPPP Outer Header] [PPPP Inner Header] [Artemis Payload]`
 
 - **Magic:** `0xF1`
-- **Outer Type:** `0xD1` (Standard), `0xD3` (Control), `0xD4` (Data)
-- **Inner Type:** Matches Outer Type
+- **Outer Type:** `0xD1` (Standard), `0xD0` (Login), `0xE1` (Init), `0xD3` (Control), `0xD4` (Data)
+- **Inner Type:** Matches Outer Type (usually)
 - **Subcommands:** `0x00` (Discovery), `0x03` (Login), `0x01` (Heartbeat/ACK)
 
-See `modules/pppp_wrapper.py` for implementation details.
+See `modules/pppp_wrapper.py` and `docs/PROTOCOL_ANALYSIS.md` for implementation details.
+
+### Why Source Port Binding?
+
+The camera uses a firewall mechanism that only responds to packets from specific source ports (a "port-knocking" pattern). This behavior was identified during reverse engineering (see `archive/FIXES_ISSUE_20.md` for detailed analysis).
+
+The allowed source ports (e.g., 40611, 59130) are defined in `config.py`. The client iterates through these ports until a connection is established.
+
+### Token Formats
+
+The camera supports both JSON and raw binary token formats for authentication.
+*   **Raw:** 45 or 72 bytes of base64-like data.
+*   **JSON:** A JSON object containing metadata and the token (e.g., `{"ret":0, "token":"..."}`).
+
+The `ble_token_listener.py` module automatically detects and parses these formats.
 
 ## Prerequisites
 
@@ -85,3 +112,7 @@ sudo ./venv/bin/python3 main.py
     *   Check `modules/pppp_wrapper.py` logs (set logging to DEBUG).
     *   Ensure Sequence Numbers are incrementing correctly.
     *   Verify Magic Byte `0xF1` in responses.
+
+For technical deep-dives, refer to:
+*   `docs/PROTOCOL_ANALYSIS.md` - Complete protocol specification.
+*   `archive/FIXES_ISSUE_20.md` - Analysis of UDP connection issues and the port binding solution.
