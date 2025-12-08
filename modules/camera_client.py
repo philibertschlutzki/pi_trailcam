@@ -92,6 +92,10 @@ class CameraClient:
     - Reuse cached port on reconnect attempts
     - Camera maintains firewall entries per (client_ip, client_port) pair
     - Changing source port breaks session tracking
+
+    FIX #32: Robust Reconnect Logic
+    - Correctly handle source port selection even if discovery fails.
+    - Prevent NoneType error when binding port on retries.
     """
 
     def __init__(self, camera_ip=None, logger=None):
@@ -425,10 +429,17 @@ class CameraClient:
                 self.logger.debug("[CONNECT] First attempt - requesting OS-assigned source port")
             else:
                 # Reconnect attempts: Reuse the cached port
-                source_port = cached_source_port
-                self.logger.debug(
-                    f"[CONNECT] Reconnect attempt - reusing cached source port {source_port}"
-                )
+                if cached_source_port:
+                    source_port = cached_source_port
+                    self.logger.debug(
+                        f"[CONNECT] Reconnect attempt - reusing cached source port {source_port}"
+                    )
+                else:
+                    # FIX #32: Fallback to 0 if no cached port available (prevent NoneType error)
+                    source_port = 0
+                    self.logger.warning(
+                        "[CONNECT] Reconnect attempt - no cached source port, requesting OS-assigned"
+                    )
 
             # Try to discover device with this source port
             if self._discover_device_internal(source_port=source_port):
@@ -443,6 +454,12 @@ class CameraClient:
                 return True
             else:
                 self.logger.warning("[CONNECT] Discovery scan failed this attempt.")
+
+                # FIX #32: Even if discovery fails, we might want to keep the source port
+                # if it was successfully bound, to retry with the same one.
+                if self.active_port:
+                     cached_source_port = self.active_port
+
                 self._socket_force_close()
                 is_first_attempt = False
 
