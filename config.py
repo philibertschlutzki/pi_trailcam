@@ -49,7 +49,8 @@ BLE_MAC_ADDRESS = "C6:1E:0D:E0:32:E8"
 # After BLE wakeup, the camera's UDP stack needs time to initialize.
 # Original app (TrailCam Go) shows ~7-8 second delay before successful discovery.
 # This delay is applied AFTER WiFi connection established.
-CAMERA_STARTUP_DELAY = 8  # seconds
+# FIX #33: Reduced startup delay to 1s as logs show instant connection is possible
+CAMERA_STARTUP_DELAY = 1  # seconds
 
 ARTEMIS_DISCOVERY_TIMEOUT = 5  # seconds (increased from 3)
 ARTEMIS_LOGIN_TIMEOUT = 5  # seconds
