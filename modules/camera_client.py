@@ -79,6 +79,13 @@ class CameraClient:
     - Use correct login packet type (0xD0 in pppp_wrapper)
     - Include full Artemis login payload with proper structure
     - Accept both 0x01 and 0x04 as valid login responses
+    
+    FIX #25: Timing and Port Optimization (Issue #27)
+    - Increased ARTEMIS_DISCOVERY_TIMEOUT from 3 to 5 seconds
+    - Added CAMERA_STARTUP_DELAY (8s) before discovery attempts
+    - Reordered DEVICE_PORTS with 57743 first (proven successful)
+    - Extended MAX_TOTAL_CONNECTION_TIME from 60 to 90 seconds
+    - Improved diagnostic logging for init phase
     """
 
     def __init__(self, camera_ip=None, logger=None):
@@ -175,7 +182,7 @@ class CameraClient:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.sock.bind(('', port))
-            timeout_val = timeout if timeout is not None else config.ARTEMIS_LOGIN_TIMEOUT
+            timeout_val = timeout if timeout is not None else config.ARTEMIS_DISCOVERY_TIMEOUT
             self.sock.settimeout(timeout_val)
             self.active_port = port
             return True
@@ -187,6 +194,7 @@ class CameraClient:
     def _send_init_packets(self) -> bool:
         """
         FIX #24: Send initialization packets (0xE1) to wake camera UDP stack.
+        FIX #25: Enhanced logging for diagnostics
         
         These packets must be sent BEFORE discovery phase.
         TCPDump shows official app sends 2-3 init packets before discovery:
@@ -207,8 +215,8 @@ class CameraClient:
                 for i in range(2):
                     init_packet = self.pppp.wrap_init()
                     self.sock.sendto(init_packet, (self.ip, self.port))
-                    self.logger.debug(f"[INIT] Sent packet {i+1}: {init_packet.hex()}")
-                    time.sleep(0.05)  # 50ms delay between packets
+                    self.logger.debug(f"[INIT] Sent packet {i+1}/2: {init_packet.hex()}")
+                    time.sleep(0.1)  # 100ms delay between packets
                 
                 self.logger.info("[INIT] ✓ Initialization packets sent successfully")
                 return True
@@ -230,6 +238,8 @@ class CameraClient:
         FIX #23: Use BLE-provided artemis_seq instead of hardcoded value.
         
         FIX #24: Must be called AFTER _send_init_packets().
+        
+        FIX #25: Enhanced diagnostics logging
         """
         self._set_state(CameraState.DISCOVERING, "starting discovery")
         self.logger.info("[DISCOVERY] Sending PPPP Discovery...")
@@ -277,7 +287,7 @@ class CameraClient:
                 
         except socket.timeout:
             duration = time.time() - start_time
-            self.logger.warning(f"[DISCOVERY] ✗ Timeout after {duration:.2f}s")
+            self.logger.warning(f"[DISCOVERY] ✗ Timeout after {duration:.2f}s (Port {self.active_port})")
             return False
         except Exception as e:
             self.logger.error(f"[DISCOVERY] Error: {e}")
@@ -292,6 +302,8 @@ class CameraClient:
            b. Send init packets (NEW!)
            c. Send discovery
            d. If success, return
+        
+        FIX #25: Enhanced diagnostics and improved error messages
         """
         self._set_state(CameraState.CONNECTING, "starting retry loop")
         ports = config.DEVICE_PORTS
@@ -306,6 +318,7 @@ class CameraClient:
             elapsed = time.time() - start_time_total
             if elapsed > config.MAX_TOTAL_CONNECTION_TIME:
                 self._set_state(CameraState.CONNECTION_FAILED, "total timeout")
+                self.logger.error(f"[CONNECT] Total connection time exceeded ({elapsed:.1f}s > {config.MAX_TOTAL_CONNECTION_TIME}s)")
                 return False
 
             self.logger.info(f"[CONNECT] Attempt {attempt + 1}/{max_retries}")
@@ -324,7 +337,9 @@ class CameraClient:
                     else:
                         self._socket_force_close()
 
-            time.sleep(config.RETRY_BACKOFF_SEQUENCE[min(attempt, len(config.RETRY_BACKOFF_SEQUENCE)-1)])
+            backoff = config.RETRY_BACKOFF_SEQUENCE[min(attempt, len(config.RETRY_BACKOFF_SEQUENCE)-1)]
+            self.logger.info(f"[CONNECT] All ports failed, waiting {backoff}s before retry...")
+            time.sleep(backoff)
 
         self._set_state(CameraState.CONNECTION_FAILED, "all retries exhausted")
         return False
