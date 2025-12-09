@@ -3,6 +3,7 @@ import time
 import logging
 import struct
 import threading
+import subprocess
 from enum import Enum, auto
 from typing import Optional, Tuple
 import config
@@ -21,6 +22,39 @@ MYSTERY_VARIANTS = {
     'SEQUENCE_VARIANT': bytes([0x03, 0x00, 0x04, 0x00]),
     'BLE_DYNAMIC': None,  # Special: Use sequence_bytes directly
 }
+
+def get_wlan_ip():
+    """Get IP of wlan0 when connected to camera AP (Fix #42)"""
+    try:
+        # Check wlan0 first
+        result = subprocess.run(
+            ['ip', 'addr', 'show', 'wlan0'],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.split('\n'):
+            if 'inet ' in line:
+                parts = line.strip().split()
+                if len(parts) > 1:
+                    ip = parts[1].split('/')[0]
+                    # Check if it looks like the camera network (usually 192.168.43.x)
+                    if ip.startswith('192.168.43.') or ip.startswith('192.168.'):
+                        return ip
+        return None
+    except Exception:
+        return None
+
+def check_firewall(logger):
+    """Check if UFW is blocking UDP (Fix #42)"""
+    try:
+        result = subprocess.run(['sudo', 'ufw', 'status'],
+                              capture_output=True, text=True, timeout=5)
+        if 'inactive' in result.stdout:
+            logger.info("[FIREWALL] UFW is inactive ✓")
+        else:
+            logger.warning(f"[FIREWALL] UFW status: {result.stdout}")
+            logger.warning("[FIREWALL] Ensure UDP ports 40611, 32100, 32108, etc. are allowed!")
+    except Exception as e:
+        logger.warning(f"[FIREWALL] Could not check firewall: {e}")
 
 class CameraState(Enum):
     DISCONNECTED = auto()
@@ -115,6 +149,9 @@ class CameraClient:
         self.login_attempts = 0
         self.max_login_attempts = 3
 
+        # FIX #42: Check firewall on init
+        check_firewall(self.logger)
+
         # PPPP Integration
         self.pppp = PPPPWrapper(logger=self.logger)
         self.artemis_seq = 0x001B  # Fallback if BLE sequence not available
@@ -184,14 +221,23 @@ class CameraClient:
 
         The list of allowed source ports is defined in `config.DEVICE_PORTS`.
         """
+        # FIX #42: Explicit Interface Binding
+        bind_ip = '0.0.0.0'
+        wlan_ip = get_wlan_ip()
+        if wlan_ip:
+             self.logger.info(f"[SOCKET] Binding to camera AP interface: {wlan_ip}")
+             bind_ip = wlan_ip
+        else:
+             self.logger.warning("[SOCKET] Could not detect camera AP IP, binding to 0.0.0.0")
+
         self.logger.info(
-            f"[SOCKET] Binding local UDP source port {port} → Destination {self.ip}:{config.CAM_PORT}"
+            f"[SOCKET] Binding local UDP source port {port} → Destination {self.ip}:{config.CAM_PORT} on {bind_ip}"
         )
         try:
             self._socket_force_close()
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.sock.bind(('', port))
+            self.sock.bind((bind_ip, port))
             timeout_val = timeout if timeout is not None else config.ARTEMIS_DISCOVERY_TIMEOUT
             self.sock.settimeout(timeout_val)
             self.active_port = port
@@ -277,14 +323,28 @@ class CameraClient:
         start_time = time.time()
         
         try:
-            with TimeoutContext(self.sock, config.ARTEMIS_DISCOVERY_TIMEOUT, self.logger):
-                self.sock.sendto(packet, (self.ip, target_port))
-                self.logger.debug(f"[DISCOVERY] Sent: {packet.hex()}")
+            # FIX #42: Increase timeout to 10s
+            timeout_val = 10.0
+
+            with TimeoutContext(self.sock, timeout_val, self.logger):
+                # FIX #42: Burst of 3 packets with delays
+                for attempt in range(3):
+                    self.sock.sendto(packet, (self.ip, target_port))
+                    if attempt < 2:
+                        time.sleep(0.1)  # 100ms between packets
                 
+                self.logger.debug(f"[DISCOVERY] Sent burst of 3 packets to {self.ip}:{target_port}")
+
                 # Expect response
-                data, addr = self.sock.recvfrom(2048)
+                # FIX #42: Raw Packet Debugging
+                data, addr = self.sock.recvfrom(4096)
                 duration = time.time() - start_time
                 
+                self.logger.debug(f"[RAW] Received {len(data)} bytes from {addr}")
+                self.logger.debug(f"[RAW] Hex: {data.hex()}")
+                if len(data) >= 4:
+                    self.logger.debug(f"[PARSE] Magic: 0x{data[0]:02x}, Type: 0x{data[1]:02x}")
+
                 # Unwrap and validate
                 try:
                     response = self.pppp.unwrap_pppp(data)
@@ -294,6 +354,7 @@ class CameraClient:
                         return True
                     else:
                         self.logger.warning(f"[DISCOVERY] Unexpected subcommand: 0x{response['subcommand']:02X}")
+                        self.logger.debug(f"[DISCOVERY] Full parsed response: {response}")
                 except ValueError as ve:
                     self.logger.error(f"[DISCOVERY] Invalid response: {ve}")
 
