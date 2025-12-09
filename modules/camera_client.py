@@ -460,10 +460,10 @@ class CameraClient:
             else:
                 self.logger.warning("[CONNECT] Discovery scan failed this attempt.")
 
-                # FIX #32: Even if discovery fails, we might want to keep the source port
-                # if it was successfully bound, to retry with the same one.
-                if self.active_port:
-                     cached_source_port = self.active_port
+                # FIX #37: Do NOT cache the source port if discovery failed!
+                # If we cache a failed port, we just retry with the same bad port/state.
+                # Let the OS assign a new port on the next attempt.
+                # (Reverts part of FIX #32 logic which was causing Issue #37)
 
                 self._socket_force_close()
                 is_first_attempt = False
