@@ -177,6 +177,8 @@ class PPPPWrapper:
         
         # Increment sequence for next packet
         self.pppp_seq += 1
+        if self.pppp_seq > 65535:
+            self.pppp_seq = 1
         
         return packet
     
