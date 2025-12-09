@@ -224,10 +224,11 @@ class CameraClient:
         try:
             with TimeoutContext(self.sock, config.ARTEMIS_DISCOVERY_TIMEOUT, self.logger):
                 # FIX #29: Increased burst size to 5 to ensure wakeup
-                for i in range(5):
+                # FIX #40-3: Reduced from 5 to 3 packets to match Android app behavior
+                for i in range(3):
                     init_packet = self.pppp.wrap_init()
                     self.sock.sendto(init_packet, (self.ip, target_port))
-                    self.logger.debug(f"[INIT] Sent packet {i+1}/5: {init_packet.hex()}")
+                    self.logger.debug(f"[INIT] Sent packet {i+1}/3: {init_packet.hex()}")
                     time.sleep(0.05)  # 50ms delay between packets
                 
                 self.logger.info("[INIT] ✓ Wakeup burst sent successfully")
@@ -368,6 +369,15 @@ class CameraClient:
         # This matches Android app behavior and keeps PPPP sequence low
         self.logger.info(f"[INIT] Sending wakeup burst to primary port {target_ports[0]} (ONCE for all ports)...")
         self._send_init_packets(dest_port=target_ports[0])
+
+        # === FIX #40-2: RESET PPPP SEQUENCE AFTER INIT BURST ===
+        # Problem: Init burst (5 packets) increases PPPP seq to 5
+        # Discovery then starts at seq=6, which camera may reject
+        # Solution: Reset to seq=1 AFTER init, BEFORE discovery
+        # This ensures Discovery packet has seq=1 (like Android app)
+        self.logger.info("[FIX #40] Resetting PPPP sequence to 1 after init burst")
+        self.pppp.reset_sequence(1)
+        # === END FIX #40-2 ===
 
         # Brief pause to allow camera UDP stack initialization
         time.sleep(0.5)
