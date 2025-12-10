@@ -1,128 +1,83 @@
-import unittest
+# tests/test_pppp_wrapper.py
+import pytest
 import struct
-import logging
-from modules.pppp_wrapper import PPPPWrapper
+from modules.protocol.pppp import PPPPProtocol, PPPPOuterHeader, PPPPInnerHeader
+from modules.protocol.constants import PPPPConstants
 
-class TestPPPPWrapper(unittest.TestCase):
-    def setUp(self):
-        # Configure a dummy logger to avoid console spam during tests
-        logging.basicConfig(level=logging.CRITICAL)
-        self.wrapper = PPPPWrapper()
+@pytest.fixture
+def protocol():
+    return PPPPProtocol()
 
-    def test_wrap_discovery_known_packet(self):
-        """Test wrapping a discovery packet against a known TCPDump capture."""
-        # Known packet from TCPDump: f1d10006d1000001001b
-        # Outer: F1 D1 00 06
-        # Inner: D1 00 00 01
-        # Payload: 00 1B
+def test_pppp_constants():
+    assert PPPPConstants.MAGIC_STANDARD == 0xF1
+    assert PPPPConstants.CMD_DISCOVERY == 0xD1
+    assert PPPPConstants.CMD_LOGIN == 0xD0
 
-        # Reset sequence to 1 to match the capture
-        self.wrapper.reset_sequence(1)
+def test_outer_header_serialization():
+    # OuterHeader(0xF1, 0xD1, 6) -> bytes
+    header = PPPPOuterHeader(0xF1, 0xD1, 6)
+    data = header.to_bytes()
+    assert data == b'\xf1\xd1\x00\x06'
 
-        artemis_seq = 0x001B
-        packet = self.wrapper.wrap_discovery(artemis_seq)
+def test_inner_header_serialization():
+    # InnerHeader(0xD1, 0x00, 1, 0) -> bytes
+    header = PPPPInnerHeader(0xD1, 0x00, 1, 0)
+    data = header.to_bytes()
+    assert data == b'\xd1\x00\x00\x01\x00'
 
-        expected_hex = "f1d10006d1000001001b"
-        self.assertEqual(packet.hex(), expected_hex)
+def test_wrap_discovery_packet(protocol):
+    # wrap_discovery(0x0048)
+    # Payload: 00 48 (2 bytes)
+    # Inner: D1 00 00 01 00 (5 bytes)
+    # Outer Length: 7 bytes
+    packet = protocol.wrap_discovery(0x0048)
 
-        # Verify headers specifically
-        self.assertEqual(packet[0], 0xF1) # Magic
-        self.assertEqual(packet[1], 0xD1) # Outer Type
-        self.assertEqual(struct.unpack('>H', packet[2:4])[0], 6) # Length (4+2)
-        self.assertEqual(packet[4], 0xD1) # Inner Type
-        self.assertEqual(packet[5], 0x00) # Subcommand (Discovery)
-        self.assertEqual(struct.unpack('>H', packet[6:8])[0], 1) # PPPP Seq
+    assert packet.startswith(b'\xf1\xd1\x00\x07') # Outer
+    assert packet[4:9] == b'\xd1\x00\x00\x01\x00' # Inner
+    assert packet[9:] == b'\x00\x48' # Payload
+    assert protocol.pppp_sequence == 2
 
-    def test_sequence_increment(self):
-        """Test that PPPP sequence number increments correctly."""
-        self.wrapper.reset_sequence(1)
+def test_wrap_init_packet(protocol):
+    packet = protocol.wrap_init()
+    assert packet == b'\xf1\xe1\x00\x00'
+    # Sequence should NOT increment for init
+    assert protocol.pppp_sequence == 1
 
-        # First packet (Seq 1)
-        pkt1 = self.wrapper.wrap_discovery(0x001B)
-        seq1 = struct.unpack('>H', pkt1[6:8])[0]
-        self.assertEqual(seq1, 1)
+def test_wrap_login_packet(protocol):
+    payload = b'ARTEMIS_PAYLOAD'
+    packet = protocol.wrap_login(payload)
 
-        # Second packet (Seq 2)
-        pkt2 = self.wrapper.wrap_discovery(0x001B)
-        seq2 = struct.unpack('>H', pkt2[6:8])[0]
-        self.assertEqual(seq2, 2)
+    # Outer: F1 D0 ...
+    assert packet[0] == 0xF1
+    assert packet[1] == 0xD0
 
-        # Third packet (Seq 3)
-        pkt3 = self.wrapper.wrap_heartbeat(0x001B)
-        seq3 = struct.unpack('>H', pkt3[6:8])[0]
-        self.assertEqual(seq3, 3)
+    # Check length
+    # Inner (5) + Payload (15) = 20
+    length = struct.unpack('>H', packet[2:4])[0]
+    assert length == 5 + len(payload)
 
-    def test_wrap_login(self):
-        """Test wrapping a login packet."""
-        # Create a dummy payload of 38 bytes
-        dummy_payload = b'A' * 38
+    assert protocol.pppp_sequence == 2
 
-        self.wrapper.reset_sequence(10)
-        packet = self.wrapper.wrap_login(dummy_payload)
+def test_wrap_heartbeat_packet(protocol):
+    payload = b'{"cmdId": 525}'
+    packet = protocol.wrap_heartbeat(payload)
 
-        # Length should be 38 (payload) + 4 (inner header) = 42 (0x2A)
-        expected_len = 42
+    # Outer: F1 D3 ...
+    assert packet[1] == 0xD3
+    assert protocol.pppp_sequence == 2
 
-        # Verify length in outer header
-        packet_len = struct.unpack('>H', packet[2:4])[0]
-        self.assertEqual(packet_len, expected_len)
+def test_sequence_increment(protocol):
+    protocol.wrap_discovery(0) # 1 -> 2
+    protocol.wrap_discovery(0) # 2 -> 3
+    protocol.wrap_discovery(0) # 3 -> 4
+    assert protocol.pppp_sequence == 4
 
-        # Verify Subcommand (0x03 for Login)
-        self.assertEqual(packet[5], 0x03)
+def test_sequence_wraparound(protocol):
+    protocol.pppp_sequence = 0xFFFF
+    protocol.wrap_discovery(0) # FFFF -> 1
+    assert protocol.pppp_sequence == 1
 
-        # Verify Seq (10)
-        seq = struct.unpack('>H', packet[6:8])[0]
-        self.assertEqual(seq, 10)
-
-    def test_wrap_heartbeat(self):
-        """Test wrapping a heartbeat packet."""
-        self.wrapper.reset_sequence(5)
-        packet = self.wrapper.wrap_heartbeat(0x0020)
-
-        # Heartbeat uses Control type (0xD3)
-        self.assertEqual(packet[1], 0xD3) # Outer
-        self.assertEqual(packet[4], 0xD3) # Inner
-
-        # Subcommand 0x01
-        self.assertEqual(packet[5], 0x01)
-
-        # Payload size is 4 bytes (2 seq + 2 padding)
-        # Total length = 4 + 4 = 8
-        packet_len = struct.unpack('>H', packet[2:4])[0]
-        self.assertEqual(packet_len, 8)
-
-    def test_unwrap_pppp(self):
-        """Test unwrapping a packet (Round Trip)."""
-        original_payload = b'\x12\x34\x56'
-        self.wrapper.reset_sequence(100)
-
-        # Wrap it
-        packet = self.wrapper.wrap_pppp(
-            original_payload,
-            outer_type=0xD1,
-            inner_type=0xD1,
-            subcommand=0x01
-        )
-
-        # Unwrap it
-        parsed = self.wrapper.unwrap_pppp(packet)
-
-        self.assertEqual(parsed['outer_magic'], 0xF1)
-        self.assertEqual(parsed['outer_type'], 0xD1)
-        self.assertEqual(parsed['inner_type'], 0xD1)
-        self.assertEqual(parsed['subcommand'], 0x01)
-        self.assertEqual(parsed['pppp_seq'], 100)
-        self.assertEqual(parsed['payload'], original_payload)
-
-        # Check length
-        expected_len = 4 + 3 # Inner header + payload
-        self.assertEqual(parsed['length'], expected_len)
-
-    def test_unwrap_too_short(self):
-        """Test unwrapping a packet that is too short."""
-        short_packet = b'\xF1\xD1\x00\x01' # 4 bytes
-        with self.assertRaises(ValueError):
-            self.wrapper.unwrap_pppp(short_packet)
-
-if __name__ == '__main__':
-    unittest.main()
+def test_error_handling(protocol):
+    large_payload = b'x' * 5000
+    with pytest.raises(ValueError):
+        protocol.wrap_login(large_payload)
