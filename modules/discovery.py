@@ -39,13 +39,17 @@ class DiscoveryPhase:
         logger.info("[DISCOVERY] Phase 1: LAN search starting...")
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         sock.bind(('0.0.0.0', 0))
         sock.setblocking(False) # For asyncio
 
         try:
-            packet = self.pppp.wrap_discovery(self.artemis_seq)
+            # Use 0x30 LAN Search packet instead of 0xD1
+            packet = self.pppp.wrap_lan_search()
             logger.debug(f"Sending discovery packet: {packet.hex()}")
 
+            # Send to Broadcast and Unicast (just in case)
+            sock.sendto(packet, ('255.255.255.255', 32108))
             sock.sendto(packet, (self.camera_ip, 32108))
 
             # Async receive with timeout

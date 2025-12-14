@@ -383,6 +383,18 @@ class CameraClient:
                 self._socket_force_close()
                 continue
 
+            # PHASE 1.5: LAN Search Broadcast (0x30)
+            # Send broadcast to wake up / discover camera on port 32108
+            try:
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                lan_search = self.pppp.wrap_lan_search()
+                self.logger.info(f"[CONNECT] Sending LAN Search (0x30) to 32108...")
+                self.sock.sendto(lan_search, ('255.255.255.255', 32108))
+                self.sock.sendto(lan_search, (self.ip, 32108)) # Unicast too
+                time.sleep(0.1)
+            except Exception as e:
+                self.logger.warning(f"[CONNECT] Failed to send LAN Search: {e}")
+
             # Send init packets to primary port
             self.logger.info(f"[INIT] Sending to port {target_ports[0]}...")
             if not self._send_init_packets(dest_port=target_ports[0]):

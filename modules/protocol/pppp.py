@@ -91,6 +91,22 @@ class PPPPProtocol:
         logger.debug(f"[PPPP] wrap_init_secondary (0xE1): {packet.hex()}")
         return packet
 
+    def wrap_lan_search(self) -> bytes:
+        """
+        Creates the LAN Search Broadcast packet (0xF130).
+        Format: F1 30 00 00 (No payload)
+
+        This packet is broadcast to port 32108 to discover the camera.
+        """
+        outer = PPPPOuterHeader(
+            magic=PPPPConstants.MAGIC_STANDARD,
+            cmd_type=PPPPConstants.CMD_LAN_SEARCH, # 0x30
+            length=0
+        )
+        packet = outer.to_bytes()
+        logger.debug(f"[PPPP] wrap_lan_search (0x30): {packet.hex()}")
+        return packet
+
     def wrap_init(self) -> bytes:
         """
         Legacy wrapper for backward compatibility.

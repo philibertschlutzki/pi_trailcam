@@ -7,6 +7,7 @@ class PPPPConstants(IntEnum):
     # Command Types
     CMD_INIT_PING = 0xE0     # First initialization packet (Wake-up Phase 1)
     CMD_INIT_SECONDARY = 0xE1 # Second initialization packet (Wake-up Phase 2)
+    CMD_LAN_SEARCH = 0x30    # LAN Search Broadcast (Phase 1 Discovery)
     CMD_LOGIN = 0xD0         # Login Outer Header
     CMD_DISCOVERY = 0xD1     # Discovery & Heartbeat
     CMD_CONTROL = 0xD3       # Heartbeat (alternative) or Control
