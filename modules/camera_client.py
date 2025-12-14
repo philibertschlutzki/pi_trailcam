@@ -4,10 +4,13 @@ import logging
 import struct
 import threading
 import subprocess
+import base64
+import json
 from enum import Enum, auto
 from typing import Optional, Tuple
 import config
 from modules.protocol.pppp import PPPPProtocol
+from modules.packet_builder import ArtemisPacketBuilder
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -130,7 +133,8 @@ class CameraClient:
 
         # PPPP Integration
         self.pppp = PPPPProtocol(logger=self.logger)
-        self.artemis_seq = 0x001B  # Fallback if BLE sequence not available
+        # FIX #59: Initialize Artemis sequence to 5 (start of sequence counter)
+        self.artemis_seq = 5
 
     @property
     def state(self):
@@ -155,21 +159,14 @@ class CameraClient:
             self.sequence_bytes = sequence if use_ble_dynamic else None
             self.token_timestamp = time.time()
             
-            # FIX #23: Parse sequence bytes and set artemis_seq
-            if sequence and len(sequence) >= 4:
-                # Sequence is 4 bytes, little-endian
-                self.artemis_seq = struct.unpack('<I', sequence[:4])[0]
-                self.logger.info(
-                    f"[CREDENTIALS] Token={token[:20]}..., "
-                    f"Sequence={sequence.hex().upper()}, "
-                    f"Artemis Seq=0x{self.artemis_seq:04X} ({self.artemis_seq})"
-                )
-            else:
-                self.logger.warning(
-                    f"[CREDENTIALS] Token={token[:20]}..., "
-                    f"Sequence={sequence.hex().upper() if sequence else 'NONE'}, "
-                    f"Using fallback Artemis Seq=0x{self.artemis_seq:04X}"
-                )
+            # FIX #59: We now start artemis_seq at 5 and increment.
+            # We log the BLE sequence for reference, but we don't rely on it for the PPPP sequence counter in packet builder.
+            self.logger.info(
+                f"[CREDENTIALS] Token={token[:20]}..., "
+                f"Sequence={sequence.hex().upper() if sequence else 'NONE'}"
+            )
+            # Reset Artemis Seq to 5 on new credentials
+            self.artemis_seq = 5
 
     def _socket_force_close(self):
         if self.sock:
@@ -254,13 +251,14 @@ class CameraClient:
     def _try_login_on_port(self, dest_port: int, variant: str = 'BLE_DYNAMIC') -> bool:
         """
         FIX #48: Try login directly on a specific port (no discovery).
+        FIX #59: Use correct Packet Builder with Base64 token and sequence.
         
         This replaces the discovery_phase() method.
         Android app sends LOGIN (0xD0) immediately after init.
         
         Args:
             dest_port: Destination port to try
-            variant: Login variant to use
+            variant: Login variant to use (ignored now, kept for signature compatibility)
             
         Returns:
             bool: True if login succeeded
@@ -272,21 +270,32 @@ class CameraClient:
             return False
         
         try:
-            # Build Artemis payload
-            artemis_payload = self._build_login_payload(variant)
+            # FIX #59: Use ArtemisPacketBuilder
+            self.logger.debug(f"[LOGIN] Token input: {self.session_token}")
+            self.logger.debug(f"[LOGIN] Token Base64: {base64.b64encode(self.session_token.encode()).decode()}")
 
-            # Wrap in PPPP with 0xD0 outer type
-            packet = self.pppp.wrap_login(artemis_payload)
+            packet = ArtemisPacketBuilder.build_login_packet(
+                self.session_token,
+                self.artemis_seq
+            )
 
-            # Verify packet starts with correct bytes
-            if packet[0:2] != b'\xf1\xd0':
-                self.logger.warning(
-                    f"[LOGIN] Packet should start with f1d0 but starts with {packet[0:2].hex()}"
-                )
+            # Validation
+            if len(packet) != 53:
+                self.logger.error(f"[LOGIN] Invalid packet size: {len(packet)} (expected 53)")
+                self.logger.error(f"[LOGIN] Hex dump: {packet.hex()}")
+                # Don't fail immediately, try sending anyway, but log heavily
 
-            self.logger.info(f"[LOGIN] Sending to {self.ip}:{dest_port} (Variant: {variant})")
+            self.logger.debug(f"[LOGIN] Packet size: {len(packet)} bytes (must be 53)")
             self.logger.debug(f"[LOGIN] Packet hex: {packet.hex()}")
-            self.logger.debug(f"[LOGIN] Artemis Seq: 0x{self.artemis_seq:04X}")
+            self.logger.debug(f"[LOGIN] PPPP Header: {packet[0:4].hex()}")
+            self.logger.debug(f"[LOGIN] ARTEMIS Wrapper: {packet[4:8].hex()}")
+            self.logger.debug(f"[LOGIN] Protocol ID: {packet[8:16]}")
+            self.logger.debug(f"[LOGIN] Command: {packet[16:20].hex()}")
+            self.logger.debug(f"[LOGIN] Subcommand: {packet[20]:02X} (must be 04)")
+            self.logger.debug(f"[LOGIN] Parameters: {packet[21:25].hex()}")
+            self.logger.debug(f"[LOGIN] Token bytes: {packet[28:53].hex()}")
+
+            self.logger.info(f"[LOGIN] Sending to {self.ip}:{dest_port} (Seq: {self.artemis_seq})")
             
             # FIX #48: Send login burst (3 packets like Android app)
             for attempt in range(3):
@@ -311,10 +320,14 @@ class CameraClient:
             if response['subcommand'] in [0x01, 0x04]:
                 self.logger.info(
                     f"[LOGIN] ✓ SUCCESS on port {dest_port} "
-                    f"(Subcommand: 0x{response['subcommand']:02X}, Variant: {variant})"
+                    f"(Subcommand: 0x{response['subcommand']:02X})"
                 )
                 self._set_state(CameraState.AUTHENTICATED, f"port {dest_port}")
                 self.port = dest_port  # Update port for future communications
+
+                # Sync PPPP sequence so next packet (heartbeat) continues from login sequence
+                self.pppp.reset_sequence(self.artemis_seq)
+
                 return True
             else:
                 self.logger.warning(
@@ -328,6 +341,8 @@ class CameraClient:
             return False
         except Exception as e:
             self.logger.error(f"[LOGIN] Error on port {dest_port}: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             return False
 
     def connect_with_retries(self) -> bool:
@@ -347,6 +362,9 @@ class CameraClient:
         # FIX #48: Initialize PPPP sequence
         self.logger.info("[CONNECT] Resetting PPPP sequence to 1")
         self.pppp.reset_sequence(1)
+
+        # FIX #59: Initialize Artemis sequence to 5
+        self.artemis_seq = 5
 
         # Destination ports to try
         target_ports = [
@@ -411,13 +429,16 @@ class CameraClient:
             for port in target_ports:
                 self.logger.info(f"[CONNECT] Trying login on port {port}...")
                 
-                # Try BLE_DYNAMIC variant first
+                # Try with current seq
                 if self._try_login_on_port(port, variant='BLE_DYNAMIC'):
                     login_successful = True
                     break
                 
-                # Increment Artemis sequence for next attempt
+                # FIX #59: Increment Artemis sequence for next attempt/port
                 self.artemis_seq += 1
+                # Max seq check?
+                if self.artemis_seq > 100:
+                    self.artemis_seq = 5 # Reset if too high?
 
             if login_successful:
                 self.logger.info(
@@ -448,39 +469,6 @@ class CameraClient:
         self._socket_force_close()
         self._set_state(CameraState.DISCONNECTED, "closed")
 
-    def _build_login_payload(self, variant: str = 'BLE_DYNAMIC') -> bytes:
-        """
-        Build Artemis login payload.
-        
-        Structure:
-        - "ARTEMIS\x00" (8 bytes)
-        - Version (4 bytes, little-endian)
-        - Sequence from BLE or variant (4 bytes)
-        - Token length (4 bytes, little-endian)
-        - Token string + null terminator
-        """
-        if not self.session_token:
-            raise ValueError("No token set")
-        
-        artemis = b'ARTEMIS\x00'
-        version = b'\x02\x00\x00\x00'
-        
-        # Use BLE sequence if available and variant is BLE_DYNAMIC
-        if variant == 'BLE_DYNAMIC' and self.sequence_bytes:
-            sequence = self.sequence_bytes[:4] if len(self.sequence_bytes) >= 4 else b'\x00\x00\x00\x00'
-            self.logger.debug(f"[LOGIN PAYLOAD] Using BLE sequence: {sequence.hex().upper()}")
-        else:
-            sequence = MYSTERY_VARIANTS.get(variant, MYSTERY_VARIANTS['MYSTERY_09_01'])
-            self.logger.debug(f"[LOGIN PAYLOAD] Using variant '{variant}': {sequence.hex().upper()}")
-        
-        token_len = struct.pack('<I', len(self.session_token))
-        token_bytes = self.session_token.encode('ascii') + b'\x00'
-        
-        payload = artemis + version + sequence + token_len + token_bytes
-        self.logger.debug(f"[LOGIN PAYLOAD] Total length: {len(payload)} bytes")
-        
-        return payload
-
     def login(self, variant: str = 'BLE_DYNAMIC') -> bool:
         """
         FIX #48: This method is deprecated in favor of _try_login_on_port().
@@ -508,10 +496,13 @@ class CameraClient:
         while self.running:
             try:
                 if self._state == CameraState.AUTHENTICATED:
-                    packet = self.pppp.wrap_heartbeat(self.artemis_seq)
+                    # FIX #59: Send correct JSON payload for heartbeat
+                    json_payload = json.dumps({"cmdId": 525}).encode('utf-8')
+                    packet = self.pppp.wrap_heartbeat(json_payload)
+
                     if self.sock:
                         self.sock.sendto(packet, (self.ip, self.port))
-                        self.logger.debug(f"[HEARTBEAT] Sent seq {self.artemis_seq}")
+                        self.logger.debug(f"[HEARTBEAT] Sent seq {self.pppp.get_sequence()}")
                 time.sleep(config.ARTEMIS_KEEPALIVE_INTERVAL)
             except Exception as e:
                 self.logger.error(f"[HEARTBEAT] Error: {e}")
