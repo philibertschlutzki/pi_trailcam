@@ -39,7 +39,7 @@ CONFIG = {
     'ap_ssid': 'KJK_E0FF_pi',         # Leicht abweichend, aber erkennbar
     'ap_password': '85087127',         # Identisch zur Kamera
     'ap_channel': '6',
-    'ap_ip': '192.168.43.1',           # Identische IP wie Kamera
+    'ap_ip': '192.168.43.20',           # Identische IP wie Kamera
     'ap_netmask': '255.255.255.0',
     'ap_dhcp_range': '192.168.43.50,192.168.43.150',
     
