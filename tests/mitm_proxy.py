@@ -64,6 +64,9 @@ CONFIG = {
 # LOGGING SETUP
 # ============================================================
 
+# Create capture directory if it doesn't exist (needed for logging)
+Path(CONFIG['capture_dir']).mkdir(parents=True, exist_ok=True)
+
 logging.basicConfig(
     level=CONFIG['log_level'],
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
