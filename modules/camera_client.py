@@ -58,10 +58,8 @@ def check_firewall(logger):
 
 class CameraState(Enum):
     DISCONNECTED = auto()
-    INITIALIZING = auto()  # NEW: For init packet phase
-    DISCOVERING = auto()
-    DISCOVERED = auto()
-    CONNECTING = auto()
+    INITIALIZING = auto()  # For init packet phase
+    CONNECTING = auto()    # Direct login phase (no discovery)
     CONNECTED = auto()
     AUTHENTICATED = auto()
     CONNECTION_FAILED = auto()
@@ -92,18 +90,22 @@ class TimeoutContext:
 
 class CameraClient:
     """
-    FIX #44: UDP Client with corrected initialization sequence.
+    FIX #48: UDP Client with direct login (no discovery phase).
     
-    Connection Flow:
+    Connection Flow (Android App Verified):
     Phase 1: Initialization (0xE0 + 0xE1) - Dual-phase wake sequence
-    Phase 2: Discovery (0xD1) - Device presence verification
-    Phase 3: Login (0xD0) - Authentication with BLE token
+    Phase 2: Login (0xD0) - Direct authentication with BLE token
     
-    Critical Changes:
-    - Init now sends TWO packets: 0xF1E0 then 0xF1E1
-    - Reduced from 5-packet burst to 2-packet sequence
-    - Matches Android app behavior from tcpdump analysis
-    - Prevents PPPP sequence overflow before discovery
+    REMOVED: Discovery phase (0xD1) - Camera ignores these packets!
+    
+    Critical Discovery from Issue #48:
+    - Discovery packets (0xF1D1) timeout on all ports
+    - Camera never responds to discovery
+    - tcpdump shows Android app sends 0xF1D0 (LOGIN) directly after init
+    - No 0xF1D1 packets in successful connection flow
+    
+    Conclusion: The "discovery" phase is actually the login phase.
+    The camera expects LOGIN (0xD0) immediately after init.
     """
 
     def __init__(self, camera_ip=None, logger=None):
@@ -145,7 +147,7 @@ class CameraClient:
         """
         Set session credentials from BLE.
         
-        FIX #23: Parse sequence bytes and set artemis_seq for Discovery/Login.
+        FIX #23: Parse sequence bytes and set artemis_seq for Login.
         The sequence is typically 4 bytes in little-endian format.
         """
         with self._lock:
@@ -192,14 +194,14 @@ class CameraClient:
              self.logger.warning("[SOCKET] Could not detect camera AP IP, binding to 0.0.0.0")
 
         self.logger.info(
-            f"[SOCKET] Binding local UDP source port {port} → Destination {self.ip}:{config.CAM_PORT} on {bind_ip}"
+            f"[SOCKET] Binding local UDP source port {port} → Destination {self.ip}:{self.port} on {bind_ip}"
         )
         try:
             self._socket_force_close()
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.sock.bind((bind_ip, port))
-            timeout_val = timeout if timeout is not None else config.ARTEMIS_DISCOVERY_TIMEOUT
+            timeout_val = timeout if timeout is not None else config.ARTEMIS_LOGIN_TIMEOUT
             self.sock.settimeout(timeout_val)
             self.active_port = port
             return True
@@ -216,12 +218,6 @@ class CameraClient:
         17:55:23.927: 0xF1E0 0000 (first init)
         17:55:23.928: 0xF1E1 0000 (second init)
         
-        Critical changes:
-        - Reduced from 5-packet burst to 2-packet sequence
-        - Each packet type sent only once
-        - Matches Android app behavior exactly
-        - Prevents PPPP sequence overflow
-        
         Returns:
             bool: True if init packets were sent successfully
         """
@@ -230,7 +226,7 @@ class CameraClient:
         self.logger.info(f"[INIT] Sending dual-phase wakeup to {self.ip}:{target_port}...")
         
         try:
-            with TimeoutContext(self.sock, config.ARTEMIS_DISCOVERY_TIMEOUT, self.logger):
+            with TimeoutContext(self.sock, config.ARTEMIS_LOGIN_TIMEOUT, self.logger):
                 # Phase 1: 0xF1E0 packet
                 init_ping = self.pppp.wrap_init_ping()
                 self.sock.sendto(init_ping, (self.ip, target_port))
@@ -244,174 +240,120 @@ class CameraClient:
                 
                 self.logger.info("[INIT] ✓ Dual-phase wakeup sent successfully")
                 
-                # FIX #44: Wait 2 seconds for UDP stack initialization
-                # Android app shows similar delay before discovery
-                self.logger.info("[INIT] Waiting 2s for camera UDP stack initialization...")
-                time.sleep(2.0)
+                # FIX #48: Shorter wait (1s) before login
+                # Android app shows ~1.7s delay between init and login
+                self.logger.info("[INIT] Waiting 1s for camera UDP stack initialization...")
+                time.sleep(1.0)
                 
                 return True
                 
         except Exception as e:
             self.logger.warning(f"[INIT] Error during init phase: {e}")
-            # Don't fail connection on init errors - camera might already be awake
             return True
 
-    def discovery_phase(self, dest_port: Optional[int] = None) -> bool:
+    def _try_login_on_port(self, dest_port: int, variant: str = 'BLE_DYNAMIC') -> bool:
         """
-        Sends the PPPP wrapped discovery packet (0xF1D1).
+        FIX #48: Try login directly on a specific port (no discovery).
         
-        FIX #44: Must be called AFTER _send_init_packets().
-        PPPP sequence should be 1 at this point (after init reset).
+        This replaces the discovery_phase() method.
+        Android app sends LOGIN (0xD0) immediately after init.
+        
+        Args:
+            dest_port: Destination port to try
+            variant: Login variant to use
+            
+        Returns:
+            bool: True if login succeeded
         """
-        self._set_state(CameraState.DISCOVERING, "starting discovery")
-        self.logger.info("[DISCOVERY] Sending PPPP Discovery...")
+        self.logger.info(f"[LOGIN] Attempting direct login to port {dest_port}...")
         
-        # DEBUG: Log current PPPP Seq before wrapping
-        current_pppp_seq = self.pppp.get_sequence()
-        self.logger.debug(f"[DISCOVERY DEBUG] PPPP Seq before wrap: 0x{current_pppp_seq:04X}")
-        self.logger.debug(f"[DISCOVERY DEBUG] Artemis Seq to use: 0x{self.artemis_seq:04X}")
-        
-        # Create wrapped discovery packet
-        packet = self.pppp.wrap_discovery(self.artemis_seq)
-        target_port = dest_port if dest_port else self.port
-
-        # DEBUG: Log PPPP Seq after wrapping
-        new_pppp_seq = self.pppp.get_sequence()
-        self.logger.debug(f"[DISCOVERY DEBUG] PPPP Seq after wrap: 0x{new_pppp_seq:04X}")
-        self.logger.info(f"[DISCOVERY] Sending to {self.ip}:{target_port} - Packet: {packet.hex()}")
-
-        # Increment Artemis sequence for next packet
-        self.artemis_seq += 1
-        
-        start_time = time.time()
+        if not self.session_token:
+            self.logger.error("[LOGIN] No session token available")
+            return False
         
         try:
-            # FIX #42: Increase timeout to 10s
-            timeout_val = 10.0
+            # Build Artemis payload
+            artemis_payload = self._build_login_payload(variant)
 
-            with TimeoutContext(self.sock, timeout_val, self.logger):
-                # FIX #42: Burst of 3 packets with delays
-                for attempt in range(3):
-                    self.sock.sendto(packet, (self.ip, target_port))
-                    if attempt < 2:
-                        time.sleep(0.1)  # 100ms between packets
-                
-                self.logger.debug(f"[DISCOVERY] Sent burst of 3 packets to {self.ip}:{target_port}")
+            # Wrap in PPPP with 0xD0 outer type
+            packet = self.pppp.wrap_login(artemis_payload)
 
-                # Expect response
-                data, addr = self.sock.recvfrom(4096)
-                duration = time.time() - start_time
-                
-                self.logger.debug(f"[RAW] Received {len(data)} bytes from {addr}")
-                self.logger.debug(f"[RAW] Hex: {data.hex()}")
-                if len(data) >= 4:
-                    self.logger.debug(f"[PARSE] Magic: 0x{data[0]:02x}, Type: 0x{data[1]:02x}")
+            # Verify packet starts with correct bytes
+            if packet[0:2] != b'\xf1\xd0':
+                self.logger.warning(
+                    f"[LOGIN] Packet should start with f1d0 but starts with {packet[0:2].hex()}"
+                )
 
-                # Unwrap and validate
-                try:
-                    response = self.pppp.unwrap_pppp(data)
-                    if response['subcommand'] == 0x01: # Discovery ACK
-                        self.logger.info(f"[DISCOVERY] ✓ Response: {data.hex()} from {addr} in {duration:.2f}s")
-                        self._set_state(CameraState.DISCOVERED, f"on source port {self.active_port}")
-                        return True
-                    else:
-                        self.logger.warning(f"[DISCOVERY] Unexpected subcommand: 0x{response['subcommand']:02X}")
-                        self.logger.debug(f"[DISCOVERY] Full parsed response: {response}")
-                except ValueError as ve:
-                    self.logger.error(f"[DISCOVERY] Invalid response: {ve}")
-
-                return False
-                
-        except socket.timeout:
+            self.logger.info(f"[LOGIN] Sending to {self.ip}:{dest_port} (Variant: {variant})")
+            self.logger.debug(f"[LOGIN] Packet hex: {packet.hex()}")
+            self.logger.debug(f"[LOGIN] Artemis Seq: 0x{self.artemis_seq:04X}")
+            
+            # FIX #48: Send login burst (3 packets like Android app)
+            for attempt in range(3):
+                self.sock.sendto(packet, (self.ip, dest_port))
+                if attempt < 2:
+                    time.sleep(0.1)  # 100ms between packets
+            
+            self.logger.debug(f"[LOGIN] Sent burst of 3 packets to {self.ip}:{dest_port}")
+            
+            # Wait for response
+            start_time = time.time()
+            data, addr = self.sock.recvfrom(2048)
             duration = time.time() - start_time
-            self.logger.warning(f"[DISCOVERY] ✗ Timeout after {duration:.2f}s (Port {self.active_port})")
+            
+            self.logger.debug(f"[LOGIN] Received {len(data)} bytes from {addr} in {duration:.2f}s")
+            self.logger.debug(f"[LOGIN] Response hex: {data.hex()}")
+
+            # Unwrap
+            response = self.pppp.unwrap_pppp(data)
+            
+            # FIX #24: Accept both 0x01 and 0x04 as valid login responses
+            if response['subcommand'] in [0x01, 0x04]:
+                self.logger.info(
+                    f"[LOGIN] ✓ SUCCESS on port {dest_port} "
+                    f"(Subcommand: 0x{response['subcommand']:02X}, Variant: {variant})"
+                )
+                self._set_state(CameraState.AUTHENTICATED, f"port {dest_port}")
+                self.port = dest_port  # Update port for future communications
+                return True
+            else:
+                self.logger.warning(
+                    f"[LOGIN] Unexpected subcommand: 0x{response['subcommand']:02X}"
+                )
+                self.logger.debug(f"[LOGIN] Full response: {response}")
+                return False
+
+        except socket.timeout:
+            self.logger.warning(f"[LOGIN] Timeout on port {dest_port}")
             return False
         except Exception as e:
-            self.logger.error(f"[DISCOVERY] Error: {e}")
+            self.logger.error(f"[LOGIN] Error on port {dest_port}: {e}")
             return False
 
-    def discover_device(self) -> bool:
+    def connect_with_retries(self) -> bool:
         """
-        FIX #31: Discovery with dynamic source port handling.
-        """
-        return self._discover_device_internal(source_port=0)
-
-    def _discover_device_internal(self, source_port: int = 0) -> bool:
-        """
-        FIX #44: Single init burst to primary port, then scan all ports with discovery.
+        FIX #48: Direct login flow (no discovery).
         
-        Root Cause: Repeated init bursts caused PPPP sequence overflow.
-        Solution: Match Android app - single init burst, then discovery scan.
+        Flow:
+        1. Create socket
+        2. Send init packets (0xE0 + 0xE1)
+        3. Try login (0xD0) on multiple ports
+        4. If successful, start heartbeat
         """
-        self._set_state(CameraState.DISCOVERING, "scanning ports")
+        self._set_state(CameraState.CONNECTING, "starting connection")
+        max_retries = config.MAX_CONNECTION_RETRIES
+        start_time_total = time.time()
 
-        # Destination ports to try on camera
+        # FIX #48: Initialize PPPP sequence
+        self.logger.info("[CONNECT] Resetting PPPP sequence to 1")
+        self.pppp.reset_sequence(1)
+
+        # Destination ports to try
         target_ports = [
             40611,    # Primary port from logs
             32100,    # CS2P2P Standard
             32108,    # Broadcast Discovery Standard
-            10000,
-            80,
-            57743     # iOS success port
         ]
-
-        # Create socket with specified source port
-        if not self._create_socket(source_port, timeout=2.0):
-            self.logger.error(f"[DISCOVERY] Failed to bind source port {source_port}")
-            return False
-
-        # FIX #31: After binding, read the actual assigned local port
-        if source_port == 0:
-            try:
-                actual_local_ip, actual_local_port = self.sock.getsockname()
-                self.active_port = actual_local_port
-                self.logger.info(f"[DISCOVERY] OS assigned local source port: {actual_local_port}")
-            except Exception as e:
-                self.logger.error(f"[DISCOVERY] Failed to read assigned port: {e}")
-                return False
-        else:
-            self.active_port = source_port
-            self.logger.info(f"[DISCOVERY] Reusing cached source port: {source_port}")
-
-        # FIX #44: Send init burst ONCE to primary port BEFORE scanning all ports
-        self.logger.info(f"[INIT] Sending wakeup to primary port {target_ports[0]} (ONCE for all ports)...")
-        self._send_init_packets(dest_port=target_ports[0])
-
-        # FIX #44: RESET PPPP SEQUENCE AFTER INIT BURST
-        # Ensures Discovery packet has seq=1 (like Android app)
-        self.logger.info("[FIX #44] Resetting PPPP sequence to 1 after init burst")
-        self.pppp.reset_sequence(1)
-
-        self.logger.info(f"[DISCOVERY] Scanning {len(target_ports)} destination ports...")
-
-        for port in target_ports:
-            self.logger.info(f"[DISCOVERY] Trying destination port {port}...")
-
-            if self.discovery_phase(dest_port=port):
-                self.logger.info(
-                    f"[DISCOVERY] ✓ FOUND CAMERA on destination port {port} "
-                    f"with source port {self.active_port}"
-                )
-                self.port = port
-                return True
-
-        return False
-
-    def connect_with_retries(self) -> bool:
-        """
-        FIX #31: Connection with source port caching.
-        """
-        self._set_state(CameraState.CONNECTING, "starting retry loop")
-        max_retries = config.MAX_CONNECTION_RETRIES
-        start_time_total = time.time()
-
-        # FIX #22: Initialize PPPP sequence once for the entire connection session
-        self.logger.info("[CONNECT] Resetting PPPP sequence to 1")
-        self.pppp.reset_sequence(1)
-
-        # FIX #31: Cache the source port across reconnect attempts
-        cached_source_port = None
-        is_first_attempt = True
 
         for attempt in range(max_retries):
             elapsed = time.time() - start_time_total
@@ -425,49 +367,62 @@ class CameraClient:
 
             self.logger.info(f"[CONNECT] Attempt {attempt + 1}/{max_retries}")
 
-            # FIX #31: Decide which source port to use
-            if is_first_attempt:
-                source_port = 0
-                self.logger.debug("[CONNECT] First attempt - requesting OS-assigned source port")
-            else:
-                if cached_source_port:
-                    source_port = cached_source_port
-                    self.logger.debug(
-                        f"[CONNECT] Reconnect attempt - reusing cached source port {source_port}"
-                    )
-                else:
-                    source_port = 0
-                    self.logger.warning(
-                        "[CONNECT] Reconnect attempt - no cached source port, requesting OS-assigned"
-                    )
+            # Create socket with OS-assigned port
+            if not self._create_socket(0, timeout=5.0):
+                self.logger.error("[CONNECT] Failed to create socket")
+                time.sleep(1)
+                continue
 
-            # Try to discover device with this source port
-            if self._discover_device_internal(source_port=source_port):
-                cached_source_port = self.active_port
+            # Get assigned port
+            try:
+                actual_local_ip, actual_local_port = self.sock.getsockname()
+                self.active_port = actual_local_port
+                self.logger.info(f"[CONNECT] Using source port: {actual_local_port}")
+            except Exception as e:
+                self.logger.error(f"[CONNECT] Failed to read assigned port: {e}")
+                self._socket_force_close()
+                continue
+
+            # Send init packets to primary port
+            self.logger.info(f"[INIT] Sending to port {target_ports[0]}...")
+            if not self._send_init_packets(dest_port=target_ports[0]):
+                self.logger.warning("[INIT] Failed to send init packets")
+                self._socket_force_close()
+                continue
+
+            # FIX #48: Reset PPPP sequence after init
+            self.logger.info("[FIX #48] Resetting PPPP sequence to 1 after init")
+            self.pppp.reset_sequence(1)
+
+            # Try login on each port
+            login_successful = False
+            for port in target_ports:
+                self.logger.info(f"[CONNECT] Trying login on port {port}...")
+                
+                # Try BLE_DYNAMIC variant first
+                if self._try_login_on_port(port, variant='BLE_DYNAMIC'):
+                    login_successful = True
+                    break
+                
+                # Increment Artemis sequence for next attempt
+                self.artemis_seq += 1
+
+            if login_successful:
                 self.logger.info(
-                    f"[CONNECT] ✓ Successfully connected on source port {self.active_port}"
+                    f"[CONNECT] ✓ Successfully authenticated on port {self.port}"
                 )
-                self._set_state(CameraState.CONNECTED, f"dest port {self.port}")
-                self.sock.settimeout(config.ARTEMIS_LOGIN_TIMEOUT)
-                is_first_attempt = False
+                self._set_state(CameraState.CONNECTED, f"port {self.port}")
+                self.start_heartbeat()
                 return True
             else:
-                self.logger.warning("[CONNECT] Discovery scan failed this attempt.")
+                self.logger.warning("[CONNECT] All ports failed this attempt.")
                 self._socket_force_close()
-                is_first_attempt = False
 
+            # Backoff before retry
             backoff = config.RETRY_BACKOFF_SEQUENCE[
                 min(attempt, len(config.RETRY_BACKOFF_SEQUENCE) - 1)
             ]
-            
-            if cached_source_port:
-                self.logger.info(
-                    f"[CONNECT] Waiting {backoff}s before retry... "
-                    f"(will reuse source port {cached_source_port})"
-                )
-            else:
-                self.logger.info(f"[CONNECT] Waiting {backoff}s before retry...")
-            
+            self.logger.info(f"[CONNECT] Waiting {backoff}s before retry...")
             time.sleep(backoff)
 
         self._set_state(CameraState.CONNECTION_FAILED, "all retries exhausted")
@@ -481,11 +436,11 @@ class CameraClient:
         self._socket_force_close()
         self._set_state(CameraState.DISCONNECTED, "closed")
 
-    def _build_login_payload(self, variant: str = 'MYSTERY_09_01') -> bytes:
+    def _build_login_payload(self, variant: str = 'BLE_DYNAMIC') -> bytes:
         """
         Build Artemis login payload.
         
-        FIX #24: Ensure complete structure:
+        Structure:
         - "ARTEMIS\x00" (8 bytes)
         - Version (4 bytes, little-endian)
         - Sequence from BLE or variant (4 bytes)
@@ -514,86 +469,19 @@ class CameraClient:
         
         return payload
 
-    def login(self, variant: str = 'MYSTERY_09_01') -> bool:
+    def login(self, variant: str = 'BLE_DYNAMIC') -> bool:
         """
-        FIX #24: Login with improved error handling and logging.
-        FIX #44: Uses 0xF1D0 wrapper (not 0xF1D1).
+        FIX #48: This method is deprecated in favor of _try_login_on_port().
+        Kept for backward compatibility.
         """
-        if not self.session_token:
-            self.logger.error("[LOGIN] No session token available")
-            return False
-        
-        try:
-            # Build Artemis payload
-            artemis_payload = self._build_login_payload(variant)
-
-            # Wrap in PPPP (FIX #44: Now uses 0xD0 outer type)
-            packet = self.pppp.wrap_login(artemis_payload)
-
-            # Verify packet starts with correct bytes
-            if packet[0:2] != b'\xf1\xd0':
-                self.logger.warning(
-                    f"[LOGIN] Packet should start with f1d0 but starts with {packet[0:2].hex()}"
-                )
-
-            self.logger.info(f"[LOGIN] Sending Login (Variant: {variant})...")
-            self.logger.debug(f"[LOGIN] Full packet hex: {packet.hex()}")
-            self.logger.debug(f"[LOGIN] Packet length: {len(packet)} bytes")
-            
-            self.sock.sendto(packet, (self.ip, self.port))
-            
-            # Receive response
-            data, addr = self.sock.recvfrom(2048)
-            self.logger.debug(f"[LOGIN] Received response: {data.hex()}")
-
-            # Unwrap
-            response = self.pppp.unwrap_pppp(data)
-            
-            # FIX #24: Accept both 0x01 and 0x04 as valid login responses
-            if response['subcommand'] in [0x01, 0x04]:
-                self.logger.info(
-                    f"[LOGIN] ✓ SUCCESS (Subcommand: 0x{response['subcommand']:02X})"
-                )
-                self._set_state(CameraState.AUTHENTICATED, f"variant {variant}")
-                self.start_heartbeat()
-                return True
-            else:
-                self.logger.warning(
-                    f"[LOGIN] Failed. Unexpected subcommand: 0x{response['subcommand']:02X}"
-                )
-                self.logger.debug(f"[LOGIN] Full response: {response}")
-                return False
-
-        except socket.timeout:
-            self.logger.error("[LOGIN] Timeout - camera did not respond")
-            return False
-        except Exception as e:
-            self.logger.error(f"[LOGIN] Error: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
+        return self._try_login_on_port(self.port, variant=variant)
 
     def try_all_variants(self) -> bool:
         """
-        Try all login variants in sequence.
-        
-        FIX #24: Try BLE_DYNAMIC first if sequence_bytes available.
+        FIX #48: This method is deprecated.
+        Direct login flow tries BLE_DYNAMIC on all ports instead.
         """
-        # Try BLE_DYNAMIC first if we have BLE sequence
-        if self.sequence_bytes:
-            self.logger.info("[LOGIN] Trying BLE_DYNAMIC variant first...")
-            if self.login(variant='BLE_DYNAMIC'):
-                return True
-        
-        # Try other variants
-        for variant_name in MYSTERY_VARIANTS.keys():
-            if variant_name == 'BLE_DYNAMIC':
-                continue  # Already tried
-            
-            self.logger.info(f"[LOGIN] Trying variant: {variant_name}")
-            if self.login(variant=variant_name):
-                return True
-        
+        self.logger.warning("[LOGIN] try_all_variants() is deprecated in direct login flow")
         return False
 
     def start_heartbeat(self):
