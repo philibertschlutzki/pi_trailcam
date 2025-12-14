@@ -19,9 +19,9 @@ class MockCameraCommand(MockCamera):
         # Command/Heartbeat is D3 or D1
         if cmd in [0xD3, 0xD1]:
             # Try to decode payload
-            # Skip 9 bytes?
+            # Offset 8 bytes (4 Outer + 4 Inner)
             try:
-                json_part = data[9:].decode('utf-8', errors='ignore').rstrip('\x00')
+                json_part = data[8:].decode('utf-8', errors='ignore').rstrip('\x00')
                 payload = json.loads(json_part)
 
                 cmd_id = payload.get("cmdId")
@@ -37,7 +37,8 @@ class MockCameraCommand(MockCamera):
                 else:
                     # Echo back
                     self.send_json_response(sock, addr, payload)
-            except:
+            except Exception as e:
+                # print(f"Mock JSON parse error: {e}")
                 pass
 
     def send_json_response(self, sock, addr, json_obj):
@@ -46,10 +47,11 @@ class MockCameraCommand(MockCamera):
         # Simplified wrapper
         resp = bytearray([0xF1, 0xD3])
         # Length 2 bytes
-        length = 5 + len(payload)
+        # Inner header length is now 4
+        length = 4 + len(payload)
         resp.extend(length.to_bytes(2, 'big'))
-        # Inner: D1 00 00 00 00
-        resp.extend(b'\xD1\x00\x00\x00\x00')
+        # Inner: D1 00 00 00 (4 bytes)
+        resp.extend(b'\xD1\x00\x00\x00')
         resp.extend(payload)
 
         sock.sendto(resp, addr)
