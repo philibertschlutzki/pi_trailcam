@@ -42,6 +42,62 @@ class PPPPProtocol:
             self.pppp_sequence = 1
         return current
 
+    def wrap_init_ping(self) -> bytes:
+        """
+        FIX #44: First init packet (0xF1E0) with 4-byte payload 0x00000000.
+        
+        From tcpdump_1800_connect.log (17:55:23.927):
+        IP 192.168.43.22.54530 > 192.168.43.1.40611: UDP, length 4
+        0x0000:  4500 0020 8146 4000 4011 e21e c0a8 2b16
+        0x0010:  c0a8 2b01 d502 9ea3 000c c2e6 f1e0 0000
+        
+        Packet structure: F1 E0 [4-byte payload: 00 00 00 00]
+        Total UDP payload: 8 bytes (4 outer header + 4 payload)
+        
+        This is sent BEFORE 0xF1E1 packet.
+        """
+        outer = PPPPOuterHeader(
+            magic=PPPPConstants.MAGIC_STANDARD,  # 0xF1
+            cmd_type=0xE0,  # First init type
+            length=4  # 4-byte payload
+        )
+        payload = b'\x00\x00\x00\x00'  # Magic init value
+        packet = outer.to_bytes() + payload
+        logger.debug(f"[PPPP] wrap_init_ping (0xE0): {packet.hex()}")
+        return packet
+
+    def wrap_init_secondary(self) -> bytes:
+        """
+        FIX #44: Second init packet (0xF1E1) with 4-byte payload 0x00000000.
+        
+        From tcpdump_1800_connect.log (17:55:23.928):
+        IP 192.168.43.22.54530 > 192.168.43.1.40611: UDP, length 4
+        0x0000:  4500 0020 8147 4000 4011 e21d c0a8 2b16
+        0x0010:  c0a8 2b01 d502 9ea3 000c c2e5 f1e1 0000
+        
+        Packet structure: F1 E1 [4-byte payload: 00 00 00 00]
+        Total UDP payload: 8 bytes (4 outer header + 4 payload)
+        
+        This is sent AFTER 0xF1E0 packet.
+        """
+        outer = PPPPOuterHeader(
+            magic=PPPPConstants.MAGIC_STANDARD,  # 0xF1
+            cmd_type=0xE1,  # Second init type
+            length=4  # 4-byte payload
+        )
+        payload = b'\x00\x00\x00\x00'  # Magic init value
+        packet = outer.to_bytes() + payload
+        logger.debug(f"[PPPP] wrap_init_secondary (0xE1): {packet.hex()}")
+        return packet
+
+    def wrap_init(self) -> bytes:
+        """
+        Legacy wrapper for backward compatibility.
+        Now returns 0xE1 packet (secondary init).
+        For full init sequence, use wrap_init_ping() + wrap_init_secondary().
+        """
+        return self.wrap_init_secondary()
+
     def wrap_discovery(self, artemis_seq: int) -> bytes:
         """
         Wraps a discovery payload (2 bytes Artemis Sequence).
@@ -75,70 +131,44 @@ class PPPPProtocol:
         logger.debug(f"[PPPP] wrap_discovery: seq={seq}, length={total_len}, payload={payload.hex()}")
         return packet
 
-    def wrap_init(self) -> bytes:
-        """
-        Wraps an initialization burst packet.
-        Format: F1 E1 00 00 (No Inner Header)
-        """
-        # Init burst has no payload and no inner header?
-        # Memory says: "The UDP initialization burst is limited to 3 packets... Initialization (0xE1, wake-up)"
-        # Memory: "PPPP wrapper structure... Outer Header... followed by the Artemis payload"
-        # Memory: "The PPPP sequence number must be explicitly reset to 1 after the initialization burst"
-        # Prompt C: "wrap_init... Only Outer Header (4 bytes)... Hex: f1e10000"
-
-        outer = PPPPOuterHeader(
-            magic=PPPPConstants.MAGIC_STANDARD,
-            cmd_type=PPPPConstants.CMD_INIT_BURST,
-            length=0
-        )
-        packet = outer.to_bytes()
-        logger.debug(f"[PPPP] wrap_init: length=0")
-        return packet
-
     def wrap_login(self, artemis_payload: bytes) -> bytes:
         """
-        Wraps a login payload.
-        Format: F1 D0 [Len] [InnerHeader] [ArtemisPayload]
-        NOTE: Outer Type is D0 for Login!
+        FIX #44: Wraps Artemis login payload with 0xF1D0 outer type.
+        
+        From tcpdump_1800_connect.log (17:55:25.600):
+        IP 192.168.43.22.54530 > 192.168.43.1.40611: UDP, length 53
+        0xf1d0 0031 d100 0003 ARTEMIS\x00...
+        
+        Outer Type: 0xD0 (LOGIN, not 0xD1 DISCOVERY!)
+        Inner Header: D1 00 [Seq] 00
+        Artemis Payload: ARTEMIS\x00 + version + sequence + token_len + token
+        
+        This is the CRITICAL difference from discovery.
         """
         # Validate payload size
-        if len(artemis_payload) > 4088: # 4096 - headers
+        if len(artemis_payload) > 4088:  # 4096 - headers
             raise ValueError(f"Payload too large: {len(artemis_payload)}")
 
-        # Inner Header
-        # Type=D1?? Or D0?
-        # Memory says: "The UDP login packet is wrapped in a PPPP header with Outer Type 0xD0 ... containing the Artemis payload"
-        # Usually Inner Header Type mirrors Outer, or is fixed.
-        # Prompt C says: "InnerHeader(0xD1, 0x00, 1, 0)" for discovery.
-        # For Login, typically Inner Type is also D0 or D1.
-        # Existing knowledge says "Login (0xD0 Outer)".
-        # Let's assume Inner Type D1 is standard for session messages, but maybe D0 for login?
-        # Prompt H says: "KRITISCH: wrap_login nutzt PPPP Type 0xD0, nicht 0xD1!" referring to Outer Type.
-        # It doesn't explicitly specify Inner Type.
-        # However, Prompt C (Tests) says: "wrap_login... CMD-Type: 0xD0 (nicht 0xD1!)" (Outer).
-        # Let's use D1 for Inner Header as default for session, unless proven otherwise.
-        # Wait, if I look at `test_wrap_login_packet` in Prompt C, it doesn't specify inner bytes expectation detail, just "Sequence incremented".
-        # Let's check `modules/pppp_wrapper.py.bak` if I could read it?
-        # I moved it. I can read it.
-
+        # Inner Header with sequence
         seq = self._increment_sequence()
         inner = PPPPInnerHeader(
-            session_type=0xD1, # Using D1 as generic inner type
+            session_type=0xD1,  # Inner type is D1
             subcommand=0x00,
             sequence=seq,
             reserved=0x00
         )
         inner_bytes = inner.to_bytes()
 
+        # Outer Header with LOGIN type (0xD0)
         total_len = len(inner_bytes) + len(artemis_payload)
         outer = PPPPOuterHeader(
-            magic=PPPPConstants.MAGIC_STANDARD,
-            cmd_type=PPPPConstants.CMD_LOGIN, # D0
+            magic=PPPPConstants.MAGIC_STANDARD,  # 0xF1
+            cmd_type=PPPPConstants.CMD_LOGIN,  # 0xD0 (CRITICAL!)
             length=total_len
         )
 
         packet = outer.to_bytes() + inner_bytes + artemis_payload
-        logger.debug(f"[PPPP] wrap_login: seq={seq}, length={total_len}")
+        logger.debug(f"[PPPP] wrap_login: outer=0xD0, seq={seq}, length={total_len}")
         return packet
 
     def wrap_heartbeat(self, json_payload: bytes) -> bytes:
@@ -161,7 +191,7 @@ class PPPPProtocol:
         total_len = len(inner_bytes) + len(json_payload)
         outer = PPPPOuterHeader(
             magic=PPPPConstants.MAGIC_STANDARD,
-            cmd_type=PPPPConstants.CMD_CONTROL, # D3
+            cmd_type=PPPPConstants.CMD_CONTROL,  # D3
             length=total_len
         )
 
@@ -174,15 +204,37 @@ class PPPPProtocol:
         Alias for wrap_heartbeat / control commands.
         Usually uses same structure (D3 or D1).
         """
-        # Prompt K says: "wrap_command(json_bytes)"
-        # Let's assume it uses same as heartbeat (D3 or D1).
-        # Prompt I says: "Heartbeat... PPPP Type: 0xD3 (alternative: 0xD1)"
-        # Prompt K: uses wrap_command.
         return self.wrap_heartbeat(json_bytes)
+
+    def reset_sequence(self, start_value: int = 1):
+        """Reset PPPP sequence counter"""
+        self.pppp_sequence = start_value
+        logger.debug(f"[PPPP] Sequence reset to {start_value}")
+
+    def get_sequence(self) -> int:
+        """Get current PPPP sequence value"""
+        return self.pppp_sequence
 
 if __name__ == "__main__":
     # Test execution
     logging.basicConfig(level=logging.DEBUG)
     protocol = PPPPProtocol()
-    packet = protocol.wrap_discovery(0x0048)
-    print(f"Discovery packet: {packet.hex()}")
+    
+    # Test init sequence
+    print("\nInit Sequence:")
+    ping = protocol.wrap_init_ping()
+    print(f"1. Init Ping (0xE0): {ping.hex()}")
+    secondary = protocol.wrap_init_secondary()
+    print(f"2. Init Secondary (0xE1): {secondary.hex()}")
+    
+    # Test discovery
+    print("\nDiscovery:")
+    discovery = protocol.wrap_discovery(0x0003)
+    print(f"Discovery (0xD1): {discovery.hex()}")
+    
+    # Test login
+    print("\nLogin:")
+    artemis_payload = b'ARTEMIS\x00' + b'\x02\x00\x00\x00' + b'\x02\x00\x01\x00' + b'\x19\x00\x00\x00' + b'test_token\x00'
+    login = protocol.wrap_login(artemis_payload)
+    print(f"Login (0xD0): {login.hex()}")
+    print(f"Expected outer type: 0xD0, got: 0x{login[1]:02X}")
