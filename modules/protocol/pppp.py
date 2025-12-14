@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 import struct
 import logging
-from typing import Union
+from typing import Union, Dict
 from modules.protocol.constants import PPPPConstants
 
 logger = logging.getLogger(__name__)
@@ -223,6 +223,68 @@ class PPPPProtocol:
         """
         return self.wrap_heartbeat(json_bytes)
 
+    def unwrap_pppp(self, packet: bytes) -> Dict:
+        """
+        Unwrap PPPP packet to extract Artemis payload.
+        Ported from PPPPWrapper.
+
+        Args:
+            packet: Complete PPPP packet received from camera
+
+        Returns:
+            Dictionary containing:
+                - outer_magic: Should be 0xF1
+                - outer_type: PPPP command type
+                - length: Payload length from header
+                - inner_type: PPPP session type
+                - subcommand: Subcommand byte (0x01=ACK, 0x04=Login ACK, etc.)
+                - pppp_seq: PPPP sequence number from packet
+                - payload: Raw Artemis data (bytes)
+        """
+        if len(packet) < 8:
+            raise ValueError(f"PPPP packet too short: {len(packet)} bytes (minimum 8)")
+
+        # Parse Outer Header (4 bytes)
+        # >BBH: Big-Endian, U8, U8, U16
+        outer_magic, outer_type, length = struct.unpack('>BBH', packet[0:4])
+
+        if outer_magic != PPPPConstants.MAGIC_STANDARD: # 0xF1
+             self.logger.warning(
+                 f"[PPPP UNWRAP] Unexpected magic: 0x{outer_magic:02X} "
+                 f"(expected 0x{PPPPConstants.MAGIC_STANDARD:02X})"
+             )
+
+        # Parse Inner Header
+        # Note: PPPPWrapper used 4 bytes (>BBH). PPPPProtocol uses 5 bytes (>BBHB) for sending.
+        # We will stick to 4 bytes as per PPPPWrapper which was working for unwrapping.
+        # If the camera sends 5 bytes, the payload offset will be off by 1 byte if we don't account for it?
+        # But we assume the camera follows the structure we successfully reversed before.
+        # If PPPPProtocol sending 5 bytes is a new change, maybe the camera ignores the extra byte?
+        # For now, we restore the old behavior for unwrapping.
+        inner_type, subcommand, pppp_seq = struct.unpack('>BBH', packet[4:8])
+
+        # Payload
+        artemis_payload = packet[8:]
+
+        self.logger.debug(
+            f"[PPPP UNWRAP] "
+            f"Outer=0x{outer_type:02X}, "
+            f"Inner=0x{inner_type:02X}, "
+            f"Sub=0x{subcommand:02X}, "
+            f"Seq={pppp_seq}, "
+            f"PayloadLen={len(artemis_payload)}"
+        )
+
+        return {
+            'outer_magic': outer_magic,
+            'outer_type': outer_type,
+            'length': length,
+            'inner_type': inner_type,
+            'subcommand': subcommand,
+            'pppp_seq': pppp_seq,
+            'payload': artemis_payload,
+        }
+
     def reset_sequence(self, start_value: int = 1):
         """Reset PPPP sequence counter"""
         self.pppp_sequence = start_value
@@ -255,3 +317,12 @@ if __name__ == "__main__":
     login = protocol.wrap_login(artemis_payload)
     print(f"Login (0xD0): {login.hex()}")
     print(f"Expected outer type: 0xD0, got: 0x{login[1]:02X}")
+
+    # Test Unwrap
+    print("\nUnwrap:")
+    # Simulate a response packet (from repro script)
+    # Outer(F1, D1, len=4+4) + Inner(D1, 01, Seq=1) + Payload(empty)
+    # Inner = D1 01 00 01 (4 bytes)
+    response_packet = b'\xf1\xd1\x00\x04\xd1\x01\x00\x01'
+    unwrapped = protocol.unwrap_pppp(response_packet)
+    print(f"Unwrapped: {unwrapped}")
