@@ -54,7 +54,7 @@ CONFIG = {
     # Kamera WiFi (echte Verbindung)
     'camera_ssid': 'KJK_E0FF',
     'camera_password': '85087127',
-    'camera_ip': '192.168.43.1',       # Kamera-IP im eigenen Netz
+    'camera_ip': '192.168.43.10',       # Kamera-IP im eigenen Netz
     'camera_port': 40611,              # Hauptport für UDP
     
     # Capture-Einstellungen
