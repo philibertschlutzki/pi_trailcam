@@ -3,4 +3,4 @@ bleak==0.20.1
 
 # Network packet manipulation and sniffing
 # Required for UDP sniffer MITM mode (ARP spoofing)
-#scapy>=2.5.0
+scapy>=2.5.0
