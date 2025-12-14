@@ -1,0 +1,1025 @@
+2025-12-14 19:21:09,406 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:21:09,407 - TrailCamMITM - INFO - TrailCam MITM Proxy - Setup Phase
+2025-12-14 19:21:09,407 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:21:09,408 - TrailCamMITM - INFO - ✓ All required interfaces found
+2025-12-14 19:21:09,408 - TrailCamMITM - INFO - Checking dependencies...
+2025-12-14 19:21:09,433 - TrailCamMITM - INFO - Installing hostapd...
+2025-12-14 19:21:56,813 - TrailCamMITM - INFO - Installing iptables...
+2025-12-14 19:22:31,367 - TrailCamMITM - INFO - ✓ Setup complete
+2025-12-14 19:22:31,380 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:22:31,381 - TrailCamMITM - INFO - Starting MITM Proxy...
+2025-12-14 19:22:31,381 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:22:31,382 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:22:31,383 - TrailCamMITM - INFO - STARTING ACCESS POINT
+2025-12-14 19:22:31,383 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:22:32,526 - TrailCamMITM - INFO - ✓ hostapd config created: /tmp/mitm_hostapd.conf
+2025-12-14 19:22:32,529 - TrailCamMITM - INFO - ✓ dnsmasq config created: /tmp/mitm_dnsmasq.conf
+2025-12-14 19:22:32,529 - TrailCamMITM - INFO - Setting up AP interface...
+2025-12-14 19:22:33,165 - TrailCamMITM - INFO - ✓ Interface wlan0 configured with IP 192.168.43.1
+2025-12-14 19:22:33,167 - TrailCamMITM - INFO - Starting hostapd...
+2025-12-14 19:22:36,201 - TrailCamMITM - INFO - ✓ hostapd running
+2025-12-14 19:22:36,202 - TrailCamMITM - INFO - Starting dnsmasq...
+2025-12-14 19:22:38,207 - TrailCamMITM - INFO - ✓ dnsmasq running
+2025-12-14 19:22:38,207 - TrailCamMITM - INFO - ✓ Access Point 'KJK_E0FF_pi' is ready!
+2025-12-14 19:22:38,208 - TrailCamMITM - INFO -   → Clients will get IPs from 192.168.43.50,192.168.43.150
+2025-12-14 19:22:43,210 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:22:43,211 - TrailCamMITM - INFO - CONNECTING TO CAMERA WIFI
+2025-12-14 19:22:43,211 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:22:44,228 - TrailCamMITM - INFO - Disconnecting existing connections...
+2025-12-14 19:22:45,290 - TrailCamMITM - INFO - Scanning for 'KJK_E0FF'...
+2025-12-14 19:22:46,305 - TrailCamMITM - INFO - ✓ Found 'KJK_E0FF'
+2025-12-14 19:22:46,307 - TrailCamMITM - INFO - Starting wpa_supplicant...
+2025-12-14 19:22:47,438 - TrailCamMITM - INFO - Waiting for connection...
+2025-12-14 19:23:17,765 - TrailCamMITM - ERROR - Failed to connect to camera WiFi!
+2025-12-14 19:23:17,766 - TrailCamMITM - ERROR - Failed to connect to camera!
+2025-12-14 19:23:17,767 - TrailCamMITM - ERROR - Failed to start MITM proxy
+2025-12-14 19:23:17,768 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:17,769 - TrailCamMITM - INFO - Stopping MITM Proxy...
+2025-12-14 19:23:17,770 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:17,772 - TrailCamMITM - INFO - Stopping traffic capture...
+2025-12-14 19:23:17,773 - TrailCamMITM - INFO - ✓ Capture stopped. Total packets: 0
+2025-12-14 19:23:17,775 - TrailCamMITM - INFO - ✓ PCAP saved to: None
+2025-12-14 19:23:17,777 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:17,778 - TrailCamMITM - INFO - CAPTURE STATISTICS
+2025-12-14 19:23:17,779 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:17,782 - TrailCamMITM - INFO - Total packets captured: 0
+2025-12-14 19:23:17,783 - TrailCamMITM - INFO - UDP packets: 0
+2025-12-14 19:23:17,784 - TrailCamMITM - INFO - PPPP packets: 0
+2025-12-14 19:23:17,785 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:23:17,786 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:17,788 - TrailCamMITM - INFO - Disconnecting from camera WiFi...
+2025-12-14 19:23:17,873 - TrailCamMITM - INFO - ✓ Disconnected from camera
+2025-12-14 19:23:17,873 - TrailCamMITM - INFO - Stopping Access Point...
+2025-12-14 19:23:17,982 - TrailCamMITM - INFO - ✓ Access Point stopped
+2025-12-14 19:23:17,983 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:17,983 - TrailCamMITM - INFO - ✓ MITM Proxy stopped
+2025-12-14 19:23:17,984 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:17,984 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:23:17,985 - TrailCamMITM - INFO - Analyze with:
+2025-12-14 19:23:17,986 - TrailCamMITM - INFO -   tcpdump -r None -X
+2025-12-14 19:23:17,987 - TrailCamMITM - INFO -   wireshark None
+2025-12-14 19:23:17,988 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:37,217 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:37,217 - TrailCamMITM - INFO - TrailCam MITM Proxy - Setup Phase
+2025-12-14 19:23:37,218 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:37,218 - TrailCamMITM - INFO - ✓ All required interfaces found
+2025-12-14 19:23:37,218 - TrailCamMITM - INFO - Checking dependencies...
+2025-12-14 19:23:37,271 - TrailCamMITM - INFO - ✓ Setup complete
+2025-12-14 19:23:37,272 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:37,272 - TrailCamMITM - INFO - Starting MITM Proxy...
+2025-12-14 19:23:37,272 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:37,273 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:37,273 - TrailCamMITM - INFO - STARTING ACCESS POINT
+2025-12-14 19:23:37,273 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:38,309 - TrailCamMITM - INFO - ✓ hostapd config created: /tmp/mitm_hostapd.conf
+2025-12-14 19:23:38,310 - TrailCamMITM - INFO - ✓ dnsmasq config created: /tmp/mitm_dnsmasq.conf
+2025-12-14 19:23:38,310 - TrailCamMITM - INFO - Setting up AP interface...
+2025-12-14 19:23:38,899 - TrailCamMITM - INFO - ✓ Interface wlan0 configured with IP 192.168.43.1
+2025-12-14 19:23:38,900 - TrailCamMITM - INFO - Starting hostapd...
+2025-12-14 19:23:41,905 - TrailCamMITM - INFO - ✓ hostapd running
+2025-12-14 19:23:41,905 - TrailCamMITM - INFO - Starting dnsmasq...
+2025-12-14 19:23:43,908 - TrailCamMITM - INFO - ✓ dnsmasq running
+2025-12-14 19:23:43,909 - TrailCamMITM - INFO - ✓ Access Point 'KJK_E0FF_pi' is ready!
+2025-12-14 19:23:43,910 - TrailCamMITM - INFO -   → Clients will get IPs from 192.168.43.50,192.168.43.150
+2025-12-14 19:23:48,911 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:48,911 - TrailCamMITM - INFO - CONNECTING TO CAMERA WIFI
+2025-12-14 19:23:48,912 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:23:49,922 - TrailCamMITM - INFO - Disconnecting existing connections...
+2025-12-14 19:23:50,936 - TrailCamMITM - INFO - Scanning for 'KJK_E0FF'...
+2025-12-14 19:23:51,918 - TrailCamMITM - INFO - ✓ Found 'KJK_E0FF'
+2025-12-14 19:23:51,920 - TrailCamMITM - INFO - Starting wpa_supplicant...
+2025-12-14 19:23:53,077 - TrailCamMITM - INFO - Waiting for connection...
+2025-12-14 19:24:23,414 - TrailCamMITM - ERROR - Failed to connect to camera WiFi!
+2025-12-14 19:24:23,415 - TrailCamMITM - ERROR - Failed to connect to camera!
+2025-12-14 19:24:23,415 - TrailCamMITM - ERROR - Failed to start MITM proxy
+2025-12-14 19:24:23,416 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:23,416 - TrailCamMITM - INFO - Stopping MITM Proxy...
+2025-12-14 19:24:23,417 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:23,417 - TrailCamMITM - INFO - Stopping traffic capture...
+2025-12-14 19:24:23,418 - TrailCamMITM - INFO - ✓ Capture stopped. Total packets: 0
+2025-12-14 19:24:23,419 - TrailCamMITM - INFO - ✓ PCAP saved to: None
+2025-12-14 19:24:23,421 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:23,422 - TrailCamMITM - INFO - CAPTURE STATISTICS
+2025-12-14 19:24:23,423 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:23,424 - TrailCamMITM - INFO - Total packets captured: 0
+2025-12-14 19:24:23,425 - TrailCamMITM - INFO - UDP packets: 0
+2025-12-14 19:24:23,426 - TrailCamMITM - INFO - PPPP packets: 0
+2025-12-14 19:24:23,427 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:24:23,429 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:23,430 - TrailCamMITM - INFO - Disconnecting from camera WiFi...
+2025-12-14 19:24:23,517 - TrailCamMITM - INFO - ✓ Disconnected from camera
+2025-12-14 19:24:23,519 - TrailCamMITM - INFO - Stopping Access Point...
+2025-12-14 19:24:23,631 - TrailCamMITM - INFO - ✓ Access Point stopped
+2025-12-14 19:24:23,634 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:23,636 - TrailCamMITM - INFO - ✓ MITM Proxy stopped
+2025-12-14 19:24:23,638 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:23,639 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:24:23,641 - TrailCamMITM - INFO - Analyze with:
+2025-12-14 19:24:23,643 - TrailCamMITM - INFO -   tcpdump -r None -X
+2025-12-14 19:24:23,645 - TrailCamMITM - INFO -   wireshark None
+2025-12-14 19:24:23,647 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:36,276 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:36,277 - TrailCamMITM - INFO - TrailCam MITM Proxy - Setup Phase
+2025-12-14 19:24:36,277 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:36,278 - TrailCamMITM - INFO - ✓ All required interfaces found
+2025-12-14 19:24:36,279 - TrailCamMITM - INFO - Checking dependencies...
+2025-12-14 19:24:36,306 - TrailCamMITM - INFO - ✓ Setup complete
+2025-12-14 19:24:36,307 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:36,307 - TrailCamMITM - INFO - Starting MITM Proxy...
+2025-12-14 19:24:36,308 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:36,308 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:36,309 - TrailCamMITM - INFO - STARTING ACCESS POINT
+2025-12-14 19:24:36,309 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:37,345 - TrailCamMITM - INFO - ✓ hostapd config created: /tmp/mitm_hostapd.conf
+2025-12-14 19:24:37,346 - TrailCamMITM - INFO - ✓ dnsmasq config created: /tmp/mitm_dnsmasq.conf
+2025-12-14 19:24:37,346 - TrailCamMITM - INFO - Setting up AP interface...
+2025-12-14 19:24:37,925 - TrailCamMITM - INFO - ✓ Interface wlan0 configured with IP 192.168.43.1
+2025-12-14 19:24:37,926 - TrailCamMITM - INFO - Starting hostapd...
+2025-12-14 19:24:40,929 - TrailCamMITM - INFO - ✓ hostapd running
+2025-12-14 19:24:40,930 - TrailCamMITM - INFO - Starting dnsmasq...
+2025-12-14 19:24:42,932 - TrailCamMITM - INFO - ✓ dnsmasq running
+2025-12-14 19:24:42,933 - TrailCamMITM - INFO - ✓ Access Point 'KJK_E0FF_pi' is ready!
+2025-12-14 19:24:42,933 - TrailCamMITM - INFO -   → Clients will get IPs from 192.168.43.50,192.168.43.150
+2025-12-14 19:24:47,933 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:47,934 - TrailCamMITM - INFO - CONNECTING TO CAMERA WIFI
+2025-12-14 19:24:47,934 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:24:48,944 - TrailCamMITM - INFO - Disconnecting existing connections...
+2025-12-14 19:24:49,954 - TrailCamMITM - INFO - Scanning for 'KJK_E0FF'...
+2025-12-14 19:24:49,964 - TrailCamMITM - WARNING - Camera WiFi 'KJK_E0FF' not found in scan!
+2025-12-14 19:24:49,965 - TrailCamMITM - INFO - Continuing anyway (might appear after AP starts)...
+2025-12-14 19:24:49,966 - TrailCamMITM - INFO - Starting wpa_supplicant...
+2025-12-14 19:24:51,089 - TrailCamMITM - INFO - Waiting for connection...
+2025-12-14 19:25:21,404 - TrailCamMITM - ERROR - Failed to connect to camera WiFi!
+2025-12-14 19:25:21,404 - TrailCamMITM - ERROR - Failed to connect to camera!
+2025-12-14 19:25:21,405 - TrailCamMITM - ERROR - Failed to start MITM proxy
+2025-12-14 19:25:21,405 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:21,406 - TrailCamMITM - INFO - Stopping MITM Proxy...
+2025-12-14 19:25:21,406 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:21,406 - TrailCamMITM - INFO - Stopping traffic capture...
+2025-12-14 19:25:21,406 - TrailCamMITM - INFO - ✓ Capture stopped. Total packets: 0
+2025-12-14 19:25:21,407 - TrailCamMITM - INFO - ✓ PCAP saved to: None
+2025-12-14 19:25:21,407 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:21,407 - TrailCamMITM - INFO - CAPTURE STATISTICS
+2025-12-14 19:25:21,407 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:21,408 - TrailCamMITM - INFO - Total packets captured: 0
+2025-12-14 19:25:21,408 - TrailCamMITM - INFO - UDP packets: 0
+2025-12-14 19:25:21,409 - TrailCamMITM - INFO - PPPP packets: 0
+2025-12-14 19:25:21,409 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:25:21,410 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:21,411 - TrailCamMITM - INFO - Disconnecting from camera WiFi...
+2025-12-14 19:25:21,478 - TrailCamMITM - INFO - ✓ Disconnected from camera
+2025-12-14 19:25:21,480 - TrailCamMITM - INFO - Stopping Access Point...
+2025-12-14 19:25:21,577 - TrailCamMITM - INFO - ✓ Access Point stopped
+2025-12-14 19:25:21,579 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:21,580 - TrailCamMITM - INFO - ✓ MITM Proxy stopped
+2025-12-14 19:25:21,581 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:21,582 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:25:21,583 - TrailCamMITM - INFO - Analyze with:
+2025-12-14 19:25:21,584 - TrailCamMITM - INFO -   tcpdump -r None -X
+2025-12-14 19:25:21,586 - TrailCamMITM - INFO -   wireshark None
+2025-12-14 19:25:21,587 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:46,285 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:46,285 - TrailCamMITM - INFO - TrailCam MITM Proxy - Setup Phase
+2025-12-14 19:25:46,286 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:46,286 - TrailCamMITM - INFO - ✓ All required interfaces found
+2025-12-14 19:25:46,286 - TrailCamMITM - INFO - Checking dependencies...
+2025-12-14 19:25:46,314 - TrailCamMITM - INFO - ✓ Setup complete
+2025-12-14 19:25:46,315 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:46,315 - TrailCamMITM - INFO - Starting MITM Proxy...
+2025-12-14 19:25:46,315 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:46,316 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:46,316 - TrailCamMITM - INFO - STARTING ACCESS POINT
+2025-12-14 19:25:46,317 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:47,353 - TrailCamMITM - INFO - ✓ hostapd config created: /tmp/mitm_hostapd.conf
+2025-12-14 19:25:47,353 - TrailCamMITM - INFO - ✓ dnsmasq config created: /tmp/mitm_dnsmasq.conf
+2025-12-14 19:25:47,354 - TrailCamMITM - INFO - Setting up AP interface...
+2025-12-14 19:25:47,910 - TrailCamMITM - INFO - ✓ Interface wlan0 configured with IP 192.168.43.1
+2025-12-14 19:25:47,910 - TrailCamMITM - INFO - Starting hostapd...
+2025-12-14 19:25:50,912 - TrailCamMITM - INFO - ✓ hostapd running
+2025-12-14 19:25:50,913 - TrailCamMITM - INFO - Starting dnsmasq...
+2025-12-14 19:25:52,916 - TrailCamMITM - INFO - ✓ dnsmasq running
+2025-12-14 19:25:52,917 - TrailCamMITM - INFO - ✓ Access Point 'KJK_E0FF_pi' is ready!
+2025-12-14 19:25:52,918 - TrailCamMITM - INFO -   → Clients will get IPs from 192.168.43.50,192.168.43.150
+2025-12-14 19:25:57,919 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:57,919 - TrailCamMITM - INFO - CONNECTING TO CAMERA WIFI
+2025-12-14 19:25:57,920 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:25:58,930 - TrailCamMITM - INFO - Disconnecting existing connections...
+2025-12-14 19:25:59,939 - TrailCamMITM - INFO - Scanning for 'KJK_E0FF'...
+2025-12-14 19:26:00,915 - TrailCamMITM - INFO - ✓ Found 'KJK_E0FF'
+2025-12-14 19:26:00,916 - TrailCamMITM - INFO - Starting wpa_supplicant...
+2025-12-14 19:26:02,029 - TrailCamMITM - INFO - Waiting for connection...
+2025-12-14 19:26:32,315 - TrailCamMITM - ERROR - Failed to connect to camera WiFi!
+2025-12-14 19:26:32,315 - TrailCamMITM - ERROR - Failed to connect to camera!
+2025-12-14 19:26:32,315 - TrailCamMITM - ERROR - Failed to start MITM proxy
+2025-12-14 19:26:32,316 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:26:32,316 - TrailCamMITM - INFO - Stopping MITM Proxy...
+2025-12-14 19:26:32,316 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:26:32,316 - TrailCamMITM - INFO - Stopping traffic capture...
+2025-12-14 19:26:32,318 - TrailCamMITM - INFO - ✓ Capture stopped. Total packets: 0
+2025-12-14 19:26:32,318 - TrailCamMITM - INFO - ✓ PCAP saved to: None
+2025-12-14 19:26:32,320 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:26:32,321 - TrailCamMITM - INFO - CAPTURE STATISTICS
+2025-12-14 19:26:32,323 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:26:32,324 - TrailCamMITM - INFO - Total packets captured: 0
+2025-12-14 19:26:32,324 - TrailCamMITM - INFO - UDP packets: 0
+2025-12-14 19:26:32,325 - TrailCamMITM - INFO - PPPP packets: 0
+2025-12-14 19:26:32,325 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:26:32,326 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:26:32,326 - TrailCamMITM - INFO - Disconnecting from camera WiFi...
+2025-12-14 19:26:32,443 - TrailCamMITM - INFO - ✓ Disconnected from camera
+2025-12-14 19:26:32,444 - TrailCamMITM - INFO - Stopping Access Point...
+2025-12-14 19:26:32,548 - TrailCamMITM - INFO - ✓ Access Point stopped
+2025-12-14 19:26:32,549 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:26:32,551 - TrailCamMITM - INFO - ✓ MITM Proxy stopped
+2025-12-14 19:26:32,552 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:26:32,553 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:26:32,554 - TrailCamMITM - INFO - Analyze with:
+2025-12-14 19:26:32,555 - TrailCamMITM - INFO -   tcpdump -r None -X
+2025-12-14 19:26:32,556 - TrailCamMITM - INFO -   wireshark None
+2025-12-14 19:26:32,558 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:04,195 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:04,195 - TrailCamMITM - INFO - TrailCam MITM Proxy - Setup Phase
+2025-12-14 19:27:04,196 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:04,196 - TrailCamMITM - INFO - ✓ All required interfaces found
+2025-12-14 19:27:04,196 - TrailCamMITM - INFO - Checking dependencies...
+2025-12-14 19:27:04,226 - TrailCamMITM - INFO - ✓ Setup complete
+2025-12-14 19:27:04,226 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:04,227 - TrailCamMITM - INFO - Starting MITM Proxy...
+2025-12-14 19:27:04,228 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:04,229 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:04,229 - TrailCamMITM - INFO - STARTING ACCESS POINT
+2025-12-14 19:27:04,230 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:05,266 - TrailCamMITM - INFO - ✓ hostapd config created: /tmp/mitm_hostapd.conf
+2025-12-14 19:27:05,267 - TrailCamMITM - INFO - ✓ dnsmasq config created: /tmp/mitm_dnsmasq.conf
+2025-12-14 19:27:05,267 - TrailCamMITM - INFO - Setting up AP interface...
+2025-12-14 19:27:05,848 - TrailCamMITM - INFO - ✓ Interface wlan0 configured with IP 192.168.43.1
+2025-12-14 19:27:05,849 - TrailCamMITM - INFO - Starting hostapd...
+2025-12-14 19:27:08,855 - TrailCamMITM - INFO - ✓ hostapd running
+2025-12-14 19:27:08,856 - TrailCamMITM - INFO - Starting dnsmasq...
+2025-12-14 19:27:10,859 - TrailCamMITM - INFO - ✓ dnsmasq running
+2025-12-14 19:27:10,860 - TrailCamMITM - INFO - ✓ Access Point 'KJK_E0FF_pi' is ready!
+2025-12-14 19:27:10,860 - TrailCamMITM - INFO -   → Clients will get IPs from 192.168.43.50,192.168.43.150
+2025-12-14 19:27:15,860 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:15,861 - TrailCamMITM - INFO - CONNECTING TO CAMERA WIFI
+2025-12-14 19:27:15,861 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:16,871 - TrailCamMITM - INFO - Disconnecting existing connections...
+2025-12-14 19:27:17,881 - TrailCamMITM - INFO - Scanning for 'KJK_E0FF'...
+2025-12-14 19:27:18,856 - TrailCamMITM - INFO - ✓ Found 'KJK_E0FF'
+2025-12-14 19:27:18,857 - TrailCamMITM - INFO - Starting wpa_supplicant...
+2025-12-14 19:27:20,001 - TrailCamMITM - INFO - Waiting for connection...
+2025-12-14 19:27:50,338 - TrailCamMITM - ERROR - Failed to connect to camera WiFi!
+2025-12-14 19:27:50,339 - TrailCamMITM - ERROR - Failed to connect to camera!
+2025-12-14 19:27:50,339 - TrailCamMITM - ERROR - Failed to start MITM proxy
+2025-12-14 19:27:50,339 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:50,339 - TrailCamMITM - INFO - Stopping MITM Proxy...
+2025-12-14 19:27:50,339 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:50,340 - TrailCamMITM - INFO - Stopping traffic capture...
+2025-12-14 19:27:50,340 - TrailCamMITM - INFO - ✓ Capture stopped. Total packets: 0
+2025-12-14 19:27:50,340 - TrailCamMITM - INFO - ✓ PCAP saved to: None
+2025-12-14 19:27:50,341 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:50,341 - TrailCamMITM - INFO - CAPTURE STATISTICS
+2025-12-14 19:27:50,341 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:50,342 - TrailCamMITM - INFO - Total packets captured: 0
+2025-12-14 19:27:50,343 - TrailCamMITM - INFO - UDP packets: 0
+2025-12-14 19:27:50,343 - TrailCamMITM - INFO - PPPP packets: 0
+2025-12-14 19:27:50,344 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:27:50,344 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:50,345 - TrailCamMITM - INFO - Disconnecting from camera WiFi...
+2025-12-14 19:27:50,413 - TrailCamMITM - INFO - ✓ Disconnected from camera
+2025-12-14 19:27:50,415 - TrailCamMITM - INFO - Stopping Access Point...
+2025-12-14 19:27:50,498 - TrailCamMITM - INFO - ✓ Access Point stopped
+2025-12-14 19:27:50,498 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:50,499 - TrailCamMITM - INFO - ✓ MITM Proxy stopped
+2025-12-14 19:27:50,499 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:27:50,499 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:27:50,499 - TrailCamMITM - INFO - Analyze with:
+2025-12-14 19:27:50,500 - TrailCamMITM - INFO -   tcpdump -r None -X
+2025-12-14 19:27:50,500 - TrailCamMITM - INFO -   wireshark None
+2025-12-14 19:27:50,500 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:36:18,992 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:36:18,993 - TrailCamMITM - INFO - TrailCam MITM Proxy - Setup Phase
+2025-12-14 19:36:18,994 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:36:18,994 - TrailCamMITM - INFO - ✓ All required interfaces found
+2025-12-14 19:36:18,994 - TrailCamMITM - INFO - Checking dependencies...
+2025-12-14 19:36:19,022 - TrailCamMITM - INFO - ✓ Setup complete
+2025-12-14 19:36:19,023 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:36:19,024 - TrailCamMITM - INFO - Starting MITM Proxy...
+2025-12-14 19:36:19,025 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:36:19,026 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:36:19,028 - TrailCamMITM - INFO - STARTING ACCESS POINT
+2025-12-14 19:36:19,029 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:36:20,065 - TrailCamMITM - INFO - ✓ hostapd config created: /tmp/mitm_hostapd.conf
+2025-12-14 19:36:20,066 - TrailCamMITM - INFO - ✓ dnsmasq config created: /tmp/mitm_dnsmasq.conf
+2025-12-14 19:36:20,067 - TrailCamMITM - INFO - Setting up AP interface...
+2025-12-14 19:36:20,641 - TrailCamMITM - INFO - ✓ Interface wlan0 configured with IP 192.168.43.19
+2025-12-14 19:36:20,641 - TrailCamMITM - INFO - Starting hostapd...
+2025-12-14 19:36:23,643 - TrailCamMITM - INFO - ✓ hostapd running
+2025-12-14 19:36:23,644 - TrailCamMITM - INFO - Starting dnsmasq...
+2025-12-14 19:36:25,646 - TrailCamMITM - INFO - ✓ dnsmasq running
+2025-12-14 19:36:25,647 - TrailCamMITM - INFO - ✓ Access Point 'KJK_E0FF_pi' is ready!
+2025-12-14 19:36:25,647 - TrailCamMITM - INFO -   → Clients will get IPs from 192.168.43.50,192.168.43.150
+2025-12-14 19:36:30,647 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:36:30,648 - TrailCamMITM - INFO - CONNECTING TO CAMERA WIFI
+2025-12-14 19:36:30,648 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:36:31,658 - TrailCamMITM - INFO - Disconnecting existing connections...
+2025-12-14 19:36:32,668 - TrailCamMITM - INFO - Scanning for 'KJK_E0FF'...
+2025-12-14 19:36:33,637 - TrailCamMITM - INFO - ✓ Found 'KJK_E0FF'
+2025-12-14 19:36:33,638 - TrailCamMITM - INFO - Starting wpa_supplicant...
+2025-12-14 19:36:34,769 - TrailCamMITM - INFO - Waiting for connection...
+2025-12-14 19:37:05,084 - TrailCamMITM - ERROR - Failed to connect to camera WiFi!
+2025-12-14 19:37:05,085 - TrailCamMITM - ERROR - Failed to connect to camera!
+2025-12-14 19:37:05,085 - TrailCamMITM - ERROR - Failed to start MITM proxy
+2025-12-14 19:37:05,085 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:05,085 - TrailCamMITM - INFO - Stopping MITM Proxy...
+2025-12-14 19:37:05,086 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:05,086 - TrailCamMITM - INFO - Stopping traffic capture...
+2025-12-14 19:37:05,086 - TrailCamMITM - INFO - ✓ Capture stopped. Total packets: 0
+2025-12-14 19:37:05,086 - TrailCamMITM - INFO - ✓ PCAP saved to: None
+2025-12-14 19:37:05,087 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:05,087 - TrailCamMITM - INFO - CAPTURE STATISTICS
+2025-12-14 19:37:05,087 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:05,087 - TrailCamMITM - INFO - Total packets captured: 0
+2025-12-14 19:37:05,088 - TrailCamMITM - INFO - UDP packets: 0
+2025-12-14 19:37:05,088 - TrailCamMITM - INFO - PPPP packets: 0
+2025-12-14 19:37:05,088 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:37:05,088 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:05,089 - TrailCamMITM - INFO - Disconnecting from camera WiFi...
+2025-12-14 19:37:05,155 - TrailCamMITM - INFO - ✓ Disconnected from camera
+2025-12-14 19:37:05,156 - TrailCamMITM - INFO - Stopping Access Point...
+2025-12-14 19:37:05,249 - TrailCamMITM - INFO - ✓ Access Point stopped
+2025-12-14 19:37:05,249 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:05,250 - TrailCamMITM - INFO - ✓ MITM Proxy stopped
+2025-12-14 19:37:05,251 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:05,253 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:37:05,253 - TrailCamMITM - INFO - Analyze with:
+2025-12-14 19:37:05,254 - TrailCamMITM - INFO -   tcpdump -r None -X
+2025-12-14 19:37:05,254 - TrailCamMITM - INFO -   wireshark None
+2025-12-14 19:37:05,254 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:17,413 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:17,414 - TrailCamMITM - INFO - TrailCam MITM Proxy - Setup Phase
+2025-12-14 19:37:17,415 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:17,415 - TrailCamMITM - INFO - ✓ All required interfaces found
+2025-12-14 19:37:17,416 - TrailCamMITM - INFO - Checking dependencies...
+2025-12-14 19:37:17,444 - TrailCamMITM - INFO - ✓ Setup complete
+2025-12-14 19:37:17,444 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:17,445 - TrailCamMITM - INFO - Starting MITM Proxy...
+2025-12-14 19:37:17,445 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:17,446 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:17,446 - TrailCamMITM - INFO - STARTING ACCESS POINT
+2025-12-14 19:37:17,447 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:18,482 - TrailCamMITM - INFO - ✓ hostapd config created: /tmp/mitm_hostapd.conf
+2025-12-14 19:37:18,483 - TrailCamMITM - INFO - ✓ dnsmasq config created: /tmp/mitm_dnsmasq.conf
+2025-12-14 19:37:18,483 - TrailCamMITM - INFO - Setting up AP interface...
+2025-12-14 19:37:19,041 - TrailCamMITM - INFO - ✓ Interface wlan0 configured with IP 192.168.43.19
+2025-12-14 19:37:19,042 - TrailCamMITM - INFO - Starting hostapd...
+2025-12-14 19:37:22,045 - TrailCamMITM - INFO - ✓ hostapd running
+2025-12-14 19:37:22,045 - TrailCamMITM - INFO - Starting dnsmasq...
+2025-12-14 19:37:24,048 - TrailCamMITM - INFO - ✓ dnsmasq running
+2025-12-14 19:37:24,049 - TrailCamMITM - INFO - ✓ Access Point 'KJK_E0FF_pi' is ready!
+2025-12-14 19:37:24,049 - TrailCamMITM - INFO -   → Clients will get IPs from 192.168.43.50,192.168.43.150
+2025-12-14 19:37:29,050 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:29,050 - TrailCamMITM - INFO - CONNECTING TO CAMERA WIFI
+2025-12-14 19:37:29,051 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:37:30,061 - TrailCamMITM - INFO - Disconnecting existing connections...
+2025-12-14 19:37:31,070 - TrailCamMITM - INFO - Scanning for 'KJK_E0FF'...
+2025-12-14 19:37:32,954 - TrailCamMITM - INFO - ✓ Found 'KJK_E0FF'
+2025-12-14 19:37:32,955 - TrailCamMITM - INFO - Starting wpa_supplicant...
+2025-12-14 19:37:34,077 - TrailCamMITM - INFO - Waiting for connection...
+2025-12-14 19:38:04,393 - TrailCamMITM - ERROR - Failed to connect to camera WiFi!
+2025-12-14 19:38:04,394 - TrailCamMITM - ERROR - Failed to connect to camera!
+2025-12-14 19:38:04,395 - TrailCamMITM - ERROR - Failed to start MITM proxy
+2025-12-14 19:38:04,396 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:04,397 - TrailCamMITM - INFO - Stopping MITM Proxy...
+2025-12-14 19:38:04,398 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:04,399 - TrailCamMITM - INFO - Stopping traffic capture...
+2025-12-14 19:38:04,400 - TrailCamMITM - INFO - ✓ Capture stopped. Total packets: 0
+2025-12-14 19:38:04,401 - TrailCamMITM - INFO - ✓ PCAP saved to: None
+2025-12-14 19:38:04,402 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:04,403 - TrailCamMITM - INFO - CAPTURE STATISTICS
+2025-12-14 19:38:04,404 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:04,404 - TrailCamMITM - INFO - Total packets captured: 0
+2025-12-14 19:38:04,405 - TrailCamMITM - INFO - UDP packets: 0
+2025-12-14 19:38:04,406 - TrailCamMITM - INFO - PPPP packets: 0
+2025-12-14 19:38:04,406 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:38:04,407 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:04,408 - TrailCamMITM - INFO - Disconnecting from camera WiFi...
+2025-12-14 19:38:04,477 - TrailCamMITM - INFO - ✓ Disconnected from camera
+2025-12-14 19:38:04,477 - TrailCamMITM - INFO - Stopping Access Point...
+2025-12-14 19:38:04,577 - TrailCamMITM - INFO - ✓ Access Point stopped
+2025-12-14 19:38:04,578 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:04,579 - TrailCamMITM - INFO - ✓ MITM Proxy stopped
+2025-12-14 19:38:04,580 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:04,580 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:38:04,581 - TrailCamMITM - INFO - Analyze with:
+2025-12-14 19:38:04,582 - TrailCamMITM - INFO -   tcpdump -r None -X
+2025-12-14 19:38:04,583 - TrailCamMITM - INFO -   wireshark None
+2025-12-14 19:38:04,584 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:20,683 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:20,684 - TrailCamMITM - INFO - TrailCam MITM Proxy - Setup Phase
+2025-12-14 19:38:20,685 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:20,686 - TrailCamMITM - INFO - ✓ All required interfaces found
+2025-12-14 19:38:20,686 - TrailCamMITM - INFO - Checking dependencies...
+2025-12-14 19:38:20,718 - TrailCamMITM - INFO - ✓ Setup complete
+2025-12-14 19:38:20,718 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:20,719 - TrailCamMITM - INFO - Starting MITM Proxy...
+2025-12-14 19:38:20,720 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:20,720 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:20,721 - TrailCamMITM - INFO - STARTING ACCESS POINT
+2025-12-14 19:38:20,721 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:21,759 - TrailCamMITM - INFO - ✓ hostapd config created: /tmp/mitm_hostapd.conf
+2025-12-14 19:38:21,760 - TrailCamMITM - INFO - ✓ dnsmasq config created: /tmp/mitm_dnsmasq.conf
+2025-12-14 19:38:21,761 - TrailCamMITM - INFO - Setting up AP interface...
+2025-12-14 19:38:22,338 - TrailCamMITM - INFO - ✓ Interface wlan0 configured with IP 192.168.43.19
+2025-12-14 19:38:22,339 - TrailCamMITM - INFO - Starting hostapd...
+2025-12-14 19:38:25,342 - TrailCamMITM - INFO - ✓ hostapd running
+2025-12-14 19:38:25,343 - TrailCamMITM - INFO - Starting dnsmasq...
+2025-12-14 19:38:27,346 - TrailCamMITM - INFO - ✓ dnsmasq running
+2025-12-14 19:38:27,347 - TrailCamMITM - INFO - ✓ Access Point 'KJK_E0FF_pi' is ready!
+2025-12-14 19:38:27,347 - TrailCamMITM - INFO -   → Clients will get IPs from 192.168.43.50,192.168.43.150
+2025-12-14 19:38:32,347 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:32,348 - TrailCamMITM - INFO - CONNECTING TO CAMERA WIFI
+2025-12-14 19:38:32,348 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:38:33,358 - TrailCamMITM - INFO - Disconnecting existing connections...
+2025-12-14 19:38:34,368 - TrailCamMITM - INFO - Scanning for 'KJK_E0FF'...
+2025-12-14 19:38:35,339 - TrailCamMITM - INFO - ✓ Found 'KJK_E0FF'
+2025-12-14 19:38:35,340 - TrailCamMITM - INFO - Starting wpa_supplicant...
+2025-12-14 19:38:36,501 - TrailCamMITM - INFO - Waiting for connection...
+2025-12-14 19:39:06,814 - TrailCamMITM - ERROR - Failed to connect to camera WiFi!
+2025-12-14 19:39:06,814 - TrailCamMITM - ERROR - Failed to connect to camera!
+2025-12-14 19:39:06,814 - TrailCamMITM - ERROR - Failed to start MITM proxy
+2025-12-14 19:39:06,815 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:06,815 - TrailCamMITM - INFO - Stopping MITM Proxy...
+2025-12-14 19:39:06,816 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:06,816 - TrailCamMITM - INFO - Stopping traffic capture...
+2025-12-14 19:39:06,817 - TrailCamMITM - INFO - ✓ Capture stopped. Total packets: 0
+2025-12-14 19:39:06,817 - TrailCamMITM - INFO - ✓ PCAP saved to: None
+2025-12-14 19:39:06,818 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:06,818 - TrailCamMITM - INFO - CAPTURE STATISTICS
+2025-12-14 19:39:06,818 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:06,819 - TrailCamMITM - INFO - Total packets captured: 0
+2025-12-14 19:39:06,819 - TrailCamMITM - INFO - UDP packets: 0
+2025-12-14 19:39:06,819 - TrailCamMITM - INFO - PPPP packets: 0
+2025-12-14 19:39:06,819 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:39:06,820 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:06,820 - TrailCamMITM - INFO - Disconnecting from camera WiFi...
+2025-12-14 19:39:06,895 - TrailCamMITM - INFO - ✓ Disconnected from camera
+2025-12-14 19:39:06,896 - TrailCamMITM - INFO - Stopping Access Point...
+2025-12-14 19:39:06,994 - TrailCamMITM - INFO - ✓ Access Point stopped
+2025-12-14 19:39:06,994 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:06,995 - TrailCamMITM - INFO - ✓ MITM Proxy stopped
+2025-12-14 19:39:06,996 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:06,998 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:39:06,999 - TrailCamMITM - INFO - Analyze with:
+2025-12-14 19:39:07,000 - TrailCamMITM - INFO -   tcpdump -r None -X
+2025-12-14 19:39:07,000 - TrailCamMITM - INFO -   wireshark None
+2025-12-14 19:39:07,001 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:22,261 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:22,262 - TrailCamMITM - INFO - TrailCam MITM Proxy - Setup Phase
+2025-12-14 19:39:22,262 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:22,263 - TrailCamMITM - INFO - ✓ All required interfaces found
+2025-12-14 19:39:22,264 - TrailCamMITM - INFO - Checking dependencies...
+2025-12-14 19:39:22,293 - TrailCamMITM - INFO - ✓ Setup complete
+2025-12-14 19:39:22,293 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:22,293 - TrailCamMITM - INFO - Starting MITM Proxy...
+2025-12-14 19:39:22,294 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:22,294 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:22,294 - TrailCamMITM - INFO - STARTING ACCESS POINT
+2025-12-14 19:39:22,294 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:23,330 - TrailCamMITM - INFO - ✓ hostapd config created: /tmp/mitm_hostapd.conf
+2025-12-14 19:39:23,331 - TrailCamMITM - INFO - ✓ dnsmasq config created: /tmp/mitm_dnsmasq.conf
+2025-12-14 19:39:23,331 - TrailCamMITM - INFO - Setting up AP interface...
+2025-12-14 19:39:23,927 - TrailCamMITM - INFO - ✓ Interface wlan0 configured with IP 192.168.43.19
+2025-12-14 19:39:23,928 - TrailCamMITM - INFO - Starting hostapd...
+2025-12-14 19:39:26,930 - TrailCamMITM - INFO - ✓ hostapd running
+2025-12-14 19:39:26,931 - TrailCamMITM - INFO - Starting dnsmasq...
+2025-12-14 19:39:28,933 - TrailCamMITM - INFO - ✓ dnsmasq running
+2025-12-14 19:39:28,934 - TrailCamMITM - INFO - ✓ Access Point 'KJK_E0FF_pi' is ready!
+2025-12-14 19:39:28,934 - TrailCamMITM - INFO -   → Clients will get IPs from 192.168.43.50,192.168.43.150
+2025-12-14 19:39:33,935 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:33,936 - TrailCamMITM - INFO - CONNECTING TO CAMERA WIFI
+2025-12-14 19:39:33,936 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:39:35,407 - TrailCamMITM - INFO - Disconnecting existing connections...
+2025-12-14 19:39:36,417 - TrailCamMITM - INFO - Scanning for 'KJK_E0FF'...
+2025-12-14 19:39:37,387 - TrailCamMITM - INFO - ✓ Found 'KJK_E0FF'
+2025-12-14 19:39:37,388 - TrailCamMITM - INFO - Starting wpa_supplicant...
+2025-12-14 19:39:38,517 - TrailCamMITM - INFO - Waiting for connection...
+2025-12-14 19:40:08,809 - TrailCamMITM - ERROR - Failed to connect to camera WiFi!
+2025-12-14 19:40:08,810 - TrailCamMITM - ERROR - Failed to connect to camera!
+2025-12-14 19:40:08,811 - TrailCamMITM - ERROR - Failed to start MITM proxy
+2025-12-14 19:40:08,811 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:40:08,811 - TrailCamMITM - INFO - Stopping MITM Proxy...
+2025-12-14 19:40:08,811 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:40:08,812 - TrailCamMITM - INFO - Stopping traffic capture...
+2025-12-14 19:40:08,812 - TrailCamMITM - INFO - ✓ Capture stopped. Total packets: 0
+2025-12-14 19:40:08,812 - TrailCamMITM - INFO - ✓ PCAP saved to: None
+2025-12-14 19:40:08,813 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:40:08,813 - TrailCamMITM - INFO - CAPTURE STATISTICS
+2025-12-14 19:40:08,814 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:40:08,814 - TrailCamMITM - INFO - Total packets captured: 0
+2025-12-14 19:40:08,814 - TrailCamMITM - INFO - UDP packets: 0
+2025-12-14 19:40:08,815 - TrailCamMITM - INFO - PPPP packets: 0
+2025-12-14 19:40:08,815 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:40:08,816 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:40:08,816 - TrailCamMITM - INFO - Disconnecting from camera WiFi...
+2025-12-14 19:40:08,945 - TrailCamMITM - INFO - ✓ Disconnected from camera
+2025-12-14 19:40:08,946 - TrailCamMITM - INFO - Stopping Access Point...
+2025-12-14 19:40:09,041 - TrailCamMITM - INFO - ✓ Access Point stopped
+2025-12-14 19:40:09,042 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:40:09,042 - TrailCamMITM - INFO - ✓ MITM Proxy stopped
+2025-12-14 19:40:09,043 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:40:09,043 - TrailCamMITM - INFO - Capture file: None
+2025-12-14 19:40:09,044 - TrailCamMITM - INFO - Analyze with:
+2025-12-14 19:40:09,045 - TrailCamMITM - INFO -   tcpdump -r None -X
+2025-12-14 19:40:09,045 - TrailCamMITM - INFO -   wireshark None
+2025-12-14 19:40:09,046 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:42:16,383 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:42:16,383 - TrailCamMITM - INFO - TrailCam MITM Proxy - Setup Phase
+2025-12-14 19:42:16,384 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:42:16,384 - TrailCamMITM - INFO - ✓ All required interfaces found
+2025-12-14 19:42:16,385 - TrailCamMITM - INFO - Checking dependencies...
+2025-12-14 19:42:16,441 - TrailCamMITM - INFO - Installing network-manager...
+2025-12-14 19:42:26,366 - TrailCamMITM - INFO - ✓ Setup complete
+2025-12-14 19:42:26,367 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:42:26,367 - TrailCamMITM - INFO - Starting MITM Proxy...
+2025-12-14 19:42:26,367 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:42:26,368 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:42:26,368 - TrailCamMITM - INFO - STARTING ACCESS POINT
+2025-12-14 19:42:26,368 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:42:26,368 - TrailCamMITM - INFO - Checking for conflicts...
+2025-12-14 19:42:26,515 - TrailCamMITM - INFO - NetworkManager is active. Configuring interfaces as unmanaged...
+2025-12-14 19:42:27,713 - TrailCamMITM - WARNING - Port 53 is in use! Attempting to free it...
+2025-12-14 19:42:29,973 - TrailCamMITM - INFO - ✓ hostapd config created: /tmp/mitm_hostapd.conf
+2025-12-14 19:42:29,974 - TrailCamMITM - INFO - ✓ dnsmasq config created: /tmp/mitm_dnsmasq.conf
+2025-12-14 19:42:29,975 - TrailCamMITM - INFO - Setting up AP interface...
+2025-12-14 19:42:30,562 - TrailCamMITM - INFO - ✓ Interface wlan0 configured with IP 192.168.43.20
+2025-12-14 19:42:30,563 - TrailCamMITM - INFO - Starting hostapd...
+2025-12-14 19:42:33,570 - TrailCamMITM - INFO - ✓ hostapd running
+2025-12-14 19:42:33,571 - TrailCamMITM - INFO - Starting dnsmasq...
+2025-12-14 19:42:35,577 - TrailCamMITM - INFO - ✓ dnsmasq running
+2025-12-14 19:42:35,578 - TrailCamMITM - INFO - ✓ Access Point 'KJK_E0FF_pi' is ready!
+2025-12-14 19:42:35,578 - TrailCamMITM - INFO -   → Clients will get IPs from 192.168.43.50,192.168.43.150
+2025-12-14 19:42:37,314 - TrailCamMITM - INFO - 📱 CLIENT CONNECTED: d0:d7:83:74:4d:01
+2025-12-14 19:42:37,615 - TrailCamMITM - INFO - 📱 DHCP LEASE: IP 192.168.43.115 assigned to d0:d7:83:74:4d:01
+2025-12-14 19:42:40,579 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:42:40,579 - TrailCamMITM - INFO - CONNECTING TO CAMERA WIFI
+2025-12-14 19:42:40,579 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:42:41,694 - TrailCamMITM - INFO - Disconnecting existing connections...
+2025-12-14 19:42:42,729 - TrailCamMITM - INFO - Scanning for 'KJK_E0FF'...
+2025-12-14 19:42:43,714 - TrailCamMITM - INFO - ✓ Found 'KJK_E0FF'
+2025-12-14 19:42:43,715 - TrailCamMITM - INFO - Starting wpa_supplicant...
+2025-12-14 19:42:43,718 - TrailCamMITM - INFO - Waiting for connection...
+2025-12-14 19:43:02,575 - TrailCamMITM - INFO - 📷 CAMERA CONNECTION ESTABLISHED
+2025-12-14 19:43:03,954 - TrailCamMITM - INFO - 📱 CLIENT DISCONNECTED: d0:d7:83:74:4d:01
+2025-12-14 19:43:12,241 - TrailCamMITM - INFO - 📱 CLIENT CONNECTED: d0:d7:83:74:4d:01
+2025-12-14 19:43:12,320 - TrailCamMITM - INFO - 📱 DHCP LEASE: IP 192.168.43.115 assigned to d0:d7:83:74:4d:01
+2025-12-14 19:43:14,021 - TrailCamMITM - ERROR - Failed to connect to camera WiFi!
+2025-12-14 19:43:17,022 - TrailCamMITM - INFO - Enabling IP forwarding...
+2025-12-14 19:43:17,033 - TrailCamMITM - INFO - ✓ IP forwarding enabled
+2025-12-14 19:43:17,033 - TrailCamMITM - INFO - Setting up NAT rules...
+2025-12-14 19:43:17,302 - TrailCamMITM - INFO - ✓ NAT configured
+2025-12-14 19:43:17,302 - TrailCamMITM - INFO -   → Traffic from wlan0 will be forwarded to wlan1
+2025-12-14 19:43:17,302 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:43:17,303 - TrailCamMITM - INFO - STARTING TRAFFIC CAPTURE
+2025-12-14 19:43:17,303 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:43:17,303 - TrailCamMITM - INFO - Capture file: /tmp/mitm_captures/trailcam_mitm_20251214_194317.pcap
+2025-12-14 19:43:17,303 - TrailCamMITM - INFO - Starting tcpdump: tcpdump -i any -w /tmp/mitm_captures/trailcam_mitm_20251214_194317.pcap -U -v host 192.168.43.1 or net 192.168.43.0/24
+2025-12-14 19:43:19,307 - TrailCamMITM - INFO - ✓ tcpdump running
+2025-12-14 19:43:19,309 - TrailCamMITM - INFO - ✓ Live packet analysis started
+2025-12-14 19:43:19,331 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:43:19,331 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:43:19,333 - TrailCamMITM - INFO - ✓ MITM PROXY IS RUNNING
+2025-12-14 19:43:19,333 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:43:19,334 - TrailCamMITM - INFO - Smartphone AP: KJK_E0FF_pi (Password: 85087127)
+2025-12-14 19:43:19,334 - TrailCamMITM - INFO - Camera Network: KJK_E0FF (via wlan1)
+2025-12-14 19:43:19,334 - TrailCamMITM - INFO - Traffic is being captured to: /tmp/mitm_captures/trailcam_mitm_20251214_194317.pcap
+2025-12-14 19:43:19,334 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:43:19,335 - TrailCamMITM - INFO - Waiting for smartphone to connect...
+2025-12-14 19:43:19,335 - TrailCamMITM - INFO - Check log for '📱 CLIENT CONNECTED'
+2025-12-14 19:43:19,335 - TrailCamMITM - INFO - Press Ctrl+C to stop
+2025-12-14 19:43:19,335 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:43:29,336 - TrailCamMITM - INFO - [STATUS] Packets captured: 83 (+83)
+2025-12-14 19:43:36,787 - TrailCamMITM - INFO - 📱 CLIENT DISCONNECTED: d0:d7:83:74:4d:01
+2025-12-14 19:43:37,529 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:40890 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:43:37,533 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:40890 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:43:37,633 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:40890 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:43:37,637 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:40890 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:43:37,727 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:40890 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:43:37,731 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:40890 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:43:37,836 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:40890 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:43:37,840 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:40890 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:43:39,337 - TrailCamMITM - INFO - [STATUS] Packets captured: 202 (+119)
+2025-12-14 19:43:47,487 - TrailCamMITM - INFO - 📱 CLIENT CONNECTED: d0:d7:83:74:4d:01
+2025-12-14 19:43:47,577 - TrailCamMITM - INFO - 📱 DHCP LEASE: IP 192.168.43.115 assigned to d0:d7:83:74:4d:01
+2025-12-14 19:43:49,337 - TrailCamMITM - INFO - [STATUS] Packets captured: 263 (+61)
+2025-12-14 19:43:57,941 - TrailCamMITM - INFO - 📷 CAMERA DISCONNECTED
+2025-12-14 19:43:59,338 - TrailCamMITM - INFO - [STATUS] Packets captured: 363 (+100)
+2025-12-14 19:44:09,339 - TrailCamMITM - INFO - [STATUS] Packets captured: 443 (+80)
+2025-12-14 19:44:19,340 - TrailCamMITM - INFO - [STATUS] Packets captured: 514 (+71)
+2025-12-14 19:44:29,340 - TrailCamMITM - INFO - [STATUS] Packets captured: 588 (+74)
+2025-12-14 19:44:39,341 - TrailCamMITM - INFO - [STATUS] Packets captured: 668 (+80)
+2025-12-14 19:44:42,295 - TrailCamMITM - INFO - 📷 CAMERA CONNECTION ESTABLISHED
+2025-12-14 19:44:49,344 - TrailCamMITM - INFO - [STATUS] Packets captured: 783 (+115)
+2025-12-14 19:44:59,345 - TrailCamMITM - INFO - [STATUS] Packets captured: 841 (+58)
+2025-12-14 19:45:09,346 - TrailCamMITM - INFO - [STATUS] Packets captured: 897 (+56)
+2025-12-14 19:45:19,347 - TrailCamMITM - INFO - [STATUS] Packets captured: 974 (+77)
+2025-12-14 19:45:29,347 - TrailCamMITM - INFO - [STATUS] Packets captured: 1077 (+103)
+2025-12-14 19:45:39,348 - TrailCamMITM - INFO - [STATUS] Packets captured: 1194 (+117)
+2025-12-14 19:45:49,349 - TrailCamMITM - INFO - [STATUS] Packets captured: 1276 (+82)
+2025-12-14 19:45:55,418 - TrailCamMITM - INFO - 📱 CLIENT DISCONNECTED: d0:d7:83:74:4d:01
+2025-12-14 19:45:59,350 - TrailCamMITM - INFO - [STATUS] Packets captured: 1325 (+49)
+2025-12-14 19:46:09,351 - TrailCamMITM - INFO - [STATUS] Packets captured: 1384 (+59)
+2025-12-14 19:46:12,740 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:38579 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:46:12,840 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:38579 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:46:12,939 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:38579 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:46:12,943 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:38579 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:46:13,047 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:38579 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:46:13,051 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:38579 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:46:19,352 - TrailCamMITM - INFO - [STATUS] Packets captured: 1425 (+41)
+2025-12-14 19:46:20,218 - TrailCamMITM - INFO - 📱 CLIENT CONNECTED: d0:d7:83:74:4d:01
+2025-12-14 19:46:20,220 - TrailCamMITM - INFO - 📱 CLIENT DISCONNECTED: d0:d7:83:74:4d:01
+2025-12-14 19:46:21,966 - TrailCamMITM - INFO - 📱 CLIENT CONNECTED: d0:d7:83:74:4d:01
+2025-12-14 19:46:22,053 - TrailCamMITM - INFO - 📱 DHCP LEASE: IP 192.168.43.115 assigned to d0:d7:83:74:4d:01
+2025-12-14 19:46:29,353 - TrailCamMITM - INFO - [STATUS] Packets captured: 1532 (+107)
+2025-12-14 19:46:29,937 - TrailCamMITM - INFO - 📷 CAMERA DISCONNECTED
+2025-12-14 19:46:39,360 - TrailCamMITM - INFO - [STATUS] Packets captured: 1613 (+81)
+2025-12-14 19:46:49,363 - TrailCamMITM - INFO - [STATUS] Packets captured: 1678 (+65)
+2025-12-14 19:46:59,364 - TrailCamMITM - INFO - [STATUS] Packets captured: 1759 (+81)
+2025-12-14 19:47:09,366 - TrailCamMITM - INFO - [STATUS] Packets captured: 1859 (+100)
+2025-12-14 19:47:19,366 - TrailCamMITM - INFO - [STATUS] Packets captured: 1961 (+102)
+2025-12-14 19:47:29,367 - TrailCamMITM - INFO - [STATUS] Packets captured: 2015 (+54)
+2025-12-14 19:47:31,971 - TrailCamMITM - INFO - 📷 CAMERA CONNECTION ESTABLISHED
+2025-12-14 19:47:39,368 - TrailCamMITM - INFO - [STATUS] Packets captured: 2070 (+55)
+2025-12-14 19:47:49,369 - TrailCamMITM - INFO - [STATUS] Packets captured: 2151 (+81)
+2025-12-14 19:47:59,370 - TrailCamMITM - INFO - [STATUS] Packets captured: 2214 (+63)
+2025-12-14 19:48:09,374 - TrailCamMITM - INFO - [STATUS] Packets captured: 2267 (+53)
+2025-12-14 19:48:19,375 - TrailCamMITM - INFO - [STATUS] Packets captured: 2303 (+36)
+2025-12-14 19:48:29,375 - TrailCamMITM - INFO - [STATUS] Packets captured: 2355 (+52)
+2025-12-14 19:48:39,376 - TrailCamMITM - INFO - [STATUS] Packets captured: 2403 (+48)
+2025-12-14 19:48:49,377 - TrailCamMITM - INFO - [STATUS] Packets captured: 2444 (+41)
+2025-12-14 19:48:59,378 - TrailCamMITM - INFO - [STATUS] Packets captured: 2486 (+42)
+2025-12-14 19:49:09,378 - TrailCamMITM - INFO - [STATUS] Packets captured: 2541 (+55)
+2025-12-14 19:49:19,379 - TrailCamMITM - INFO - [STATUS] Packets captured: 2571 (+30)
+2025-12-14 19:49:29,380 - TrailCamMITM - INFO - [STATUS] Packets captured: 2601 (+30)
+2025-12-14 19:49:39,381 - TrailCamMITM - INFO - [STATUS] Packets captured: 2646 (+45)
+2025-12-14 19:49:49,382 - TrailCamMITM - INFO - [STATUS] Packets captured: 2713 (+67)
+2025-12-14 19:49:54,571 - TrailCamMITM - INFO - 📱 CLIENT DISCONNECTED: d0:d7:83:74:4d:01
+2025-12-14 19:49:59,383 - TrailCamMITM - INFO - [STATUS] Packets captured: 2763 (+50)
+2025-12-14 19:50:04,781 - TrailCamMITM - INFO - 📱 CLIENT CONNECTED: d0:d7:83:74:4d:01
+2025-12-14 19:50:04,865 - TrailCamMITM - INFO - 📱 DHCP LEASE: IP 192.168.43.115 assigned to d0:d7:83:74:4d:01
+2025-12-14 19:50:05,048 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:57111 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,361 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:57111 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,365 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:57111 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,372 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:57111 → 119.23.219.190:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:05,376 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:57111 → 47.52.46.203:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:05,380 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:57111 → 121.43.173.0:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:05,384 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 119.23.219.190:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:05,388 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 47.52.46.203:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:05,392 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 121.43.173.0:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:05,395 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,399 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,446 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,449 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,895 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,899 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,903 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,906 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,924 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,927 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,934 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,938 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,952 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:05,956 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,208 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,212 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,220 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,224 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,263 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,267 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,740 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,744 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,748 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,752 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,758 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,762 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,767 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,771 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,798 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 119.23.219.190:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:06,802 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 47.52.46.203:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:06,806 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:20745 → 121.43.173.0:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:06,851 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 119.23.219.190:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:06,855 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 47.52.46.203:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:06,859 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 121.43.173.0:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:06,863 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,867 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,951 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:06,955 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,051 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,055 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,152 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,155 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,264 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,267 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,354 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,358 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,455 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,458 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,555 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,559 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,656 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,660 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,761 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,764 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,858 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,862 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,960 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:07,963 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,060 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,064 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,161 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,165 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,304 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 119.23.219.190:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:08,308 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 47.52.46.203:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:08,312 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:54992 → 121.43.173.0:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:08,356 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 119.23.219.190:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:08,360 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 47.52.46.203:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:08,364 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 121.43.173.0:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:08,367 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,371 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,458 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,462 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,559 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,563 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,659 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,663 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,761 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,764 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,862 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,866 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,963 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:08,967 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,064 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,068 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,166 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,170 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,267 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,271 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,369 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,375 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,384 - TrailCamMITM - INFO - [STATUS] Packets captured: 2945 (+182)
+2025-12-14 19:50:09,470 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,474 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,571 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,575 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,673 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,676 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,816 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 119.23.219.190:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:09,819 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 47.52.46.203:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:09,823 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:6718 → 121.43.173.0:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:09,866 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 119.23.219.190:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:09,870 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 47.52.46.203:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:09,874 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 121.43.173.0:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:09,878 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,882 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,969 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:09,973 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,070 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,074 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,172 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,176 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,274 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,278 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,375 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,379 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,476 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,480 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,578 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,582 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,680 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,684 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,780 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,784 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,883 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,889 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,985 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:10,991 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,085 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,089 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,186 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,190 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,325 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 119.23.219.190:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:11,329 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 47.52.46.203:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:11,333 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:44649 → 121.43.173.0:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:11,377 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 119.23.219.190:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:11,380 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 47.52.46.203:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:11,384 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 121.43.173.0:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:11,388 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,392 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,480 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,483 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,581 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,585 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,683 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,687 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,784 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,788 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,886 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,890 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,988 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:11,992 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,090 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,093 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,190 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,194 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,292 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,296 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,395 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,399 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,494 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,498 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,596 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,600 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,697 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,700 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,834 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 119.23.219.190:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:12,838 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 47.52.46.203:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:12,842 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:56504 → 121.43.173.0:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:12,886 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 119.23.219.190:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:12,890 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 47.52.46.203:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:12,894 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 121.43.173.0:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:12,898 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,901 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,989 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:12,992 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,090 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,094 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,192 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,196 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,293 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,297 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,395 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,399 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,495 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,499 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,597 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,601 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,698 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,702 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,799 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,803 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,901 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:13,905 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,003 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,006 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,104 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,108 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,205 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,209 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,343 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 119.23.219.190:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:14,347 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 47.52.46.203:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:14,350 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:49006 → 121.43.173.0:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:14,394 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 119.23.219.190:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:14,398 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 47.52.46.203:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:14,402 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 121.43.173.0:32100 | Type: UNKNOWN(0x0) | Len: 0 | Payload: f1000000
+2025-12-14 19:50:14,406 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,410 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,497 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,500 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,598 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,602 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,700 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,703 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,801 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,804 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,901 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:14,906 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,016 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,020 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,104 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,107 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,205 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,209 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,306 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,310 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,408 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,411 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,509 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,513 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,611 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,615 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,712 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,716 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:50:15,853 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 119.23.219.190:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:15,857 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 47.52.46.203:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:15,861 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.115:3814 → 121.43.173.0:32100 | Type: UNKNOWN(0xf9) | Len: 84 | Payload: f1f900540ccb9a2b5f951eb669dfaa375a6bbe3e76202e1336cfc4b46756b85a
+2025-12-14 19:50:19,384 - TrailCamMITM - INFO - [STATUS] Packets captured: 3143 (+198)
+2025-12-14 19:50:29,385 - TrailCamMITM - INFO - [STATUS] Packets captured: 3206 (+63)
+2025-12-14 19:50:39,386 - TrailCamMITM - INFO - [STATUS] Packets captured: 3290 (+84)
+2025-12-14 19:50:49,387 - TrailCamMITM - INFO - [STATUS] Packets captured: 3368 (+78)
+2025-12-14 19:50:59,388 - TrailCamMITM - INFO - [STATUS] Packets captured: 3415 (+47)
+2025-12-14 19:51:09,388 - TrailCamMITM - INFO - [STATUS] Packets captured: 3482 (+67)
+2025-12-14 19:51:19,389 - TrailCamMITM - INFO - [STATUS] Packets captured: 3547 (+65)
+2025-12-14 19:51:29,390 - TrailCamMITM - INFO - [STATUS] Packets captured: 3614 (+67)
+2025-12-14 19:51:39,391 - TrailCamMITM - INFO - [STATUS] Packets captured: 3677 (+63)
+2025-12-14 19:51:49,391 - TrailCamMITM - INFO - [STATUS] Packets captured: 3745 (+68)
+2025-12-14 19:51:59,392 - TrailCamMITM - INFO - [STATUS] Packets captured: 3803 (+58)
+2025-12-14 19:52:09,393 - TrailCamMITM - INFO - [STATUS] Packets captured: 3844 (+41)
+2025-12-14 19:52:09,573 - TrailCamMITM - INFO - 📱 CLIENT DISCONNECTED: d0:d7:83:74:4d:01
+2025-12-14 19:52:14,822 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:33551 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:52:14,826 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:33551 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:52:14,921 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:33551 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:52:14,925 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:33551 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:52:15,021 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:33551 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:52:15,119 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:33551 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:52:15,219 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:33551 → 192.168.43.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:52:15,223 - TrailCamMITM - INFO - [PPPP ←] 192.168.43.21:33551 → 255.255.255.255:32108 | Type: UNKNOWN(0x30) | Len: 0 | Payload: f1300000
+2025-12-14 19:52:19,394 - TrailCamMITM - INFO - [STATUS] Packets captured: 3903 (+59)
+2025-12-14 19:52:29,394 - TrailCamMITM - INFO - [STATUS] Packets captured: 3919 (+16)
+2025-12-14 19:52:39,395 - TrailCamMITM - INFO - [STATUS] Packets captured: 3921 (+2)
+2025-12-14 19:52:49,396 - TrailCamMITM - INFO - [STATUS] Packets captured: 3922 (+1)
+2025-12-14 19:52:56,006 - TrailCamMITM - INFO - 📱 CLIENT CONNECTED: d0:d7:83:74:4d:01
+2025-12-14 19:52:56,029 - TrailCamMITM - INFO - 📱 DHCP LEASE: IP 192.168.43.115 assigned to d0:d7:83:74:4d:01
+2025-12-14 19:52:59,397 - TrailCamMITM - INFO - [STATUS] Packets captured: 3989 (+67)
+2025-12-14 19:53:02,932 - TrailCamMITM - INFO - 📷 CAMERA DISCONNECTED
+2025-12-14 19:53:09,398 - TrailCamMITM - INFO - [STATUS] Packets captured: 4098 (+109)
+2025-12-14 19:53:19,399 - TrailCamMITM - INFO - [STATUS] Packets captured: 4204 (+106)
+2025-12-14 19:53:29,400 - TrailCamMITM - INFO - [STATUS] Packets captured: 4273 (+69)
+2025-12-14 19:53:39,400 - TrailCamMITM - INFO - [STATUS] Packets captured: 4334 (+61)
+2025-12-14 19:53:49,401 - TrailCamMITM - INFO - [STATUS] Packets captured: 4403 (+69)
+2025-12-14 19:53:59,404 - TrailCamMITM - INFO - [STATUS] Packets captured: 4486 (+83)
+2025-12-14 19:54:09,405 - TrailCamMITM - INFO - [STATUS] Packets captured: 4551 (+65)
+2025-12-14 19:54:10,895 - TrailCamMITM - INFO - 📷 CAMERA CONNECTION ESTABLISHED
+2025-12-14 19:54:19,405 - TrailCamMITM - INFO - [STATUS] Packets captured: 4630 (+79)
+2025-12-14 19:54:29,406 - TrailCamMITM - INFO - [STATUS] Packets captured: 4703 (+73)
+2025-12-14 19:54:39,407 - TrailCamMITM - INFO - [STATUS] Packets captured: 4796 (+93)
+2025-12-14 19:54:49,408 - TrailCamMITM - INFO - [STATUS] Packets captured: 4868 (+72)
+2025-12-14 19:54:59,409 - TrailCamMITM - INFO - [STATUS] Packets captured: 4932 (+64)
+2025-12-14 19:55:09,410 - TrailCamMITM - INFO - [STATUS] Packets captured: 5038 (+106)
+2025-12-14 19:55:19,411 - TrailCamMITM - INFO - [STATUS] Packets captured: 5152 (+114)
+2025-12-14 19:55:29,412 - TrailCamMITM - INFO - [STATUS] Packets captured: 5249 (+97)
+2025-12-14 19:55:39,412 - TrailCamMITM - INFO - [STATUS] Packets captured: 5290 (+41)
+2025-12-14 19:55:39,937 - TrailCamMITM - INFO - 📷 CAMERA DISCONNECTED
+2025-12-14 19:55:47,359 - TrailCamMITM - INFO - 
+Received signal, shutting down...
+2025-12-14 19:55:47,360 - TrailCamMITM - INFO - 📱 CLIENT DISCONNECTED: d0:d7:83:74:4d:01
+2025-12-14 19:55:47,361 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:47,362 - TrailCamMITM - INFO - Stopping MITM Proxy...
+2025-12-14 19:55:47,364 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:47,364 - TrailCamMITM - INFO - Stopping traffic capture...
+2025-12-14 19:55:47,410 - TrailCamMITM - INFO - ✓ Capture stopped. Total packets: 5317
+2025-12-14 19:55:47,411 - TrailCamMITM - INFO - ✓ PCAP saved to: /tmp/mitm_captures/trailcam_mitm_20251214_194317.pcap
+2025-12-14 19:55:47,412 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:47,412 - TrailCamMITM - INFO - CAPTURE STATISTICS
+2025-12-14 19:55:47,414 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:48,710 - TrailCamMITM - INFO - Total packets captured: 5317
+2025-12-14 19:55:48,711 - TrailCamMITM - INFO - UDP packets: 4622
+2025-12-14 19:55:48,711 - TrailCamMITM - INFO - PPPP packets: 274
+2025-12-14 19:55:48,712 - TrailCamMITM - INFO - Capture file: /tmp/mitm_captures/trailcam_mitm_20251214_194317.pcap
+2025-12-14 19:55:48,712 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:48,713 - TrailCamMITM - INFO - Cleaning up NAT rules...
+2025-12-14 19:55:48,785 - TrailCamMITM - INFO - ✓ NAT rules removed
+2025-12-14 19:55:48,786 - TrailCamMITM - INFO - Disconnecting from camera WiFi...
+2025-12-14 19:55:48,787 - TrailCamMITM - INFO - Stopping wpa_supplicant...
+2025-12-14 19:55:48,853 - TrailCamMITM - INFO - ✓ Disconnected from camera
+2025-12-14 19:55:48,854 - TrailCamMITM - INFO - Stopping Access Point...
+2025-12-14 19:55:48,855 - TrailCamMITM - INFO - Stopping hostapd...
+2025-12-14 19:55:48,857 - TrailCamMITM - INFO - Stopping dnsmasq...
+2025-12-14 19:55:48,895 - TrailCamMITM - INFO - ✓ Access Point stopped
+2025-12-14 19:55:48,896 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:48,897 - TrailCamMITM - INFO - ✓ MITM Proxy stopped
+2025-12-14 19:55:48,897 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:48,898 - TrailCamMITM - INFO - Capture file: /tmp/mitm_captures/trailcam_mitm_20251214_194317.pcap
+2025-12-14 19:55:48,898 - TrailCamMITM - INFO - Analyze with:
+2025-12-14 19:55:48,898 - TrailCamMITM - INFO -   tcpdump -r /tmp/mitm_captures/trailcam_mitm_20251214_194317.pcap -X
+2025-12-14 19:55:48,899 - TrailCamMITM - INFO -   wireshark /tmp/mitm_captures/trailcam_mitm_20251214_194317.pcap
+2025-12-14 19:55:48,899 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:48,899 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:48,900 - TrailCamMITM - INFO - Stopping MITM Proxy...
+2025-12-14 19:55:48,900 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:48,900 - TrailCamMITM - INFO - Stopping traffic capture...
+2025-12-14 19:55:48,901 - TrailCamMITM - INFO - ✓ Capture stopped. Total packets: 5317
+2025-12-14 19:55:48,901 - TrailCamMITM - INFO - ✓ PCAP saved to: /tmp/mitm_captures/trailcam_mitm_20251214_194317.pcap
+2025-12-14 19:55:48,902 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:48,902 - TrailCamMITM - INFO - CAPTURE STATISTICS
+2025-12-14 19:55:48,902 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:50,176 - TrailCamMITM - INFO - Total packets captured: 5317
+2025-12-14 19:55:50,177 - TrailCamMITM - INFO - UDP packets: 4622
+2025-12-14 19:55:50,177 - TrailCamMITM - INFO - PPPP packets: 274
+2025-12-14 19:55:50,177 - TrailCamMITM - INFO - Capture file: /tmp/mitm_captures/trailcam_mitm_20251214_194317.pcap
+2025-12-14 19:55:50,177 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:50,178 - TrailCamMITM - INFO - Cleaning up NAT rules...
+2025-12-14 19:55:50,198 - TrailCamMITM - INFO - ✓ NAT rules removed
+2025-12-14 19:55:50,199 - TrailCamMITM - INFO - Disconnecting from camera WiFi...
+2025-12-14 19:55:50,199 - TrailCamMITM - INFO - Stopping wpa_supplicant...
+2025-12-14 19:55:50,235 - TrailCamMITM - INFO - ✓ Disconnected from camera
+2025-12-14 19:55:50,235 - TrailCamMITM - INFO - Stopping Access Point...
+2025-12-14 19:55:50,236 - TrailCamMITM - INFO - Stopping hostapd...
+2025-12-14 19:55:50,237 - TrailCamMITM - INFO - Stopping dnsmasq...
+2025-12-14 19:55:50,272 - TrailCamMITM - INFO - ✓ Access Point stopped
+2025-12-14 19:55:50,273 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:50,274 - TrailCamMITM - INFO - ✓ MITM Proxy stopped
+2025-12-14 19:55:50,275 - TrailCamMITM - INFO - ============================================================
+2025-12-14 19:55:50,275 - TrailCamMITM - INFO - Capture file: /tmp/mitm_captures/trailcam_mitm_20251214_194317.pcap
+2025-12-14 19:55:50,276 - TrailCamMITM - INFO - Analyze with:
+2025-12-14 19:55:50,277 - TrailCamMITM - INFO -   tcpdump -r /tmp/mitm_captures/trailcam_mitm_20251214_194317.pcap -X
+2025-12-14 19:55:50,278 - TrailCamMITM - INFO -   wireshark /tmp/mitm_captures/trailcam_mitm_20251214_194317.pcap
+2025-12-14 19:55:50,278 - TrailCamMITM - INFO - ============================================================
