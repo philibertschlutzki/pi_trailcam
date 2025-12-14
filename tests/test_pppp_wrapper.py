@@ -39,7 +39,10 @@ def test_wrap_discovery_packet(protocol):
 
 def test_wrap_init_packet(protocol):
     packet = protocol.wrap_init()
-    assert packet == b'\xf1\xe1\x00\x00'
+    # Updated for FIX #44: Init packet now has 4-byte payload (b'\x00\x00\x00\x00')
+    # Outer Header: F1 E1 00 04
+    # Payload: 00 00 00 00
+    assert packet == b'\xf1\xe1\x00\x04\x00\x00\x00\x00'
     # Sequence should NOT increment for init
     assert protocol.pppp_sequence == 1
 
