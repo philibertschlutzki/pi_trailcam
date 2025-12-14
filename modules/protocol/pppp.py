@@ -29,8 +29,9 @@ class PPPPInnerHeader:
         return struct.pack('>BBHB', self.session_type, self.subcommand, self.sequence, self.reserved)
 
 class PPPPProtocol:
-    def __init__(self, start_sequence: int = 1):
+    def __init__(self, start_sequence: int = 1, logger=None):
         self.pppp_sequence = start_sequence
+        self.logger = logger or logging.getLogger(__name__)
 
     def _increment_sequence(self) -> int:
         """Increment sequence and wrap around at 0xFFFF (65535) -> 1"""
