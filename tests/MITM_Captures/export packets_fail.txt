@@ -1,0 +1,829 @@
+No.     Time           Source                Destination           Protocol Length Info
+      1 0.000000       0.0.0.0               255.255.255.255       DHCP     337    DHCP Request  - Transaction ID 0x54be05b8
+
+Frame 1: Packet, 337 bytes on wire (2696 bits), 337 bytes captured (2696 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 0.0.0.0, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 68, Dst Port: 67
+Dynamic Host Configuration Protocol (Request)
+
+No.     Time           Source                Destination           Protocol Length Info
+      2 0.034241       192.168.43.1          255.255.255.255       DHCP     342    DHCP NAK      - Transaction ID 0x54be05b8
+
+Frame 2: Packet, 342 bytes on wire (2736 bits), 342 bytes captured (2736 bits)
+Ethernet II, Src: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 192.168.43.1, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 67, Dst Port: 68
+Dynamic Host Configuration Protocol (NAK)
+
+No.     Time           Source                Destination           Protocol Length Info
+      3 0.035213       0.0.0.0               255.255.255.255       DHCP     337    DHCP Discover - Transaction ID 0xa9b2675c
+
+Frame 3: Packet, 337 bytes on wire (2696 bits), 337 bytes captured (2696 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 0.0.0.0, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 68, Dst Port: 67
+Dynamic Host Configuration Protocol (Discover)
+
+No.     Time           Source                Destination           Protocol Length Info
+      4 0.091723       192.168.43.1          255.255.255.255       DHCP     342    DHCP Offer    - Transaction ID 0xa9b2675c
+
+Frame 4: Packet, 342 bytes on wire (2736 bits), 342 bytes captured (2736 bits)
+Ethernet II, Src: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 192.168.43.1, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 67, Dst Port: 68
+Dynamic Host Configuration Protocol (Offer)
+
+No.     Time           Source                Destination           Protocol Length Info
+      5 0.092008       0.0.0.0               255.255.255.255       DHCP     343    DHCP Request  - Transaction ID 0xa9b2675c
+
+Frame 5: Packet, 343 bytes on wire (2744 bits), 343 bytes captured (2744 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 0.0.0.0, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 68, Dst Port: 67
+Dynamic Host Configuration Protocol (Request)
+
+No.     Time           Source                Destination           Protocol Length Info
+      6 0.171646       192.168.43.1          255.255.255.255       DHCP     342    DHCP ACK      - Transaction ID 0xa9b2675c
+
+Frame 6: Packet, 342 bytes on wire (2736 bits), 342 bytes captured (2736 bits)
+Ethernet II, Src: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 192.168.43.1, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 67, Dst Port: 68
+Dynamic Host Configuration Protocol (ACK)
+
+No.     Time           Source                Destination           Protocol Length Info
+      7 3.879854       0.0.0.0               255.255.255.255       DHCP     331    DHCP Discover - Transaction ID 0xa90196cc
+
+Frame 7: Packet, 331 bytes on wire (2648 bits), 331 bytes captured (2648 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 0.0.0.0, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 68, Dst Port: 67
+Dynamic Host Configuration Protocol (Discover)
+
+No.     Time           Source                Destination           Protocol Length Info
+      8 3.941296       192.168.43.1          255.255.255.255       DHCP     342    DHCP Offer    - Transaction ID 0xa90196cc
+
+Frame 8: Packet, 342 bytes on wire (2736 bits), 342 bytes captured (2736 bits)
+Ethernet II, Src: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 192.168.43.1, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 67, Dst Port: 68
+Dynamic Host Configuration Protocol (Offer)
+
+No.     Time           Source                Destination           Protocol Length Info
+      9 3.941593       0.0.0.0               255.255.255.255       DHCP     343    DHCP Request  - Transaction ID 0xa90196cc
+
+Frame 9: Packet, 343 bytes on wire (2744 bits), 343 bytes captured (2744 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 0.0.0.0, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 68, Dst Port: 67
+Dynamic Host Configuration Protocol (Request)
+
+No.     Time           Source                Destination           Protocol Length Info
+     10 4.001584       192.168.43.1          255.255.255.255       DHCP     342    DHCP ACK      - Transaction ID 0xa90196cc
+
+Frame 10: Packet, 342 bytes on wire (2736 bits), 342 bytes captured (2736 bits)
+Ethernet II, Src: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 192.168.43.1, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 67, Dst Port: 68
+Dynamic Host Configuration Protocol (ACK)
+
+No.     Time           Source                Destination           Protocol Length Info
+     11 9.790145       192.168.43.21         255.255.255.255       UDP      46     56402 → 32108 Len=4
+
+Frame 11: Packet, 46 bytes on wire (368 bits), 46 bytes captured (368 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 56402, Dst Port: 32108
+Data (4 bytes)
+
+0000  f1 30 00 00                                       .0..
+
+No.     Time           Source                Destination           Protocol Length Info
+     12 9.794131       192.168.43.21         192.168.43.1          UDP      46     56402 → 32108 Len=4
+
+Frame 12: Packet, 46 bytes on wire (368 bits), 46 bytes captured (368 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 56402, Dst Port: 32108
+Data (4 bytes)
+
+0000  f1 30 00 00                                       .0..
+
+No.     Time           Source                Destination           Protocol Length Info
+     13 9.799836       192.168.43.1          192.168.43.21         UDP      66     40611 → 56402 Len=24
+
+Frame 13: Packet, 66 bytes on wire (528 bits), 66 bytes captured (528 bits)
+Ethernet II, Src: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff), Dst: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2)
+Internet Protocol Version 4, Src: 192.168.43.1, Dst: 192.168.43.21
+User Datagram Protocol, Src Port: 40611, Dst Port: 56402
+Data (24 bytes)
+
+0000  f1 41 00 14 4c 42 43 53 00 00 00 00 00 00 00 00   .A..LBCS........
+0010  43 43 43 4a 4a 00 00 00                           CCCJJ...
+
+No.     Time           Source                Destination           Protocol Length Info
+     14 9.799941       192.168.43.1          192.168.43.21         UDP      66     40611 → 56402 Len=24
+
+Frame 14: Packet, 66 bytes on wire (528 bits), 66 bytes captured (528 bits)
+Ethernet II, Src: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff), Dst: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2)
+Internet Protocol Version 4, Src: 192.168.43.1, Dst: 192.168.43.21
+User Datagram Protocol, Src Port: 40611, Dst Port: 56402
+Data (24 bytes)
+
+0000  f1 41 00 14 4c 42 43 53 00 00 00 00 00 00 00 00   .A..LBCS........
+0010  43 43 43 4a 4a 00 00 00                           CCCJJ...
+
+No.     Time           Source                Destination           Protocol Length Info
+     15 9.892077       192.168.43.21         192.168.43.1          UDP      50     56402 → 40611 Len=8
+
+Frame 15: Packet, 50 bytes on wire (400 bits), 50 bytes captured (400 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 56402, Dst Port: 40611
+Data (8 bytes)
+
+0000  f1 e0 00 04 00 00 00 00                           ........
+
+No.     Time           Source                Destination           Protocol Length Info
+     16 9.942467       192.168.43.21         192.168.43.1          UDP      50     56402 → 40611 Len=8
+
+Frame 16: Packet, 50 bytes on wire (400 bits), 50 bytes captured (400 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 56402, Dst Port: 40611
+Data (8 bytes)
+
+0000  f1 e1 00 04 00 00 00 00                           ........
+
+No.     Time           Source                Destination           Protocol Length Info
+     17 10.944923      192.168.43.21         192.168.43.1          UDP      80     56402 → 40611 Len=38
+
+Frame 17: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 56402, Dst Port: 40611
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 01 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     18 11.045414      192.168.43.21         192.168.43.1          UDP      80     56402 → 40611 Len=38
+
+Frame 18: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 56402, Dst Port: 40611
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 01 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     19 11.145765      192.168.43.21         192.168.43.1          UDP      80     56402 → 40611 Len=38
+
+Frame 19: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 56402, Dst Port: 40611
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 01 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     20 11.147443      192.168.43.21         192.168.43.1          UDP      80     56402 → 32100 Len=38
+
+Frame 20: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 56402, Dst Port: 32100
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 02 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     21 11.248044      192.168.43.21         192.168.43.1          UDP      80     56402 → 32100 Len=38
+
+Frame 21: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 56402, Dst Port: 32100
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 02 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     22 11.348282      192.168.43.21         192.168.43.1          UDP      80     56402 → 32100 Len=38
+
+Frame 22: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 56402, Dst Port: 32100
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 02 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     23 11.351186      192.168.43.21         192.168.43.1          UDP      80     56402 → 32108 Len=38
+
+Frame 23: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 56402, Dst Port: 32108
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 03 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     24 11.451547      192.168.43.21         192.168.43.1          UDP      80     56402 → 32108 Len=38
+
+Frame 24: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 56402, Dst Port: 32108
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 03 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     25 11.551920      192.168.43.21         192.168.43.1          UDP      80     56402 → 32108 Len=38
+
+Frame 25: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 56402, Dst Port: 32108
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 03 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     26 17.569452      192.168.43.21         255.255.255.255       UDP      46     40722 → 32108 Len=4
+
+Frame 26: Packet, 46 bytes on wire (368 bits), 46 bytes captured (368 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 40722, Dst Port: 32108
+Data (4 bytes)
+
+0000  f1 30 00 00                                       .0..
+
+No.     Time           Source                Destination           Protocol Length Info
+     27 17.569543      192.168.43.21         192.168.43.1          UDP      46     40722 → 32108 Len=4
+
+Frame 27: Packet, 46 bytes on wire (368 bits), 46 bytes captured (368 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 40722, Dst Port: 32108
+Data (4 bytes)
+
+0000  f1 30 00 00                                       .0..
+
+No.     Time           Source                Destination           Protocol Length Info
+     28 17.576023      192.168.43.1          192.168.43.21         UDP      66     40611 → 40722 Len=24
+
+Frame 28: Packet, 66 bytes on wire (528 bits), 66 bytes captured (528 bits)
+Ethernet II, Src: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff), Dst: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2)
+Internet Protocol Version 4, Src: 192.168.43.1, Dst: 192.168.43.21
+User Datagram Protocol, Src Port: 40611, Dst Port: 40722
+Data (24 bytes)
+
+0000  f1 41 00 14 4c 42 43 53 00 00 00 00 00 00 00 00   .A..LBCS........
+0010  43 43 43 4a 4a 00 00 00                           CCCJJ...
+
+No.     Time           Source                Destination           Protocol Length Info
+     29 17.601690      192.168.43.1          192.168.43.21         UDP      66     40611 → 40722 Len=24
+
+Frame 29: Packet, 66 bytes on wire (528 bits), 66 bytes captured (528 bits)
+Ethernet II, Src: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff), Dst: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2)
+Internet Protocol Version 4, Src: 192.168.43.1, Dst: 192.168.43.21
+User Datagram Protocol, Src Port: 40611, Dst Port: 40722
+Data (24 bytes)
+
+0000  f1 41 00 14 4c 42 43 53 00 00 00 00 00 00 00 00   .A..LBCS........
+0010  43 43 43 4a 4a 00 00 00                           CCCJJ...
+
+No.     Time           Source                Destination           Protocol Length Info
+     30 17.671539      192.168.43.21         192.168.43.1          UDP      50     40722 → 40611 Len=8
+
+Frame 30: Packet, 50 bytes on wire (400 bits), 50 bytes captured (400 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 40722, Dst Port: 40611
+Data (8 bytes)
+
+0000  f1 e0 00 04 00 00 00 00                           ........
+
+No.     Time           Source                Destination           Protocol Length Info
+     31 17.721912      192.168.43.21         192.168.43.1          UDP      50     40722 → 40611 Len=8
+
+Frame 31: Packet, 50 bytes on wire (400 bits), 50 bytes captured (400 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 40722, Dst Port: 40611
+Data (8 bytes)
+
+0000  f1 e1 00 04 00 00 00 00                           ........
+
+No.     Time           Source                Destination           Protocol Length Info
+     32 18.724890      192.168.43.21         192.168.43.1          UDP      80     40722 → 40611 Len=38
+
+Frame 32: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 40722, Dst Port: 40611
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 01 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     33 18.825127      192.168.43.21         192.168.43.1          UDP      80     40722 → 40611 Len=38
+
+Frame 33: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 40722, Dst Port: 40611
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 01 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     34 18.925349      192.168.43.21         192.168.43.1          UDP      80     40722 → 40611 Len=38
+
+Frame 34: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 40722, Dst Port: 40611
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 01 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     35 18.927504      192.168.43.21         192.168.43.1          UDP      80     40722 → 32100 Len=38
+
+Frame 35: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 40722, Dst Port: 32100
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 02 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     36 19.027750      192.168.43.21         192.168.43.1          UDP      80     40722 → 32100 Len=38
+
+Frame 36: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 40722, Dst Port: 32100
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 02 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     37 19.127968      192.168.43.21         192.168.43.1          UDP      80     40722 → 32100 Len=38
+
+Frame 37: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 40722, Dst Port: 32100
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 02 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     38 19.130623      192.168.43.21         192.168.43.1          UDP      80     40722 → 32108 Len=38
+
+Frame 38: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 40722, Dst Port: 32108
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 03 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     39 19.230854      192.168.43.21         192.168.43.1          UDP      80     40722 → 32108 Len=38
+
+Frame 39: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 40722, Dst Port: 32108
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 03 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     40 19.331087      192.168.43.21         192.168.43.1          UDP      80     40722 → 32108 Len=38
+
+Frame 40: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 40722, Dst Port: 32108
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 03 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     41 26.352898      192.168.43.21         255.255.255.255       UDP      46     60868 → 32108 Len=4
+
+Frame 41: Packet, 46 bytes on wire (368 bits), 46 bytes captured (368 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 60868, Dst Port: 32108
+Data (4 bytes)
+
+0000  f1 30 00 00                                       .0..
+
+No.     Time           Source                Destination           Protocol Length Info
+     42 26.353012      192.168.43.21         192.168.43.1          UDP      46     60868 → 32108 Len=4
+
+Frame 42: Packet, 46 bytes on wire (368 bits), 46 bytes captured (368 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60868, Dst Port: 32108
+Data (4 bytes)
+
+0000  f1 30 00 00                                       .0..
+
+No.     Time           Source                Destination           Protocol Length Info
+     43 26.361830      192.168.43.1          192.168.43.21         UDP      66     40611 → 60868 Len=24
+
+Frame 43: Packet, 66 bytes on wire (528 bits), 66 bytes captured (528 bits)
+Ethernet II, Src: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff), Dst: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2)
+Internet Protocol Version 4, Src: 192.168.43.1, Dst: 192.168.43.21
+User Datagram Protocol, Src Port: 40611, Dst Port: 60868
+Data (24 bytes)
+
+0000  f1 41 00 14 4c 42 43 53 00 00 00 00 00 00 00 00   .A..LBCS........
+0010  43 43 43 4a 4a 00 00 00                           CCCJJ...
+
+No.     Time           Source                Destination           Protocol Length Info
+     44 26.364839      192.168.43.1          192.168.43.21         UDP      66     40611 → 60868 Len=24
+
+Frame 44: Packet, 66 bytes on wire (528 bits), 66 bytes captured (528 bits)
+Ethernet II, Src: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff), Dst: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2)
+Internet Protocol Version 4, Src: 192.168.43.1, Dst: 192.168.43.21
+User Datagram Protocol, Src Port: 40611, Dst Port: 60868
+Data (24 bytes)
+
+0000  f1 41 00 14 4c 42 43 53 00 00 00 00 00 00 00 00   .A..LBCS........
+0010  43 43 43 4a 4a 00 00 00                           CCCJJ...
+
+No.     Time           Source                Destination           Protocol Length Info
+     45 26.454258      192.168.43.21         192.168.43.1          UDP      50     60868 → 40611 Len=8
+
+Frame 45: Packet, 50 bytes on wire (400 bits), 50 bytes captured (400 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60868, Dst Port: 40611
+Data (8 bytes)
+
+0000  f1 e0 00 04 00 00 00 00                           ........
+
+No.     Time           Source                Destination           Protocol Length Info
+     46 26.504726      192.168.43.21         192.168.43.1          UDP      50     60868 → 40611 Len=8
+
+Frame 46: Packet, 50 bytes on wire (400 bits), 50 bytes captured (400 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60868, Dst Port: 40611
+Data (8 bytes)
+
+0000  f1 e1 00 04 00 00 00 00                           ........
+
+No.     Time           Source                Destination           Protocol Length Info
+     47 27.508519      192.168.43.21         192.168.43.1          UDP      80     60868 → 40611 Len=38
+
+Frame 47: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60868, Dst Port: 40611
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 01 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     48 27.608757      192.168.43.21         192.168.43.1          UDP      80     60868 → 40611 Len=38
+
+Frame 48: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60868, Dst Port: 40611
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 01 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     49 27.708978      192.168.43.21         192.168.43.1          UDP      80     60868 → 40611 Len=38
+
+Frame 49: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60868, Dst Port: 40611
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 01 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     50 27.711502      192.168.43.21         192.168.43.1          UDP      80     60868 → 32100 Len=38
+
+Frame 50: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60868, Dst Port: 32100
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 02 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     51 27.811718      192.168.43.21         192.168.43.1          UDP      80     60868 → 32100 Len=38
+
+Frame 51: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60868, Dst Port: 32100
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 02 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     52 27.911946      192.168.43.21         192.168.43.1          UDP      80     60868 → 32100 Len=38
+
+Frame 52: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60868, Dst Port: 32100
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 02 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     53 27.914582      192.168.43.21         192.168.43.1          UDP      80     60868 → 32108 Len=38
+
+Frame 53: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60868, Dst Port: 32108
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 03 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     54 28.014832      192.168.43.21         192.168.43.1          UDP      80     60868 → 32108 Len=38
+
+Frame 54: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60868, Dst Port: 32108
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 03 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     55 28.115018      192.168.43.21         192.168.43.1          UDP      80     60868 → 32108 Len=38
+
+Frame 55: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60868, Dst Port: 32108
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 03 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     56 37.129728      192.168.43.21         255.255.255.255       UDP      46     60212 → 32108 Len=4
+
+Frame 56: Packet, 46 bytes on wire (368 bits), 46 bytes captured (368 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 255.255.255.255
+User Datagram Protocol, Src Port: 60212, Dst Port: 32108
+Data (4 bytes)
+
+0000  f1 30 00 00                                       .0..
+
+No.     Time           Source                Destination           Protocol Length Info
+     57 37.130035      192.168.43.21         192.168.43.1          UDP      46     60212 → 32108 Len=4
+
+Frame 57: Packet, 46 bytes on wire (368 bits), 46 bytes captured (368 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60212, Dst Port: 32108
+Data (4 bytes)
+
+0000  f1 30 00 00                                       .0..
+
+No.     Time           Source                Destination           Protocol Length Info
+     58 37.134379      192.168.43.1          192.168.43.21         UDP      66     40611 → 60212 Len=24
+
+Frame 58: Packet, 66 bytes on wire (528 bits), 66 bytes captured (528 bits)
+Ethernet II, Src: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff), Dst: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2)
+Internet Protocol Version 4, Src: 192.168.43.1, Dst: 192.168.43.21
+User Datagram Protocol, Src Port: 40611, Dst Port: 60212
+Data (24 bytes)
+
+0000  f1 41 00 14 4c 42 43 53 00 00 00 00 00 00 00 00   .A..LBCS........
+0010  43 43 43 4a 4a 00 00 00                           CCCJJ...
+
+No.     Time           Source                Destination           Protocol Length Info
+     59 37.135035      192.168.43.1          192.168.43.21         UDP      66     40611 → 60212 Len=24
+
+Frame 59: Packet, 66 bytes on wire (528 bits), 66 bytes captured (528 bits)
+Ethernet II, Src: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff), Dst: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2)
+Internet Protocol Version 4, Src: 192.168.43.1, Dst: 192.168.43.21
+User Datagram Protocol, Src Port: 40611, Dst Port: 60212
+Data (24 bytes)
+
+0000  f1 41 00 14 4c 42 43 53 00 00 00 00 00 00 00 00   .A..LBCS........
+0010  43 43 43 4a 4a 00 00 00                           CCCJJ...
+
+No.     Time           Source                Destination           Protocol Length Info
+     60 37.231355      192.168.43.21         192.168.43.1          UDP      50     60212 → 40611 Len=8
+
+Frame 60: Packet, 50 bytes on wire (400 bits), 50 bytes captured (400 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60212, Dst Port: 40611
+Data (8 bytes)
+
+0000  f1 e0 00 04 00 00 00 00                           ........
+
+No.     Time           Source                Destination           Protocol Length Info
+     61 37.281719      192.168.43.21         192.168.43.1          UDP      50     60212 → 40611 Len=8
+
+Frame 61: Packet, 50 bytes on wire (400 bits), 50 bytes captured (400 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60212, Dst Port: 40611
+Data (8 bytes)
+
+0000  f1 e1 00 04 00 00 00 00                           ........
+
+No.     Time           Source                Destination           Protocol Length Info
+     62 38.285405      192.168.43.21         192.168.43.1          UDP      80     60212 → 40611 Len=38
+
+Frame 62: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60212, Dst Port: 40611
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 01 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     63 38.385808      192.168.43.21         192.168.43.1          UDP      80     60212 → 40611 Len=38
+
+Frame 63: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60212, Dst Port: 40611
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 01 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     64 38.486175      192.168.43.21         192.168.43.1          UDP      80     60212 → 40611 Len=38
+
+Frame 64: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60212, Dst Port: 40611
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 01 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     65 38.488734      192.168.43.21         192.168.43.1          UDP      80     60212 → 32100 Len=38
+
+Frame 65: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60212, Dst Port: 32100
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 02 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     66 38.588963      192.168.43.21         192.168.43.1          UDP      80     60212 → 32100 Len=38
+
+Frame 66: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60212, Dst Port: 32100
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 02 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     67 38.689191      192.168.43.21         192.168.43.1          UDP      80     60212 → 32100 Len=38
+
+Frame 67: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60212, Dst Port: 32100
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 02 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     68 38.691690      192.168.43.21         192.168.43.1          UDP      80     60212 → 32108 Len=38
+
+Frame 68: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60212, Dst Port: 32108
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 03 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     69 38.791911      192.168.43.21         192.168.43.1          UDP      80     60212 → 32108 Len=38
+
+Frame 69: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60212, Dst Port: 32108
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 03 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
+
+No.     Time           Source                Destination           Protocol Length Info
+     70 38.892126      192.168.43.21         192.168.43.1          UDP      80     60212 → 32108 Len=38
+
+Frame 70: Packet, 80 bytes on wire (640 bits), 80 bytes captured (640 bits)
+Ethernet II, Src: RaspberryPi_18:c9:b2 (2c:cf:67:18:c9:b2), Dst: VLinkTechnol_92:e0:ff (1c:4e:a2:92:e0:ff)
+Internet Protocol Version 4, Src: 192.168.43.21, Dst: 192.168.43.1
+User Datagram Protocol, Src Port: 60212, Dst Port: 32108
+Data (38 bytes)
+
+0000  f1 d0 00 22 d1 00 00 03 00 41 52 54 45 4d 49 53   ...".....ARTEMIS
+0010  00 02 00 00 00 48 00 00 00 08 00 00 00 38 35 30   .....H.......850
+0020  38 37 31 32 37 00                                 87127.
