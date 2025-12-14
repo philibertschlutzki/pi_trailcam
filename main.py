@@ -23,6 +23,9 @@ async def main():
     Phase 1: BLE Wake
     Phase 2: Token Extraction via BLE
     Phase 3: UDP Login with variant testing
+    
+    FIX #25: Added proper timing between BLE wakeup and UDP connection.
+    Camera's UDP stack needs ~8 seconds to initialize after BLE magic packet.
     """
     logger.info("Starting KJK230 Camera Controller...")
 
@@ -96,6 +99,14 @@ async def main():
         if not wifi.connect_to_camera_wifi():
             logger.error("Failed to connect to Camera WiFi. Exiting.")
             return
+
+        # FIX #25: Critical timing fix
+        # After BLE wakeup, camera's UDP stack needs time to initialize.
+        # Official app (TrailCam Go) shows ~7-8 second delay before discovery succeeds.
+        # Apply delay AFTER WiFi connected, BEFORE UDP discovery attempts.
+        logger.info(f"[TIMING FIX #25] Waiting {config.CAMERA_STARTUP_DELAY}s for camera UDP stack initialization...")
+        time.sleep(config.CAMERA_STARTUP_DELAY)
+        logger.info(f"[TIMING FIX #25] Camera should now be ready for UDP discovery.")
 
         camera = CameraClient(CAMERA_IP, logger)
         camera.set_session_credentials(creds['token'], creds['sequence'])

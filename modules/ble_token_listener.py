@@ -10,13 +10,14 @@ class TokenListener:
     # This should be verified with ble_characteristic_scanner.py
     NOTIFICATION_CHAR_UUID = "00000003-0000-1000-8000-00805f9b34fb"
     
-    # Known token sizes from camera protocol (base64 encoded with padding)
-    # Camera can send either 45 or 72 byte tokens depending on encoding
-    EXPECTED_TOKEN_LENGTHS = (45, 72)  # Accept both
+    # FIX #26: Corrected token size expectations
+    # Actual camera sends 80 bytes total (8 header + 72 token)
+    # NOT 87835 bytes as previously expected
+    EXPECTED_TOKEN_LENGTHS = (45, 72, 80)  # Accept 45, 72 bytes, or 80 total
     # Minimum valid packet: 8 bytes header + at least 45 bytes token
-    MIN_VALID_PACKET_SIZE = 8 + 45
+    MIN_VALID_PACKET_SIZE = 53  # 8 + 45
     # Maximum valid packet: 8 bytes header + max 72 bytes token
-    MAX_VALID_PACKET_SIZE = 8 + 72
+    MAX_VALID_PACKET_SIZE = 80  # 8 + 72
 
     def __init__(self, device_mac: str, logger=None, client=None):
         self.device_mac = device_mac
@@ -35,6 +36,8 @@ class TokenListener:
         - Detects complete token based on length field
         - Sets event when complete
         - Logs detailed information for debugging
+        
+        FIX #26: Accept 80+ bytes as complete (not 87k+)
         """
         self.logger.info(f"[NOTIFICATION] Received {len(data)} bytes from {sender}")
         self.logger.debug(f"  Hex: {data.hex()}")
@@ -49,11 +52,17 @@ class TokenListener:
         if self._is_token_complete():
             # Get expected length for logging
             if total_bytes >= 4:
-                token_len = struct.unpack("<I", self.captured_data[0:4])[0]
-                expected_total = 8 + token_len
+                try:
+                    token_len = struct.unpack("<I", self.captured_data[0:4])[0]
+                    expected_total = 8 + token_len
+                    self.logger.info(
+                        f"[NOTIFICATION] Token is complete! "
+                        f"({total_bytes} bytes total, length field says {token_len}, expected {expected_total})"
+                    )
+                except struct.error:
+                    self.logger.info(f"[NOTIFICATION] Token is complete! ({total_bytes} bytes total)")
             else:
-                expected_total = total_bytes
-            self.logger.info(f"[NOTIFICATION] Token is complete! ({total_bytes} bytes total, expected {expected_total})")
+                self.logger.info(f"[NOTIFICATION] Token is complete! ({total_bytes} bytes total)")
             self.event.set()
         else:
             # Log how many more bytes we need
@@ -62,24 +71,29 @@ class TokenListener:
                     token_len = struct.unpack("<I", self.captured_data[0:4])[0]
                     expected_total = 8 + token_len
                     remaining = expected_total - total_bytes
-                    self.logger.debug(f"  Waiting for {remaining} more bytes... (token_len={token_len})")
+                    self.logger.debug(
+                        f"  Token not yet complete: {total_bytes}/{expected_total} bytes "
+                        f"(waiting for {remaining} more, token_len={token_len})"
+                    )
                 except Exception as e:
-                    self.logger.debug(f"  Error parsing token_len: {e}")
+                    self.logger.debug(f"  Token not yet complete: {total_bytes} bytes received")
+            else:
+                self.logger.debug(f"  Token not yet complete: {total_bytes} bytes received")
 
     def _is_token_complete(self) -> bool:
         """
         Check if we have received the complete token.
         
-        FIX #19: Handle both fixed-size tokens and variable-length tokens.
+        FIX #26: Handle variable-length tokens correctly.
         
-        Token structure (Option 1 - Variable length):
+        Token structure (Variable length):
         - Bytes 0-3: token length (little-endian uint32)
         - Bytes 4-7: sequence (4 bytes)
         - Bytes 8+: token data (variable length based on length field)
         
-        Token structure (Option 2 - Fixed size fallback):
-        - If we have 53+ bytes, assume token is complete (45 bytes token + 8 header)
-        - If we have 80+ bytes, definitely complete (72 bytes token + 8 header)
+        Size detection (Fallback):
+        - If we have 53+ bytes, likely complete (45 byte token + 8 header)
+        - If we have 80+ bytes, definitely complete (72 byte token + 8 header)
         
         Returns:
             True if we have received the complete token
@@ -90,30 +104,31 @@ class TokenListener:
         if total < 8:
             return False
         
-        # FIX #19: Try to parse token_len, but also have fallback
+        # FIX #26: Try to parse token_len, but also have fallback
         try:
             token_len = struct.unpack("<I", self.captured_data[0:4])[0]
             
-            # Safety check: token_len should be reasonable (45-72 bytes)
-            if token_len < 45 or token_len > 100:
+            # FIX #26: Accept reasonable token lengths
+            # Real camera sends tokens around 45-72 bytes
+            # Allow up to 100 bytes for safety margin
+            if 45 <= token_len <= 100:
+                expected_total = 8 + token_len
+                has_complete = total >= expected_total
+                
+                if has_complete:
+                    self.logger.debug(
+                        f"Token complete (length-based): {total} >= {expected_total} "
+                        f"(token_len={token_len})"
+                    )
+                
+                return has_complete
+            else:
+                # Token length is unreasonable, use size-based fallback
                 self.logger.debug(
                     f"Token length field suspicious: {token_len}. "
                     f"Falling back to size-based detection (total={total})"
                 )
-                # Fallback to size-based detection
                 return self._is_token_complete_by_size(total)
-            
-            # Normal path: check if we have all data
-            expected_total = 8 + token_len
-            has_complete = total >= expected_total
-            
-            if has_complete:
-                self.logger.debug(
-                    f"Token complete (length-based): {total} >= {expected_total} "
-                    f"(token_len={token_len})"
-                )
-            
-            return has_complete
             
         except struct.error as e:
             self.logger.debug(f"Failed to parse token_len: {e}")
@@ -126,7 +141,9 @@ class TokenListener:
         
         Expected sizes:
         - 53 bytes: 45-byte token + 8-byte header (minimum)
-        - 80 bytes: 72-byte token + 8-byte header (typical)
+        - 80 bytes: 72-byte token + 8-byte header (typical/most common)
+        
+        FIX #26: Accept 80 bytes as complete (this is what real camera sends)
         
         Args:
             total: Total accumulated bytes
@@ -135,28 +152,18 @@ class TokenListener:
             True if size suggests token is complete
         """
         # If we have 80 bytes or more, token is definitely complete
-        if total >= self.MAX_VALID_PACKET_SIZE:
+        if total >= 80:
             self.logger.debug(
-                f"Token complete (size-based max): {total} >= {self.MAX_VALID_PACKET_SIZE}"
+                f"Token complete (size-based): {total} >= 80 bytes (typical camera token)"
             )
             return True
         
-        # If we have 53+ bytes and last 3 notifications match (pattern suggests completion)
-        # This is a heuristic: if we got 4x20 bytes from notifications, it's complete
-        if total >= self.MIN_VALID_PACKET_SIZE:
-            # Only return True if we're confident
-            # For now, be conservative and require 80 bytes
+        # If we have 53+ bytes, likely complete
+        if total >= 53:
             self.logger.debug(
-                f"Token might be complete (size-based min): {total} >= {self.MIN_VALID_PACKET_SIZE}, "
-                f"but waiting for more data to be sure"
+                f"Token likely complete (size-based): {total} >= 53 bytes (minimum)"
             )
-            # Actually, let's be more aggressive here:
-            # If we got notifications and size is reasonable, mark complete
-            if total >= 53:  # At least 45-byte token + 8 header
-                self.logger.debug(
-                    f"Token complete (size-based fallback): {total} >= 53"
-                )
-                return True
+            return True
         
         return False
 
@@ -307,15 +314,38 @@ class TokenListener:
         Parse token and sequence from complete notification payload.
         
         FIX #20: Support both raw tokens and JSON-wrapped tokens.
+        FIX #26: Handle variable-length tokens correctly (80 bytes typical)
+        FIX #50: Extract 'pwd' field from JSON as primary token (Android app behavior)
         
         Structures supported:
         1. Raw format: [4 bytes: token_length] [4 bytes: sequence] [N bytes: token]
         2. JSON format: [4 bytes: json_length] [4 bytes: sequence] [JSON string with token field]
         
-        JSON example:
-        {"ret":0, "ssid":"KJK_...", "token":"I3mbwVIx...", ...}
+        JSON Parsing Logic (FIX #50 - NEW PRIORITY):
+        - **PRIMARY**: Check for 'pwd' field (WiFi password) - THIS IS THE ACTUAL TOKEN
+          - Android app log (2025-12-08log.txt:183354.307) confirms:
+            "Device network start result{ret:0,ssid:KJK_E0FF,bssid:1C:4E:A2:92:E0:FF,pwd:85087127}"
+          - The 'pwd' field (85087127) is the token used for UDP login
+        - Fallback: Check for 'token' field (for backward compatibility)
+        - Last resort: Use full JSON string if no specific field found
         
-        FIX #19: Support both 45-byte and 72-byte tokens
+        Real-world example from Issue #50:
+        ```json
+        {
+          "ret": 0,
+          "ssid": "KJK_E0FF",
+          "bssid": "1C:4E:A2:92:E0:FF",
+          "pwd": "85087127"  <-- THIS is the token!
+        }
+        ```
+
+        Why JSON?
+        Newer firmware versions wrap the token in JSON to include additional metadata
+        (like SSID, return codes) which provides context for the connection.
+
+        See PROTOCOL_ANALYSIS.md for detailed token context.
+        
+        FIX #26: Support 80-byte tokens (most common from camera)
         """
         if not data:
             raise ValueError("Received empty data payload")
@@ -328,18 +358,26 @@ class TokenListener:
             token_len = struct.unpack("<I", data[0:4])[0]
         except struct.error as e:
             self.logger.error(f"Failed to parse token_len: {e}")
-            # Try fallback: assume 72-byte token
-            token_len = 72
-            self.logger.warning(f"Using fallback token_len: {token_len}")
+            # FIX #26: If we have 80 bytes, assume it's a complete token
+            if len(data) >= 80:
+                token_len = len(data) - 8  # Treat remainder as token
+                self.logger.warning(f"Using fallback token_len: {token_len} (from 80-byte packet)")
+            else:
+                # Try 72-byte token as default
+                token_len = 72
+                self.logger.warning(f"Using fallback token_len: {token_len}")
 
         # Extract sequence bytes
         sequence = data[4:8]
 
         # Extract token data
-        if len(data) < 8 + token_len:
-            self.logger.error(f"FATAL: Data length {len(data)} < expected {8 + token_len}")
+        actual_data_length = len(data) - 8
+        if actual_data_length < token_len:
+            self.logger.warning(
+                f"Data length {actual_data_length} < expected {token_len}. "
+                f"Using available {actual_data_length} bytes."
+            )
             token_bytes = data[8:]
-            self.logger.warning(f"Using partial token: {len(token_bytes)} bytes instead of {token_len}")
         else:
             token_bytes = data[8:8+token_len]
 
@@ -347,31 +385,41 @@ class TokenListener:
         try:
             token_str = token_bytes.decode('ascii').rstrip('\x00')
             
-            # FIX #20: Check if it's JSON and parse it
+            # FIX #20 + #50: Check if it's JSON and parse it
             if token_str.startswith('{') and '}' in token_str:
                 self.logger.info(f"[PARSE] Detected JSON token format")
                 try:
                     token_json = json.loads(token_str)
                     self.logger.debug(f"[PARSE] Parsed JSON: {json.dumps(token_json, indent=2)[:200]}...")
                     
-                    # Extract the actual token from common field names
+                    # FIX #50: PRIMARY - Extract 'pwd' field (WiFi password = actual token)
+                    # This matches Android app behavior (see 2025-12-08log.txt)
                     actual_token = None
-                    for field_name in ['token', 'data', 'key', 'auth_token', 'access_token']:
-                        if field_name in token_json:
-                            actual_token = token_json[field_name]
-                            self.logger.info(f"[PARSE] Extracted token from field '{field_name}'")
-                            break
+                    if 'pwd' in token_json:
+                        actual_token = token_json['pwd']
+                        self.logger.info(f"[PARSE] ✓ Using 'pwd' field as token (Android app behavior)")
+                    # Fallback: Check for 'token' field (backward compatibility)
+                    elif 'token' in token_json:
+                        actual_token = token_json['token']
+                        self.logger.info(f"[PARSE] Using 'token' field (legacy format)")
+                    # Last resort: Try other common token fields
+                    else:
+                        for field_name in ['data', 'key', 'auth_token', 'access_token']:
+                            if field_name in token_json:
+                                actual_token = token_json[field_name]
+                                self.logger.info(f"[PARSE] Using '{field_name}' field as fallback")
+                                break
                     
                     if actual_token:
                         token_str = str(actual_token)
-                        self.logger.info(f"[PARSE] Using extracted token (length: {len(token_str)})")
+                        self.logger.info(f"[PARSE] Extracted token: {token_str} (length: {len(token_str)})")
                     else:
                         self.logger.warning(
                             f"[PARSE] JSON has no recognized token field. "
                             f"Available keys: {list(token_json.keys())}. "
-                            f"Using entire JSON as token."
+                            f"Using entire JSON as token (likely incorrect!)."
                         )
-                        # Try to use the entire JSON string as token
+                        # Try to use the entire JSON string as token (least preferred)
                         token_str = json.dumps(token_json)
                         
                 except json.JSONDecodeError as e:
@@ -392,13 +440,16 @@ class TokenListener:
         self.logger.debug(f"Sequence bytes: {sequence.hex()}")
         self.logger.info(f"Success: Token extracted: {token_str[:20]}... (len={len(token_str)})")
 
-        # Validate token length matches expected (for raw tokens)
+        # FIX #26: More lenient token length validation
+        # Accept tokens in expected range without warning
         if not token_str.startswith('{'):
             if len(token_str) not in self.EXPECTED_TOKEN_LENGTHS:
-                self.logger.warning(
-                    f"Token length {len(token_str)} not in expected {self.EXPECTED_TOKEN_LENGTHS}. "
-                    f"This might indicate an encoding issue."
-                )
+                # Only warn if dramatically outside range
+                if len(token_str) < 40 or len(token_str) > 150:
+                    self.logger.warning(
+                        f"Token length {len(token_str)} is unusual (expected 45/72/80). "
+                        f"This might indicate an encoding issue."
+                    )
         
         # Validate token is not empty
         if not token_str or token_str == '':

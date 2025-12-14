@@ -7,18 +7,23 @@ TCPDump captures from the TrailCam Go app.
 PPPP is a proprietary protocol by Tutk/CS2 Network used for P2P communication
 with IoT cameras. The Artemis protocol runs as payload inside PPPP packets.
 
+Protocol Phases (from PROTOCOL_ANALYSIS.md):
+    1. Initialization (Wake-up): Uses Type 0xE1 to wake up the camera UDP stack.
+    2. Discovery: Uses Type 0xD1 to verify device presence.
+    3. Login: Uses Type 0xD0 (Outer) to authenticate.
+
 Packet Structure:
     ┌────────────────────────────────────────┐
     │  PPPP Outer Header (4 bytes)          │
     ├────────────────────────────────────────┤
     │  Byte 0:    0xF1 (Magic)               │
-    │  Byte 1:    0xD1/0xD3 (Command Type)   │
+    │  Byte 1:    Type (D1, D0, E1, etc.)    │
     │  Bytes 2-3: Length (Big Endian)        │
     └────────────────────────────────────────┘
     ┌────────────────────────────────────────┐
     │  PPPP Inner Header (4 bytes)           │
     ├────────────────────────────────────────┤
-    │  Byte 4:    0xD1/0xD3 (Session Type)   │
+    │  Byte 4:    Session Type (D1, E1, etc.)│
     │  Byte 5:    Subcommand                 │
     │  Bytes 6-7: PPPP Sequence (Big Endian) │
     └────────────────────────────────────────┘
@@ -27,10 +32,20 @@ Packet Structure:
     │  - Discovery, Login, Commands, etc.    │
     └────────────────────────────────────────┘
 
+# Packet Types (from PROTOCOL_ANALYSIS.md Section 3.1):
+# 0xD1: Standard Session Data (Discovery, Command)
+# 0xD0: Login Handshake (Specific to Artemis)
+# 0xE1: Initialization / Wake-up
+# 0xD3: Control / Heartbeat
+# 0xD4: Large Data Transfer (Video/Images)
+
 Usage:
     >>> from modules.pppp_wrapper import PPPPWrapper
     >>> pppp = PPPPWrapper()
     >>> 
+    >>> # Wrap init packet
+    >>> init = pppp.wrap_init()
+    >>>
     >>> # Wrap discovery packet
     >>> discovery = pppp.wrap_discovery(artemis_seq=0x001B)
     >>> print(discovery.hex())
@@ -59,11 +74,11 @@ class PPPPWrapper:
     """Wrapper for PPPP protocol layer.
     
     This class handles wrapping and unwrapping of Artemis protocol packets
-    in PPPP headers. It maintains the PPPP sequence number and provides
-    convenience methods for common packet types.
+    in PPPP headers. It maintains the PPPP sequence number (transport layer)
+    which is distinct from the Artemis sequence number (application layer).
     
     Attributes:
-        pppp_seq (int): Current PPPP sequence number (increments with each packet)
+        pppp_seq (int): Current PPPP transport sequence number (increments with each packet)
         logger: Logger instance for debugging
     """
     
@@ -72,13 +87,16 @@ class PPPPWrapper:
     
     # Outer Command Types
     OUTER_TYPE_STANDARD = 0xD1  # Standard commands
+    OUTER_TYPE_LOGIN = 0xD0     # Login command (Analysis Finding)
     OUTER_TYPE_CONTROL = 0xD3   # Control messages
     OUTER_TYPE_DATA = 0xD4      # Data transfer
+    OUTER_TYPE_INIT = 0xE1      # Initialization (Wakeup)
     
     # Inner Session Types (usually same as outer)
     INNER_TYPE_STANDARD = 0xD1
     INNER_TYPE_CONTROL = 0xD3
     INNER_TYPE_DATA = 0xD4
+    INNER_TYPE_INIT = 0xE1
     
     # Subcommands
     SUBCOMMAND_DISCOVERY = 0x00
@@ -86,6 +104,7 @@ class PPPPWrapper:
     SUBCOMMAND_LOGIN = 0x03
     SUBCOMMAND_LOGIN_ACK = 0x04
     SUBCOMMAND_HEARTBEAT = 0x01
+    SUBCOMMAND_INIT = 0x00
     
     def __init__(self, logger: Optional[logging.Logger] = None):
         """Initialize PPPP wrapper.
@@ -158,9 +177,33 @@ class PPPPWrapper:
         
         # Increment sequence for next packet
         self.pppp_seq += 1
+        if self.pppp_seq > 65535:
+            self.pppp_seq = 1
         
         return packet
     
+    def wrap_init(self) -> bytes:
+        """Wrap initialization packet.
+
+        Phase 1 of Connection: Initialization.
+        Sends a special PPPP packet (Type 0xE1) to wake up the camera's UDP stack.
+        Payload is empty.
+
+        Structure:
+        Outer: F1 E1 00 04
+        Inner: E1 00 [Seq]
+        Payload: None
+
+        Returns:
+            PPPP-wrapped init packet.
+        """
+        return self.wrap_pppp(
+            b'',
+            outer_type=self.OUTER_TYPE_INIT,
+            inner_type=self.INNER_TYPE_INIT,
+            subcommand=self.SUBCOMMAND_INIT
+        )
+
     def wrap_discovery(self, artemis_seq: int) -> bytes:
         """Wrap discovery packet.
         
@@ -191,30 +234,30 @@ class PPPPWrapper:
     def wrap_login(self, artemis_payload: bytes) -> bytes:
         """Wrap login packet.
         
-        Login packets contain the full Artemis login structure:
-        - "ARTEMIS\x00" magic
-        - Version (4 bytes)
-        - Mystery/Sequence bytes (8 bytes from BLE)
-        - Token length (4 bytes)
-        - Token string
+        Phase 3 of Connection: Login.
+        Login packets contain the full Artemis login structure.
         
+        Analysis shows Login uses Outer Type 0xD0 (Artemis-specific handshake)
+        instead of the standard 0xD1. This differs from generic PPPP implementations
+        but is critical for the camera to accept the credentials.
+
+        Structure:
+        - Outer Type: 0xD0
+        - Inner Type: 0xD1
+        - Subcommand: 0x03 (Login)
+
         Args:
             artemis_payload: Complete Artemis login payload (built by caller)
         
         Returns:
             PPPP-wrapped login packet
-        
-        Example:
-            >>> pppp = PPPPWrapper()
-            >>> # Build Artemis login payload first
-            >>> artemis_login = build_artemis_login(token, sequence)
-            >>> packet = pppp.wrap_login(artemis_login)
         """
+        # Note: Analysis shows Login usually uses Outer 0xD0, Inner 0xD1, Sub 0x03
         return self.wrap_pppp(
             artemis_payload,
-            outer_type=self.OUTER_TYPE_STANDARD,
-            inner_type=self.INNER_TYPE_STANDARD,
-            subcommand=self.SUBCOMMAND_LOGIN
+            outer_type=self.OUTER_TYPE_LOGIN,  # 0xD0
+            inner_type=self.INNER_TYPE_STANDARD, # 0xD1
+            subcommand=self.SUBCOMMAND_LOGIN   # 0x03
         )
     
     def wrap_heartbeat(self, artemis_seq: int) -> bytes:
