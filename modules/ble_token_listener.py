@@ -315,17 +315,29 @@ class TokenListener:
         
         FIX #20: Support both raw tokens and JSON-wrapped tokens.
         FIX #26: Handle variable-length tokens correctly (80 bytes typical)
+        FIX #50: Extract 'pwd' field from JSON as primary token (Android app behavior)
         
         Structures supported:
         1. Raw format: [4 bytes: token_length] [4 bytes: sequence] [N bytes: token]
         2. JSON format: [4 bytes: json_length] [4 bytes: sequence] [JSON string with token field]
         
-        JSON Parsing Logic:
-        - Detects JSON format by checking for '{' and '}' characters.
-        - Parses the JSON string to extract the actual token.
-        - Checks multiple candidate fields: `token`, `data`, `key`, `auth_token`, `access_token`.
-        - Prioritizes 'token' field if present.
-        - Fallback: Uses full JSON string if no specific field found.
+        JSON Parsing Logic (FIX #50 - NEW PRIORITY):
+        - **PRIMARY**: Check for 'pwd' field (WiFi password) - THIS IS THE ACTUAL TOKEN
+          - Android app log (2025-12-08log.txt:183354.307) confirms:
+            "Device network start result{ret:0,ssid:KJK_E0FF,bssid:1C:4E:A2:92:E0:FF,pwd:85087127}"
+          - The 'pwd' field (85087127) is the token used for UDP login
+        - Fallback: Check for 'token' field (for backward compatibility)
+        - Last resort: Use full JSON string if no specific field found
+        
+        Real-world example from Issue #50:
+        ```json
+        {
+          "ret": 0,
+          "ssid": "KJK_E0FF",
+          "bssid": "1C:4E:A2:92:E0:FF",
+          "pwd": "85087127"  <-- THIS is the token!
+        }
+        ```
 
         Why JSON?
         Newer firmware versions wrap the token in JSON to include additional metadata
@@ -373,31 +385,41 @@ class TokenListener:
         try:
             token_str = token_bytes.decode('ascii').rstrip('\x00')
             
-            # FIX #20: Check if it's JSON and parse it
+            # FIX #20 + #50: Check if it's JSON and parse it
             if token_str.startswith('{') and '}' in token_str:
                 self.logger.info(f"[PARSE] Detected JSON token format")
                 try:
                     token_json = json.loads(token_str)
                     self.logger.debug(f"[PARSE] Parsed JSON: {json.dumps(token_json, indent=2)[:200]}...")
                     
-                    # Extract the actual token from common field names
+                    # FIX #50: PRIMARY - Extract 'pwd' field (WiFi password = actual token)
+                    # This matches Android app behavior (see 2025-12-08log.txt)
                     actual_token = None
-                    for field_name in ['token', 'data', 'key', 'auth_token', 'access_token']:
-                        if field_name in token_json:
-                            actual_token = token_json[field_name]
-                            self.logger.info(f"[PARSE] Extracted token from field '{field_name}'")
-                            break
+                    if 'pwd' in token_json:
+                        actual_token = token_json['pwd']
+                        self.logger.info(f"[PARSE] ✓ Using 'pwd' field as token (Android app behavior)")
+                    # Fallback: Check for 'token' field (backward compatibility)
+                    elif 'token' in token_json:
+                        actual_token = token_json['token']
+                        self.logger.info(f"[PARSE] Using 'token' field (legacy format)")
+                    # Last resort: Try other common token fields
+                    else:
+                        for field_name in ['data', 'key', 'auth_token', 'access_token']:
+                            if field_name in token_json:
+                                actual_token = token_json[field_name]
+                                self.logger.info(f"[PARSE] Using '{field_name}' field as fallback")
+                                break
                     
                     if actual_token:
                         token_str = str(actual_token)
-                        self.logger.info(f"[PARSE] Using extracted token (length: {len(token_str)})")
+                        self.logger.info(f"[PARSE] Extracted token: {token_str} (length: {len(token_str)})")
                     else:
                         self.logger.warning(
                             f"[PARSE] JSON has no recognized token field. "
                             f"Available keys: {list(token_json.keys())}. "
-                            f"Using entire JSON as token."
+                            f"Using entire JSON as token (likely incorrect!)."
                         )
-                        # Try to use the entire JSON string as token
+                        # Try to use the entire JSON string as token (least preferred)
                         token_str = json.dumps(token_json)
                         
                 except json.JSONDecodeError as e:
