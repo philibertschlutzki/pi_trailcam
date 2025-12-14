@@ -10,8 +10,15 @@ Ablauf:
 3. Leitet Traffic zwischen beiden weiter (NAT)
 4. Captured alle Pakete für Issue #52 Analyse
 
+Features:
+- Live-Monitoring von hostapd (Client Association)
+- Live-Monitoring von dnsmasq (DHCP Leases)
+- Live-Monitoring von wpa_supplicant (Camera Connection)
+- NetworkManager Handling (Unmanaged interfaces)
+
 Autor: Philibert Schlutzki
 Datum: 2025-12-14
+Revised: Jules (Agent)
 """
 
 import os
@@ -21,6 +28,7 @@ import signal
 import logging
 import subprocess
 import threading
+import re
 from pathlib import Path
 from datetime import datetime
 from scapy.all import sniff, wrpcap, hexdump, UDP, IP
@@ -122,13 +130,67 @@ def check_interfaces():
 
 def install_dependencies():
     """Installiert benötigte Pakete"""
-    packages = ['hostapd', 'dnsmasq', 'tcpdump', 'iptables']
+    packages = ['hostapd', 'dnsmasq', 'tcpdump', 'iptables', 'network-manager']
     logger.info("Checking dependencies...")
     
     for pkg in packages:
         if not run_command(f"which {pkg}", check=False, capture_output=True):
             logger.info(f"Installing {pkg}...")
             run_command(f"apt-get install -y {pkg}")
+
+class ProcessMonitor:
+    """Startet einen Prozess und überwacht dessen Ausgabe in einem Thread"""
+    def __init__(self, name, cmd_list, logger_instance, line_callback=None):
+        self.name = name
+        self.cmd_list = cmd_list
+        self.logger = logger_instance
+        self.process = None
+        self.thread = None
+        self.running = False
+        self.line_callback = line_callback
+
+    def start(self):
+        self.logger.info(f"Starting {self.name}...")
+        try:
+            self.process = subprocess.Popen(
+                self.cmd_list,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+            self.running = True
+            self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
+            self.thread.start()
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to start {self.name}: {e}")
+            return False
+
+    def _monitor_loop(self):
+        while self.running and self.process.poll() is None:
+            line = self.process.stdout.readline()
+            if not line:
+                break
+            line = line.strip()
+            if line:
+                # Log debug info to file, but info to console if important
+                self.logger.debug(f"[{self.name}] {line}")
+                if self.line_callback:
+                    self.line_callback(line)
+        self.running = False
+
+    def stop(self):
+        self.running = False
+        if self.process:
+            self.logger.info(f"Stopping {self.name}...")
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+        if self.thread:
+            self.thread.join(timeout=1)
 
 # ============================================================
 # ACCESS POINT SETUP
@@ -140,9 +202,31 @@ class AccessPointManager:
     def __init__(self):
         self.hostapd_conf = '/tmp/mitm_hostapd.conf'
         self.dnsmasq_conf = '/tmp/mitm_dnsmasq.conf'
-        self.hostapd_process = None
-        self.dnsmasq_process = None
+        self.hostapd_monitor = None
+        self.dnsmasq_monitor = None
     
+    def check_conflicts(self):
+        """Prüft auf Port 53 Konflikte und NetworkManager"""
+        logger.info("Checking for conflicts...")
+
+        # Check NetworkManager
+        nm_active = run_command("systemctl is-active NetworkManager", check=False, capture_output=True) == "active"
+        if nm_active:
+            logger.info("NetworkManager is active. Configuring interfaces as unmanaged...")
+            run_command(f"nmcli dev set {CONFIG['ap_interface']} managed no", check=False)
+            run_command(f"nmcli dev set {CONFIG['client_interface']} managed no", check=False)
+
+        # Check Port 53
+        # lsof might not be installed, use netstat or ss
+        ports = run_command("ss -lupn | grep :53", check=False, capture_output=True)
+        if "53" in ports:
+            logger.warning("Port 53 is in use! Attempting to free it...")
+            run_command("systemctl stop systemd-resolved", check=False)
+            time.sleep(1)
+
+        # Kill conflicting wpa_supplicant on AP interface
+        run_command(f"pkill -f 'wpa_supplicant.*{CONFIG['ap_interface']}'", check=False)
+
     def create_hostapd_config(self):
         """Erstellt hostapd Konfiguration"""
         config = f"""
@@ -160,6 +244,8 @@ wpa_passphrase={CONFIG['ap_password']}
 wpa_key_mgmt=WPA-PSK
 wpa_pairwise=TKIP
 rsn_pairwise=CCMP
+ctrl_interface=/var/run/hostapd
+ctrl_interface_group=0
 """
         Path(self.hostapd_conf).write_text(config)
         logger.info(f"✓ hostapd config created: {self.hostapd_conf}")
@@ -195,12 +281,33 @@ bind-interfaces
         
         logger.info(f"✓ Interface {CONFIG['ap_interface']} configured with IP {CONFIG['ap_ip']}")
     
+    def _hostapd_callback(self, line):
+        if "AP-STA-CONNECTED" in line:
+            mac = line.split()[-1]
+            logger.info(f"📱 CLIENT CONNECTED: {mac}")
+        elif "AP-STA-DISCONNECTED" in line:
+            mac = line.split()[-1]
+            logger.info(f"📱 CLIENT DISCONNECTED: {mac}")
+
+    def _dnsmasq_callback(self, line):
+        if "DHCPACK" in line:
+            parts = line.split()
+            # Format usually: dnsmasq-dhcp: DHCPACK(wlan0) 192.168.43.50 aa:bb:cc:dd:ee:ff host
+            try:
+                ip = parts[parts.index("DHCPACK(" + CONFIG['ap_interface'] + ")") + 1]
+                mac = parts[parts.index(ip) + 1]
+                logger.info(f"📱 DHCP LEASE: IP {ip} assigned to {mac}")
+            except (ValueError, IndexError):
+                pass
+
     def start(self):
         """Startet Access Point"""
         logger.info("=" * 60)
         logger.info("STARTING ACCESS POINT")
         logger.info("=" * 60)
         
+        self.check_conflicts()
+
         # Bestehende Prozesse beenden
         run_command("killall hostapd", check=False)
         run_command("killall dnsmasq", check=False)
@@ -213,33 +320,37 @@ bind-interfaces
         # Interface setup
         self.setup_interface()
         
-        # hostapd starten
-        logger.info("Starting hostapd...")
-        self.hostapd_process = subprocess.Popen(
-            ['hostapd', self.hostapd_conf],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+        # hostapd starten mit Monitor
+        self.hostapd_monitor = ProcessMonitor(
+            "hostapd",
+            ['hostapd', '-d', self.hostapd_conf],
+            logger,
+            self._hostapd_callback
         )
-        time.sleep(3)
-        
-        if self.hostapd_process.poll() is not None:
-            logger.error("hostapd failed to start!")
+        if not self.hostapd_monitor.start():
             sys.exit(1)
         
+        time.sleep(3)
+        if not self.hostapd_monitor.running:
+             logger.error("hostapd crashed shortly after start!")
+             sys.exit(1)
+
         logger.info("✓ hostapd running")
         
-        # dnsmasq starten
-        logger.info("Starting dnsmasq...")
-        self.dnsmasq_process = subprocess.Popen(
+        # dnsmasq starten mit Monitor
+        self.dnsmasq_monitor = ProcessMonitor(
+            "dnsmasq",
             ['dnsmasq', '-C', self.dnsmasq_conf, '-d'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            logger,
+            self._dnsmasq_callback
         )
-        time.sleep(2)
-        
-        if self.dnsmasq_process.poll() is not None:
-            logger.error("dnsmasq failed to start!")
+        if not self.dnsmasq_monitor.start():
             sys.exit(1)
+
+        time.sleep(2)
+        if not self.dnsmasq_monitor.running:
+             logger.error("dnsmasq crashed shortly after start! Check port 53 usage.")
+             sys.exit(1)
         
         logger.info("✓ dnsmasq running")
         logger.info(f"✓ Access Point '{CONFIG['ap_ssid']}' is ready!")
@@ -249,17 +360,18 @@ bind-interfaces
         """Stoppt Access Point"""
         logger.info("Stopping Access Point...")
         
-        if self.hostapd_process:
-            self.hostapd_process.terminate()
-            self.hostapd_process.wait()
+        if self.hostapd_monitor:
+            self.hostapd_monitor.stop()
         
-        if self.dnsmasq_process:
-            self.dnsmasq_process.terminate()
-            self.dnsmasq_process.wait()
+        if self.dnsmasq_monitor:
+            self.dnsmasq_monitor.stop()
         
         run_command("killall hostapd", check=False)
         run_command("killall dnsmasq", check=False)
         
+        # Restore NetworkManager management if desired (optional)
+        # run_command(f"nmcli dev set {CONFIG['ap_interface']} managed yes", check=False)
+
         logger.info("✓ Access Point stopped")
 
 # ============================================================
@@ -272,13 +384,25 @@ class CameraConnectionManager:
     def __init__(self):
         self.connected = False
         self.camera_network_ip = None
+        self.wpa_monitor = None
     
+    def _wpa_callback(self, line):
+        if "CTRL-EVENT-CONNECTED" in line:
+            logger.info("📷 CAMERA CONNECTION ESTABLISHED")
+        elif "CTRL-EVENT-DISCONNECTED" in line:
+            logger.info("📷 CAMERA DISCONNECTED")
+        elif "CTRL-EVENT-SCAN-RESULTS" in line:
+            logger.debug("Scan results available")
+
     def connect(self):
         """Verbindet mit Kamera WiFi"""
         logger.info("=" * 60)
         logger.info("CONNECTING TO CAMERA WIFI")
         logger.info("=" * 60)
         
+        # Ensure wlan1 is unmanaged
+        run_command(f"nmcli dev set {CONFIG['client_interface']} managed no", check=False)
+
         # Interface hochfahren
         run_command(f"ip link set {CONFIG['client_interface']} up")
         time.sleep(1)
@@ -286,6 +410,7 @@ class CameraConnectionManager:
         # Bestehende Verbindungen trennen
         logger.info("Disconnecting existing connections...")
         run_command(f"wpa_cli -i {CONFIG['client_interface']} disconnect", check=False)
+        run_command("killall wpa_supplicant", check=False)
         time.sleep(1)
         
         # Nach Kamera-WiFi suchen
@@ -314,16 +439,17 @@ network={{
         wpa_conf_file = '/tmp/mitm_wpa_supplicant.conf'
         Path(wpa_conf_file).write_text(wpa_conf)
         
-        # wpa_supplicant starten
-        logger.info("Starting wpa_supplicant...")
-        run_command(f"killall wpa_supplicant", check=False)
-        time.sleep(1)
-        
-        run_command(
-            f"wpa_supplicant -B -i {CONFIG['client_interface']} -c {wpa_conf_file}",
-            check=True
+        # wpa_supplicant starten mit Monitor
+        # -d for debug
+        self.wpa_monitor = ProcessMonitor(
+            "wpa_supplicant",
+            ['wpa_supplicant', '-d', '-i', CONFIG['client_interface'], '-c', wpa_conf_file],
+            logger,
+            self._wpa_callback
         )
-        
+        if not self.wpa_monitor.start():
+            return False
+
         # Warten auf Verbindung
         logger.info("Waiting for connection...")
         for i in range(30):
@@ -371,6 +497,9 @@ network={{
     def disconnect(self):
         """Trennt Verbindung zur Kamera"""
         logger.info("Disconnecting from camera WiFi...")
+        if self.wpa_monitor:
+            self.wpa_monitor.stop()
+
         run_command(f"wpa_cli -i {CONFIG['client_interface']} disconnect", check=False)
         run_command(f"killall wpa_supplicant", check=False)
         run_command(f"ip link set {CONFIG['client_interface']} down")
@@ -503,12 +632,15 @@ class TrafficCapturer:
                 self._analyze_udp_packet(pkt)
         
         # Capture auf beiden Interfaces
-        sniff(
-            iface=[CONFIG['ap_interface'], CONFIG['client_interface']],
-            prn=packet_handler,
-            store=False,
-            stop_filter=lambda _: not self.running
-        )
+        try:
+            sniff(
+                iface=[CONFIG['ap_interface'], CONFIG['client_interface']],
+                prn=packet_handler,
+                store=False,
+                stop_filter=lambda _: not self.running
+            )
+        except Exception as e:
+            logger.error(f"Scapy Sniffing failed: {e}")
     
     def _analyze_udp_packet(self, pkt):
         """Analysiert UDP-Pakete auf PPPP/Artemis Protokoll"""
@@ -576,7 +708,8 @@ class TrafficCapturer:
             self.tcpdump_process.wait()
         
         if self.capture_thread:
-            self.capture_thread.join(timeout=5)
+            # Cannot really join sniff thread if it's blocking, but stop_filter should help
+            pass
         
         logger.info(f"✓ Capture stopped. Total packets: {len(self.packets)}")
         logger.info(f"✓ PCAP saved to: {self.capture_file}")
@@ -641,9 +774,11 @@ class TrailCamMITM:
             time.sleep(5)
             
             # 2. Mit Kamera verbinden (auf wlan1)
-            if not self.camera_manager.connect():
-                logger.error("Failed to connect to camera!")
-                return False
+            # if not self.camera_manager.connect():
+            #     logger.error("Failed to connect to camera!")
+            #     # return False # Continue for debugging AP even if Camera fails
+
+            self.camera_manager.connect()
             
             time.sleep(3)
             
@@ -666,6 +801,7 @@ class TrailCamMITM:
             logger.info(f"Traffic is being captured to: {self.capturer.capture_file}")
             logger.info("=" * 60)
             logger.info("Waiting for smartphone to connect...")
+            logger.info("Check log for '📱 CLIENT CONNECTED'")
             logger.info("Press Ctrl+C to stop")
             logger.info("=" * 60)
             
