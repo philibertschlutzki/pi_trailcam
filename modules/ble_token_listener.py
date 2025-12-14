@@ -315,37 +315,33 @@ class TokenListener:
         
         FIX #20: Support both raw tokens and JSON-wrapped tokens.
         FIX #26: Handle variable-length tokens correctly (80 bytes typical)
-        FIX #50: Extract 'pwd' field from JSON as primary token (Android app behavior)
+        FIX #50: Correctly identify the Session Token.
         
         Structures supported:
         1. Raw format: [4 bytes: token_length] [4 bytes: sequence] [N bytes: token]
         2. JSON format: [4 bytes: json_length] [4 bytes: sequence] [JSON string with token field]
         
-        JSON Parsing Logic (FIX #50 - NEW PRIORITY):
-        - **PRIMARY**: Check for 'pwd' field (WiFi password) - THIS IS THE ACTUAL TOKEN
-          - Android app log (2025-12-08log.txt:183354.307) confirms:
-            "Device network start result{ret:0,ssid:KJK_E0FF,bssid:1C:4E:A2:92:E0:FF,pwd:85087127}"
-          - The 'pwd' field (85087127) is the token used for UDP login
-        - Fallback: Check for 'token' field (for backward compatibility)
-        - Last resort: Use full JSON string if no specific field found
-        
-        Real-world example from Issue #50:
+        JSON Parsing Logic (UPDATED FIX #52):
+        - **PRIMARY**: Check for 'token' field.
+          - Analysis reveals that 'token' contains the Base64 encoded session token.
+          - Example: "MzlB36X/IVo8ZzI5rG9j1w=="
+
+        - **SECONDARY**: Check for 'pwd' field (WiFi password).
+          - Previously thought to be the token (FIX #50), but this is incorrect for session authentication.
+          - Kept as fallback but logged as warning.
+
+        - **FALLBACK**: Check for other fields like 'data', 'key', etc.
+
+        Real-world example from Issue #50/#52:
         ```json
         {
           "ret": 0,
           "ssid": "KJK_E0FF",
           "bssid": "1C:4E:A2:92:E0:FF",
-          "pwd": "85087127"  <-- THIS is the token!
+          "pwd": "85087127",
+          "token": "MzlB36X/IVo8ZzI5rG9j1w=="  <-- THIS is the correct Session Token!
         }
         ```
-
-        Why JSON?
-        Newer firmware versions wrap the token in JSON to include additional metadata
-        (like SSID, return codes) which provides context for the connection.
-
-        See PROTOCOL_ANALYSIS.md for detailed token context.
-        
-        FIX #26: Support 80-byte tokens (most common from camera)
         """
         if not data:
             raise ValueError("Received empty data payload")
@@ -392,16 +388,19 @@ class TokenListener:
                     token_json = json.loads(token_str)
                     self.logger.debug(f"[PARSE] Parsed JSON: {json.dumps(token_json, indent=2)[:200]}...")
                     
-                    # FIX #50: PRIMARY - Extract 'pwd' field (WiFi password = actual token)
-                    # This matches Android app behavior (see 2025-12-08log.txt)
                     actual_token = None
-                    if 'pwd' in token_json:
-                        actual_token = token_json['pwd']
-                        self.logger.info(f"[PARSE] ✓ Using 'pwd' field as token (Android app behavior)")
-                    # Fallback: Check for 'token' field (backward compatibility)
-                    elif 'token' in token_json:
+
+                    # FIX #52: PRIMARY - Check for 'token' field (Session Token)
+                    # Corrected analysis: 'token' is the session token, 'pwd' is just WiFi password.
+                    if 'token' in token_json:
                         actual_token = token_json['token']
-                        self.logger.info(f"[PARSE] Using 'token' field (legacy format)")
+                        self.logger.info(f"[PARSE] ✓ Using 'token' field (Session Token)")
+
+                    # Fallback/Secondary: Check for 'pwd' field if 'token' is missing
+                    elif 'pwd' in token_json:
+                        actual_token = token_json['pwd']
+                        self.logger.warning(f"[PARSE] 'token' field missing. Using 'pwd' field as fallback (Warning: likely incorrect for session auth)")
+
                     # Last resort: Try other common token fields
                     else:
                         for field_name in ['data', 'key', 'auth_token', 'access_token']:
