@@ -22,11 +22,13 @@ class PPPPInnerHeader:
     session_type: int
     subcommand: int
     sequence: int
-    reserved: int = 0
+    # Reserved field removed to match observed correct packet structure
+    # reserved: int = 0
 
     def to_bytes(self) -> bytes:
-        # >BBHB: Big-Endian, U8, U8, U16, U8
-        return struct.pack('>BBHB', self.session_type, self.subcommand, self.sequence, self.reserved)
+        # >BBH: Big-Endian, U8, U8, U16
+        # Was >BBHB (5 bytes), now 4 bytes to match camera expectations
+        return struct.pack('>BBH', self.session_type, self.subcommand, self.sequence)
 
 class PPPPProtocol:
     def __init__(self, start_sequence: int = 1, logger=None):
@@ -45,49 +47,30 @@ class PPPPProtocol:
 
     def wrap_init_ping(self) -> bytes:
         """
-        FIX #44: First init packet (0xF1E0) with 4-byte payload 0x00000000.
-        
-        From tcpdump_1800_connect.log (17:55:23.927):
-        IP 192.168.43.22.54530 > 192.168.43.1.40611: UDP, length 4
-        0x0000:  4500 0020 8146 4000 4011 e21e c0a8 2b16
-        0x0010:  c0a8 2b01 d502 9ea3 000c c2e6 f1e0 0000
-        
-        Packet structure: F1 E0 [4-byte payload: 00 00 00 00]
-        Total UDP payload: 8 bytes (4 outer header + 4 payload)
-        
-        This is sent BEFORE 0xF1E1 packet.
+        First init packet (0xF1E0).
+        Matches capture 'export packets.txt' where Frame 2731 is 'f1 e0 00 00'.
+        Length 0, no payload.
         """
         outer = PPPPOuterHeader(
             magic=PPPPConstants.MAGIC_STANDARD,  # 0xF1
             cmd_type=0xE0,  # First init type
-            length=4  # 4-byte payload
+            length=0  # Changed from 4 to 0 based on correct packet capture
         )
-        payload = b'\x00\x00\x00\x00'  # Magic init value
-        packet = outer.to_bytes() + payload
+        packet = outer.to_bytes() # No payload
         logger.debug(f"[PPPP] wrap_init_ping (0xE0): {packet.hex()}")
         return packet
 
     def wrap_init_secondary(self) -> bytes:
         """
-        FIX #44: Second init packet (0xF1E1) with 4-byte payload 0x00000000.
-        
-        From tcpdump_1800_connect.log (17:55:23.928):
-        IP 192.168.43.22.54530 > 192.168.43.1.40611: UDP, length 4
-        0x0000:  4500 0020 8147 4000 4011 e21d c0a8 2b16
-        0x0010:  c0a8 2b01 d502 9ea3 000c c2e5 f1e1 0000
-        
-        Packet structure: F1 E1 [4-byte payload: 00 00 00 00]
-        Total UDP payload: 8 bytes (4 outer header + 4 payload)
-        
-        This is sent AFTER 0xF1E0 packet.
+        Second init packet (0xF1E1).
+        Assuming symmetry with 0xF1E0, using length 0.
         """
         outer = PPPPOuterHeader(
             magic=PPPPConstants.MAGIC_STANDARD,  # 0xF1
             cmd_type=0xE1,  # Second init type
-            length=4  # 4-byte payload
+            length=0  # Changed from 4 to 0
         )
-        payload = b'\x00\x00\x00\x00'  # Magic init value
-        packet = outer.to_bytes() + payload
+        packet = outer.to_bytes() # No payload
         logger.debug(f"[PPPP] wrap_init_secondary (0xE1): {packet.hex()}")
         return packet
 
@@ -118,19 +101,18 @@ class PPPPProtocol:
     def wrap_discovery(self, artemis_seq: int) -> bytes:
         """
         Wraps a discovery payload (2 bytes Artemis Sequence).
-        Format: F1 D1 [Len] [D1 00 Seq 00] [ArtemisSeq]
+        Format: F1 D1 [Len] [D1 00 Seq] [ArtemisSeq]
         """
         # Payload is Artemis Sequence (2 bytes)
         payload = struct.pack('>H', artemis_seq)
 
         # Inner Header
-        # Type=D1, Sub=00, Seq=next, Res=00
+        # Type=D1, Sub=00, Seq=next
         seq = self._increment_sequence()
         inner = PPPPInnerHeader(
             session_type=0xD1,
             subcommand=0x00,
-            sequence=seq,
-            reserved=0x00
+            sequence=seq
         )
         inner_bytes = inner.to_bytes()
 
@@ -150,17 +132,11 @@ class PPPPProtocol:
 
     def wrap_login(self, artemis_payload: bytes) -> bytes:
         """
-        FIX #44: Wraps Artemis login payload with 0xF1D0 outer type.
+        Wraps Artemis login payload with 0xF1D0 outer type.
         
-        From tcpdump_1800_connect.log (17:55:25.600):
-        IP 192.168.43.22.54530 > 192.168.43.1.40611: UDP, length 53
-        0xf1d0 0031 d100 0003 ARTEMIS\x00...
-        
-        Outer Type: 0xD0 (LOGIN, not 0xD1 DISCOVERY!)
-        Inner Header: D1 00 [Seq] 00
-        Artemis Payload: ARTEMIS\x00 + version + sequence + token_len + token
-        
-        This is the CRITICAL difference from discovery.
+        Outer Type: 0xD0 (LOGIN)
+        Inner Header: D1 00 [Seq] (4 bytes)
+        Artemis Payload: ARTEMIS\x00...
         """
         # Validate payload size
         if len(artemis_payload) > 4088:  # 4096 - headers
@@ -171,8 +147,7 @@ class PPPPProtocol:
         inner = PPPPInnerHeader(
             session_type=0xD1,  # Inner type is D1
             subcommand=0x00,
-            sequence=seq,
-            reserved=0x00
+            sequence=seq
         )
         inner_bytes = inner.to_bytes()
 
@@ -180,7 +155,7 @@ class PPPPProtocol:
         total_len = len(inner_bytes) + len(artemis_payload)
         outer = PPPPOuterHeader(
             magic=PPPPConstants.MAGIC_STANDARD,  # 0xF1
-            cmd_type=PPPPConstants.CMD_LOGIN,  # 0xD0 (CRITICAL!)
+            cmd_type=PPPPConstants.CMD_LOGIN,  # 0xD0
             length=total_len
         )
 
@@ -200,8 +175,7 @@ class PPPPProtocol:
         inner = PPPPInnerHeader(
             session_type=0xD1,
             subcommand=0x00,
-            sequence=seq,
-            reserved=0x00
+            sequence=seq
         )
         inner_bytes = inner.to_bytes()
 
@@ -255,12 +229,7 @@ class PPPPProtocol:
              )
 
         # Parse Inner Header
-        # Note: PPPPWrapper used 4 bytes (>BBH). PPPPProtocol uses 5 bytes (>BBHB) for sending.
-        # We will stick to 4 bytes as per PPPPWrapper which was working for unwrapping.
-        # If the camera sends 5 bytes, the payload offset will be off by 1 byte if we don't account for it?
-        # But we assume the camera follows the structure we successfully reversed before.
-        # If PPPPProtocol sending 5 bytes is a new change, maybe the camera ignores the extra byte?
-        # For now, we restore the old behavior for unwrapping.
+        # Matches >BBH (4 bytes) used in sending now.
         inner_type, subcommand, pppp_seq = struct.unpack('>BBH', packet[4:8])
 
         # Payload
@@ -320,8 +289,8 @@ if __name__ == "__main__":
 
     # Test Unwrap
     print("\nUnwrap:")
-    # Simulate a response packet (from repro script)
-    # Outer(F1, D1, len=4+4) + Inner(D1, 01, Seq=1) + Payload(empty)
+    # Simulate a response packet with 4-byte inner header
+    # Outer(F1, D1, len=4) + Inner(D1, 01, Seq=1) + Payload(empty)
     # Inner = D1 01 00 01 (4 bytes)
     response_packet = b'\xf1\xd1\x00\x04\xd1\x01\x00\x01'
     unwrapped = protocol.unwrap_pppp(response_packet)
