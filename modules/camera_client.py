@@ -276,7 +276,8 @@ class CameraClient:
 
             packet = ArtemisPacketBuilder.build_login_packet(
                 self.session_token,
-                self.artemis_seq
+                self.artemis_seq,
+                ble_seq=self.sequence_bytes
             )
 
             # FIX #81: Removed strict 53-byte check to support variable length tokens
