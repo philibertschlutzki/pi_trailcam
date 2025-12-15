@@ -68,6 +68,8 @@ class TestCameraClient(unittest.TestCase):
     def test_login_success(self, mock_socket):
         mock_sock_instance = MagicMock()
         self.client.sock = mock_sock_instance
+        # FIX: Mock gettimeout to return a float for the loop condition
+        mock_sock_instance.gettimeout.return_value = 5.0
 
         self.client.set_session_credentials('token', b'seq')
         # We need a state where login is allowed (e.g., INITIALIZING or CONNECTING)
