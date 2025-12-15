@@ -133,8 +133,8 @@ class CameraClient:
 
         # PPPP Integration
         self.pppp = PPPPProtocol(logger=self.logger)
-        # FIX #59: Initialize Artemis sequence to 5 (start of sequence counter)
-        self.artemis_seq = 5
+        # FIX #59: Initialize Artemis sequence to 1 (start of sequence counter, matches Android log)
+        self.artemis_seq = 1
 
     @property
     def state(self):
@@ -159,14 +159,14 @@ class CameraClient:
             self.sequence_bytes = sequence if use_ble_dynamic else None
             self.token_timestamp = time.time()
             
-            # FIX #59: We now start artemis_seq at 5 and increment.
+            # FIX #59: We now start artemis_seq at 1 and increment.
             # We log the BLE sequence for reference, but we don't rely on it for the PPPP sequence counter in packet builder.
             self.logger.info(
                 f"[CREDENTIALS] Token={token[:20]}..., "
                 f"Sequence={sequence.hex().upper() if sequence else 'NONE'}"
             )
-            # Reset Artemis Seq to 5 on new credentials
-            self.artemis_seq = 5
+            # Reset Artemis Seq to 1 on new credentials
+            self.artemis_seq = 1
 
     def _socket_force_close(self):
         if self.sock:
@@ -383,8 +383,8 @@ class CameraClient:
         self.logger.info("[CONNECT] Resetting PPPP sequence to 1")
         self.pppp.reset_sequence(1)
 
-        # FIX #59: Initialize Artemis sequence to 5
-        self.artemis_seq = 5
+        # FIX #59: Initialize Artemis sequence to 1
+        self.artemis_seq = 1
 
         # Destination ports to try
         target_ports = [
@@ -488,7 +488,7 @@ class CameraClient:
                 self.artemis_seq += 1
                 # Max seq check?
                 if self.artemis_seq > 100:
-                    self.artemis_seq = 5 # Reset if too high?
+                    self.artemis_seq = 1 # Reset if too high?
 
             if login_successful:
                 self.logger.info(
