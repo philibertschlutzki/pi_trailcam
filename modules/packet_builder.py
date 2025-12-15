@@ -52,44 +52,38 @@ class ArtemisPacketBuilder:
             # The token from BLE is likely already Base64 string or the exact string required.
             token_payload = token_str.encode('utf-8')
 
-            # Ensure null terminator? Some traces show it, some don't.
-            # The packet builder previously added \x00. Let's keep it for now but NOT truncate.
-            token_payload += b'\x00'
+            # Removed null terminator to match protocol spec
             payload_len = len(token_payload)
 
             # --- Layer 4: Command Structure ---
             # 0x02000000 (LE) -> Command ID 2 (4 bytes)
             cmd_id = struct.pack('<I', 2)
 
-            # Sequence (8 bytes) - FIX #87
-            # From BLE (usually 4 bytes) padded to 8 bytes.
-            # Assuming BLE seq is the lower part (Little Endian perspective) or just first 4 bytes.
+            # Sequence (4 bytes) - Fixed to 4 bytes LE
             if ble_seq and isinstance(ble_seq, bytes):
-                if len(ble_seq) == 4:
-                    seq_field = ble_seq + b'\x00\x00\x00\x00'
-                elif len(ble_seq) == 8:
-                    seq_field = ble_seq
+                if len(ble_seq) >= 4:
+                    seq_field = ble_seq[:4]
                 else:
-                    seq_field = ble_seq.ljust(8, b'\x00')[:8]
+                    seq_field = ble_seq.ljust(4, b'\x00')
             else:
                 # Default to 0 if not provided
-                seq_field = b'\x00' * 8
+                seq_field = b'\x00' * 4
                 if ble_seq:
                      logger.warning(f"[PACKET BUILDER] Invalid BLE sequence length: {len(ble_seq)}")
 
             # Token Length (4 bytes LE)
             len_field = struct.pack('<I', payload_len)
 
-            # Combine Layer 4: Command (4) + Sequence (8) + Length (4) = 16 bytes
+            # Combine Layer 4: Command (4) + Sequence (4) + Length (4) = 12 bytes
             layer4 = cmd_id + seq_field + len_field
 
             # --- Layer 3: Protocol Identifier (8 bytes) ---
             layer3 = b'ARTEMIS\x00'
 
-            # --- Layer 2: ARTEMIS Wrapper (4 bytes) ---
+            # --- Layer 2: ARTEMIS Wrapper (6 bytes) ---
             # FIX #78: Subcommand 0x03 (Login Request)
-            # d1 03 [Seq]
-            seq_bytes = struct.pack('>H', sequence)
+            # d1 03 [Seq 4 bytes LE]
+            seq_bytes = struct.pack('<I', sequence)
             layer2 = b'\xd1\x03' + seq_bytes
 
             # --- Layer 1: PPPP Header ---
@@ -99,7 +93,8 @@ class ArtemisPacketBuilder:
             total_payload = layer2 + layer3 + layer4 + token_payload
             length_val = len(total_payload)
 
-            header = b'\xf1\xd0' + struct.pack('>H', length_val)
+            # Fixed to Little Endian Length per protocol spec
+            header = b'\xf1\xd0' + struct.pack('<H', length_val)
 
             packet = header + total_payload
 
