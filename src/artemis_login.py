@@ -118,6 +118,133 @@ class ArtemisLoginHandler:
             logger.error("Discovery timed out")
             return False
 
+    def parse_json_login_response(self, data: bytes) -> bool:
+        """
+        Parses direct JSON response from login command.
+        Expected:
+        {
+            "errorCode": 0,
+            "result": 0,
+            ...
+        }
+        """
+        try:
+            # Decode UTF-8
+            response_text = data.decode('utf-8')
+            logger.info(f"[LOGIN] Raw JSON response: {response_text[:200]}")
+
+            # Parse JSON
+            response_json = json.loads(response_text)
+
+            # Extract fields
+            error_code = response_json.get('errorCode', -999)
+            result = response_json.get('result', -999)
+            cmd_id = response_json.get('cmdId', 'N/A')
+
+            logger.info(f"[LOGIN] ✓ Parsed: errorCode={error_code}, result={result}, cmdId={cmd_id}")
+
+            # Check success
+            if error_code == 0 and result == 0:
+                logger.info("[LOGIN] ✓✓✓ Authentication SUCCESSFUL!")
+                return True
+            else:
+                logger.error(f"[LOGIN] ✗ Authentication failed: errorCode={error_code}, result={result}")
+                return False
+
+        except json.JSONDecodeError as e:
+            logger.error(f"[LOGIN] ✗ JSON decode error: {e}")
+            logger.error(f"[LOGIN] Raw bytes (hex): {data[:200].hex()}")
+            return False
+
+        except Exception as e:
+            logger.error(f"[LOGIN] ✗ Unexpected error: {type(e).__name__}: {e}")
+            return False
+
+    def parse_pppp_login_response(self, data: bytes) -> bool:
+        """
+        Parses PPPP-wrapped Login-Response (rare case).
+        """
+        if len(data) < 4:
+            logger.error(f"[LOGIN] ✗ PPPP response too short: {len(data)} bytes")
+            return False
+
+        try:
+            magic = data[0]
+            pkt_type = data[1]
+            length = int.from_bytes(data[2:4], 'big')
+
+            logger.info(f"[LOGIN] PPPP Header: magic=0x{magic:02X}, type=0x{pkt_type:02X}, length={length}")
+
+            # Payload (everything after 4-byte Header)
+            payload = data[4:]
+
+            try:
+                 response_text = payload.decode('utf-8')
+                 response_json = json.loads(response_text)
+            except json.JSONDecodeError:
+                # Fallback: maybe inner header exists, e.g. D1 ...
+                # If there is an inner header of 4 bytes, try skipping it
+                if len(payload) > 4:
+                     payload = payload[4:]
+                     response_text = payload.decode('utf-8')
+                     response_json = json.loads(response_text)
+                else:
+                    raise
+
+            error_code = response_json.get('errorCode', -999)
+            result = response_json.get('result', -999)
+
+            logger.info(f"[LOGIN] PPPP Payload: errorCode={error_code}, result={result}")
+
+            return error_code == 0 and result == 0
+
+        except Exception as e:
+            logger.error(f"[LOGIN] ✗ PPPP parse error: {type(e).__name__}: {e}")
+            return False
+
+    async def receive_login_response(self) -> bool:
+        timeout = 2.0
+        start_time = time.time()
+        loop = asyncio.get_running_loop()
+
+        while time.time() - start_time < timeout:
+            try:
+                remaining = timeout - (time.time() - start_time)
+                if remaining <= 0: break
+
+                try:
+                    data = await asyncio.wait_for(loop.sock_recv(self.sock, 4096), timeout=remaining)
+                except asyncio.TimeoutError:
+                    break
+
+                # addr is unknown in sock_recv, but since we are client, we assume it's from server
+                logger.info(f"[LOGIN] Received {len(data)} bytes")
+                logger.info(f"[LOGIN] Response (hex): {data.hex()}")
+
+                if not data: continue
+
+                first_byte = data[0]
+
+                if first_byte == 0xF1:
+                    logger.info("[LOGIN] → Response is PPPP-wrapped")
+                    return self.parse_pppp_login_response(data)
+
+                elif first_byte == 0x7B: # '{'
+                    logger.info("[LOGIN] → Response is direct JSON")
+                    return self.parse_json_login_response(data)
+
+                else:
+                    logger.warning(f"[LOGIN] ✗ Unknown response type: 0x{first_byte:02X}")
+                    logger.warning(f"[LOGIN] Full response (hex): {data[:100].hex()}")
+                    continue
+
+            except Exception as e:
+                logger.error(f"[LOGIN] Receive error: {e}")
+                return False
+
+        logger.error(f"[LOGIN] ✗ No response after {timeout}s")
+        return False
+
     async def phase3_login(self) -> bool:
         """
         PHASE 3: ARTEMIS LOGIN
@@ -162,40 +289,16 @@ class ArtemisLoginHandler:
         logger.info(f"[PHASE 3] [TX] {packet.hex().upper()}")
         self.sock.sendto(packet, (self.target_ip, self.target_port))
 
-        # 3. Wait for Response
-        try:
-            loop = asyncio.get_running_loop()
-            data = await asyncio.wait_for(loop.sock_recv(self.sock, 4096), timeout=3.0)
+        # 3. Wait for Response using new logic
+        success = await self.receive_login_response()
 
-            logger.info(f"[PHASE 3] [RX] {data.hex().upper()}")
+        if success:
+            logger.info("[STATE] LOGGING_IN → AUTHENTICATED")
+            self.is_connected = True
+        else:
+            logger.error("[LOGIN] ✗ Failed")
 
-            # Validate F1 D0 ...
-            if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
-                # Offset 8 is payload start
-                payload = data[8:]
-
-                # Try to decode
-                try:
-                    # Often null terminated or contains JSON
-                    decoded = payload.decode('utf-8', errors='ignore')
-                    logger.info(f"Decoded Payload: {decoded}")
-
-                    # Check for success
-                    # "errorCode": 0
-                    if '"errorCode": 0' in decoded or '"errorCode":0' in decoded:
-                        logger.info("Login Successful (errorCode=0 detected)")
-                        return True
-
-                except Exception:
-                    logger.warning("Could not decode login payload")
-
-            # If we got here, maybe we missed the check
-            logger.warning("Login response validation failed (errorCode=0 not found)")
-            return False
-
-        except asyncio.TimeoutError:
-            logger.error("Login timed out - No response")
-            return False
+        return success
 
     async def phase4_heartbeat(self):
         """
