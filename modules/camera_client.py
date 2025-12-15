@@ -305,36 +305,56 @@ class CameraClient:
             
             self.logger.debug(f"[LOGIN] Sent burst of 3 packets to {self.ip}:{dest_port}")
             
-            # Wait for response
+            # Wait for response with loop to handle potential delayed LAN search responses (Issue #74)
             start_time = time.time()
-            data, addr = self.sock.recvfrom(2048)
-            duration = time.time() - start_time
+            timeout = self.sock.gettimeout() or 5.0
             
-            self.logger.debug(f"[LOGIN] Received {len(data)} bytes from {addr} in {duration:.2f}s")
-            self.logger.debug(f"[LOGIN] Response hex: {data.hex()}")
+            while time.time() - start_time < timeout:
+                try:
+                    data, addr = self.sock.recvfrom(2048)
+                    duration = time.time() - start_time
+                    self.logger.debug(f"[LOGIN] Received {len(data)} bytes from {addr} in {duration:.2f}s")
 
-            # Unwrap
-            response = self.pppp.unwrap_pppp(data)
-            
-            # FIX #24: Accept both 0x01 and 0x04 as valid login responses
-            if response['subcommand'] in [0x01, 0x04]:
-                self.logger.info(
-                    f"[LOGIN] ✓ SUCCESS on port {dest_port} "
-                    f"(Subcommand: 0x{response['subcommand']:02X})"
-                )
-                self._set_state(CameraState.AUTHENTICATED, f"port {dest_port}")
-                self.port = dest_port  # Update port for future communications
+                    # Unwrap
+                    try:
+                        response = self.pppp.unwrap_pppp(data)
+                    except Exception as e:
+                        self.logger.warning(f"[LOGIN] Unwrappable packet received: {e}")
+                        continue
 
-                # Sync PPPP sequence so next packet (heartbeat) continues from login sequence
-                self.pppp.reset_sequence(self.artemis_seq)
+                    # Check for LAN Search Response (0x41) and ignore it (Fix #74)
+                    if response.get('outer_type') == 0x41:
+                        self.logger.warning("[LOGIN] Ignoring delayed LAN Search Response (0x41) - clearing buffer...")
+                        continue
 
-                return True
-            else:
-                self.logger.warning(
-                    f"[LOGIN] Unexpected subcommand: 0x{response['subcommand']:02X}"
-                )
-                self.logger.debug(f"[LOGIN] Full response: {response}")
-                return False
+                    self.logger.debug(f"[LOGIN] Response hex: {data.hex()}")
+
+                    # FIX #24: Accept both 0x01 and 0x04 as valid login responses
+                    if response['subcommand'] in [0x01, 0x04]:
+                        self.logger.info(
+                            f"[LOGIN] ✓ SUCCESS on port {dest_port} "
+                            f"(Subcommand: 0x{response['subcommand']:02X})"
+                        )
+                        self._set_state(CameraState.AUTHENTICATED, f"port {dest_port}")
+                        self.port = dest_port  # Update port for future communications
+
+                        # Sync PPPP sequence so next packet (heartbeat) continues from login sequence
+                        self.pppp.reset_sequence(self.artemis_seq)
+
+                        return True
+                    else:
+                        self.logger.warning(
+                            f"[LOGIN] Unexpected subcommand: 0x{response['subcommand']:02X}"
+                        )
+                        self.logger.debug(f"[LOGIN] Full response: {response}")
+                        # Don't return False immediately, keep listening in case valid packet is behind this one
+                        continue
+
+                except socket.timeout:
+                    break
+
+            self.logger.warning(f"[LOGIN] Timeout or no valid login response on port {dest_port}")
+            return False
 
         except socket.timeout:
             self.logger.warning(f"[LOGIN] Timeout on port {dest_port}")
