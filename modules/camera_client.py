@@ -279,13 +279,8 @@ class CameraClient:
                 self.artemis_seq
             )
 
-            # Validation
-            if len(packet) != 53:
-                self.logger.error(f"[LOGIN] Invalid packet size: {len(packet)} (expected 53)")
-                self.logger.error(f"[LOGIN] Hex dump: {packet.hex()}")
-                # Don't fail immediately, try sending anyway, but log heavily
-
-            self.logger.debug(f"[LOGIN] Packet size: {len(packet)} bytes (must be 53)")
+            # FIX #81: Removed strict 53-byte check to support variable length tokens
+            self.logger.debug(f"[LOGIN] Packet size: {len(packet)} bytes")
             self.logger.debug(f"[LOGIN] Packet hex: {packet.hex()}")
             self.logger.debug(f"[LOGIN] PPPP Header: {packet[0:4].hex()}")
             self.logger.debug(f"[LOGIN] ARTEMIS Wrapper: {packet[4:8].hex()}")
@@ -329,8 +324,28 @@ class CameraClient:
 
                     self.logger.debug(f"[LOGIN] Response hex: {data.hex()}")
 
-                    # FIX #24: Accept both 0x01 and 0x04 as valid login responses
-                    if response['subcommand'] in [0x01, 0x04]:
+                    # FIX #81: Accept 0x03 (Login Echo) as valid response
+                    # Also 0x01 (Discovery ACK) and 0x04 (Login ACK)
+                    if response['subcommand'] in [0x01, 0x03, 0x04]:
+                        # For 0x03, we should validate the payload
+                        if response['subcommand'] == 0x03:
+                             payload = response.get('payload', b'')
+                             # Find JSON start
+                             idx = payload.find(b'{')
+                             if idx != -1:
+                                 try:
+                                     json_str = payload[idx:].decode('utf-8', errors='ignore')
+                                     # Stop at null byte if present
+                                     json_str = json_str.split('\x00')[0]
+                                     data_obj = json.loads(json_str)
+                                     self.logger.info(f"[LOGIN] Response Payload: {data_obj}")
+                                     if data_obj.get('ret') == 0:
+                                          self.logger.info("[LOGIN] JSON 'ret': 0 confirmed success")
+                                     else:
+                                          self.logger.warning(f"[LOGIN] JSON 'ret' is {data_obj.get('ret')}")
+                                 except Exception as e:
+                                     self.logger.warning(f"[LOGIN] Failed to parse response JSON: {e}")
+
                         self.logger.info(
                             f"[LOGIN] ✓ SUCCESS on port {dest_port} "
                             f"(Subcommand: 0x{response['subcommand']:02X})"
