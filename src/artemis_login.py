@@ -4,7 +4,7 @@ import time
 import logging
 import asyncio
 import json
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, Union
 
 # Configure logger
 logger = logging.getLogger("ArtemisLogin")
@@ -21,7 +21,7 @@ class ArtemisLoginHandler:
     Phase 4: Post-Login Setup (Heartbeat)
     """
 
-    def __init__(self, target_ip: str, target_port: int = 40611, ble_token: str = "admin", ble_sequence: int = 1):
+    def __init__(self, target_ip: str, target_port: int = 40611, ble_token: str = "admin", ble_sequence: Union[int, bytes] = 1):
         self.target_ip = target_ip
         self.target_port = target_port
         self.ble_token = ble_token
@@ -263,8 +263,17 @@ class ArtemisLoginHandler:
         # Version: 0x02000000 (LE) -> 02 00 00 00
         version = b'\x02\x00\x00\x00'
 
-        # Seq Mystery: 01 00 00 00 (0x00000001 LE).
-        seq_mystery = struct.pack('<I', self.ble_sequence)
+        # Seq Mystery: 8 bytes (padded) - Fix for Issue #87
+        if isinstance(self.ble_sequence, bytes):
+            if len(self.ble_sequence) == 4:
+                seq_mystery = self.ble_sequence + b'\x00\x00\x00\x00'
+            else:
+                seq_mystery = self.ble_sequence.ljust(8, b'\x00')[:8]
+        elif isinstance(self.ble_sequence, int):
+            seq_mystery = struct.pack('<Q', self.ble_sequence)
+        else:
+             # Fallback
+            seq_mystery = b'\x00' * 8
 
         # Token: "admin"
         token_str = self.ble_token

@@ -30,10 +30,10 @@ class ArtemisPacketBuilder:
         Layer 3: Protocol Identifier (8 bytes)
         └─ Offset 8-15: "ARTEMIS\0"       Protocol string with null terminator
 
-        Layer 4: Command Structure (8 bytes) - FIX #85
+        Layer 4: Command Structure (12 bytes) - FIX #85
         ├─ Offset 16-19: 0x02000000 (LE) Command ID = 0x02 (Login)
-        ├─ Offset 20-23: [BLE Seq]        Sequence from BLE (4 bytes)
-        └─ Offset 24-27: [Token Len]      Token Length (4 bytes LE)
+        ├─ Offset 20-27: [BLE Seq]        Sequence from BLE (8 bytes) - FIX #87
+        └─ Offset 28-31: [Token Len]      Token Length (4 bytes LE)
 
         Layer 5: Token Payload (Variable bytes)
         └─ Token bytes (UTF-8 encoded string)
@@ -57,26 +57,30 @@ class ArtemisPacketBuilder:
             token_payload += b'\x00'
             payload_len = len(token_payload)
 
-            # --- Layer 4: Command Structure (12 bytes) ---
+            # --- Layer 4: Command Structure ---
             # 0x02000000 (LE) -> Command ID 2 (4 bytes)
             cmd_id = struct.pack('<I', 2)
 
-            # Sequence (4 bytes) - From BLE or fallback
-            if ble_seq and len(ble_seq) == 4:
-                seq_field = ble_seq
+            # Sequence (8 bytes) - FIX #87
+            # From BLE (usually 4 bytes) padded to 8 bytes.
+            # Assuming BLE seq is the lower part (Little Endian perspective) or just first 4 bytes.
+            if ble_seq and isinstance(ble_seq, bytes):
+                if len(ble_seq) == 4:
+                    seq_field = ble_seq + b'\x00\x00\x00\x00'
+                elif len(ble_seq) == 8:
+                    seq_field = ble_seq
+                else:
+                    seq_field = ble_seq.ljust(8, b'\x00')[:8]
             else:
-                # Fallback to previous logic or simple default if not provided
-                # Previous logic: subcmd(04) + prefix(00 01 00)
-                # But Issue #85 says this should be the BLE sequence
-                # Default to 0 if not provided (should be provided!)
-                seq_field = b'\x00\x00\x00\x00'
+                # Default to 0 if not provided
+                seq_field = b'\x00' * 8
                 if ble_seq:
                      logger.warning(f"[PACKET BUILDER] Invalid BLE sequence length: {len(ble_seq)}")
 
             # Token Length (4 bytes LE)
             len_field = struct.pack('<I', payload_len)
 
-            # Combine Layer 4: Command (4) + Sequence (4) + Length (4) = 12 bytes
+            # Combine Layer 4: Command (4) + Sequence (8) + Length (4) = 16 bytes
             layer4 = cmd_id + seq_field + len_field
 
             # --- Layer 3: Protocol Identifier (8 bytes) ---
