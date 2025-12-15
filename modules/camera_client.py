@@ -297,9 +297,9 @@ class CameraClient:
                 self.logger.info("[INIT] ✓ Dual-phase wakeup sent successfully")
                 
                 # FIX #48: Shorter wait (1s) before login
-                # Android app shows ~1.7s delay between init and login
-                self.logger.info("[INIT] Waiting 2.0s for camera UDP stack initialization...")
-                time.sleep(2.0)
+                # Android app shows ~0.5s delay between init and login
+                self.logger.info("[INIT] Waiting 0.5s for camera UDP stack initialization...")
+                time.sleep(0.5)
                 
                 return True
                 
@@ -327,6 +327,17 @@ class CameraClient:
 
             self.logger.info(f"[LOGIN] Sending to {self.ip}:{dest_port} (Seq: {self.artemis_seq})")
             
+            # FIX #89: Drain socket buffer to remove delayed LAN Search responses (0x41)
+            # which can cause race conditions.
+            try:
+                self.sock.settimeout(0.1)
+                while True:
+                    _ = self.sock.recv(4096)
+            except (socket.timeout, BlockingIOError, OSError):
+                pass
+            finally:
+                self.sock.settimeout(5.0)
+
             # FIX #48: Send login burst (3 packets like Android app)
             for attempt in range(3):
                 self.sock.sendto(packet, (self.ip, dest_port))

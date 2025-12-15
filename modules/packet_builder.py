@@ -80,10 +80,10 @@ class ArtemisPacketBuilder:
             # --- Layer 3: Protocol Identifier (8 bytes) ---
             layer3 = b'ARTEMIS\x00'
 
-            # --- Layer 2: ARTEMIS Wrapper (6 bytes) ---
-            # FIX #78: Subcommand 0x03 (Login Request)
-            # d1 03 [Seq 4 bytes LE]
-            seq_bytes = struct.pack('<I', sequence)
+            # --- Layer 2: ARTEMIS Wrapper (4 bytes) ---
+            # FIX #89: Inner Header must be 4 bytes Big Endian
+            # d1 03 [Seq 2 bytes BE]
+            seq_bytes = struct.pack('>H', sequence)
             layer2 = b'\xd1\x03' + seq_bytes
 
             # --- Layer 1: PPPP Header ---
@@ -93,8 +93,8 @@ class ArtemisPacketBuilder:
             total_payload = layer2 + layer3 + layer4 + token_payload
             length_val = len(total_payload)
 
-            # Fixed to Little Endian Length per protocol spec
-            header = b'\xf1\xd0' + struct.pack('<H', length_val)
+            # FIX #89: Big Endian Length per protocol analysis hex dump
+            header = b'\xf1\xd0' + struct.pack('>H', length_val)
 
             packet = header + total_payload
 
