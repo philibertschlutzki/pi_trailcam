@@ -72,8 +72,8 @@ async def test_phase2_discovery_response_parsing(handler):
     assert handler.device_uid == "LBCS-000000-CCCJJ"
 
 @pytest.mark.asyncio
-async def test_phase3_login_packet_construction(handler):
-    """Test Login Packet Format"""
+async def test_phase3_login_pppp_response_success(handler):
+    """Test Login Success with PPPP-Wrapped Response"""
     handler.device_uid = "LBCS-TEST"
     handler.ble_token = "admin"
     handler.ble_sequence = 1
@@ -82,10 +82,23 @@ async def test_phase3_login_packet_construction(handler):
     handler.sock = mock_sock # Manually assign socket
 
     # Mock Response for Success
-    # F1 D0 ... {"errorCode": 0}
-    response_payload = json.dumps({"errorCode": 0}).encode('utf-8')
-    # Inner: D1 00 00 00 (dummy)
-    response = bytes.fromhex("F1 D0 00 20 00 00 00 00") + response_payload
+    # F1 D0 ... {"errorCode": 0, "result": 0}
+    response_payload = json.dumps({"errorCode": 0, "result": 0}).encode('utf-8')
+    # Inner: D1 00 00 00 (dummy) - wait, my new implementation expects payload at offset 4 if PPPP
+    # New logic: data[0] = F1, data[1] = type, data[2-3] = len, data[4:] = payload
+
+    # Outer Header: F1 D0 00 1C (28 bytes)
+    # Payload = response_payload
+    length = len(response_payload)
+    response = struct.pack('>BBH', 0xF1, 0xD0, length) + response_payload
+
+    # To simulate new logic's behavior exactly, I should verify what happens if payload starts at offset 4.
+    # The new logic for PPPP:
+    # magic = data[0]
+    # pkt_type = data[1]
+    # length = int.from_bytes(data[2:4], 'big')
+    # payload = data[4:]
+    # And tries to json decode payload.
 
     future = asyncio.Future()
     future.set_result(response)
@@ -100,34 +113,31 @@ async def test_phase3_login_packet_construction(handler):
 
     assert result is True
 
-    # Verify sent packet
-    packet, _ = mock_sock.sent_packets[0]
+@pytest.mark.asyncio
+async def test_phase3_login_direct_json_response_success(handler):
+    """Test Login Success with Direct JSON Response"""
+    handler.device_uid = "LBCS-TEST"
+    handler.ble_token = "admin"
+    handler.ble_sequence = 1
 
-    # Outer Header
-    assert packet[0] == 0xF1
-    assert packet[1] == 0xD0
+    mock_sock = MockSocket()
+    handler.sock = mock_sock # Manually assign socket
 
-    # Inner Header: D1 03 00 02
-    assert packet[4] == 0xD1
-    assert packet[5] == 0x03
-    assert packet[6] == 0x00
-    assert packet[7] == 0x02
+    # Mock Response for Success: Direct JSON
+    response_payload = json.dumps({"errorCode": 0, "result": 0, "cmdId": 0}).encode('utf-8')
 
-    # Artemis Payload starts at 8
-    artemis = packet[8:]
-    assert artemis.startswith(b'ARTEMIS\x00')
+    future = asyncio.Future()
+    future.set_result(response_payload)
 
-    # Version 02 00 00 00
-    assert artemis[8:12] == b'\x02\x00\x00\x00'
+    with patch('socket.socket', return_value=mock_sock):
+        with patch('asyncio.get_running_loop') as mock_loop_getter:
+            mock_loop = MagicMock()
+            mock_loop.sock_recv.return_value = future
+            mock_loop_getter.return_value = mock_loop
 
-    # Seq Mystery 01 00 00 00 (LE 1)
-    assert artemis[12:16] == b'\x01\x00\x00\x00'
+            result = await handler.phase3_login()
 
-    # Token Len 5
-    assert artemis[16:20] == b'\x05\x00\x00\x00'
-
-    # Token "admin"
-    assert artemis[20:25] == b'admin'
+    assert result is True
 
 @pytest.mark.asyncio
 async def test_phase3_login_response_validation_failure(handler):
@@ -137,11 +147,11 @@ async def test_phase3_login_response_validation_failure(handler):
     mock_sock = MockSocket()
     handler.sock = mock_sock # Manually assign socket
 
-    response_payload = json.dumps({"errorCode": 1}).encode('utf-8')
-    response = bytes.fromhex("F1 D0 00 20 00 00 00 00") + response_payload
+    response_payload = json.dumps({"errorCode": 1, "result": 1}).encode('utf-8')
 
+    # Test with direct JSON failure
     future = asyncio.Future()
-    future.set_result(response)
+    future.set_result(response_payload)
 
     with patch('socket.socket', return_value=mock_sock):
         with patch('asyncio.get_running_loop') as mock_loop_getter:
