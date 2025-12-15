@@ -20,48 +20,45 @@ def test_packet_structure():
         print(f"FAILED: Exception during build: {e}")
         return False
 
-    print(f"Packet Length: {len(packet)} (Expected: 53)")
+    print(f"Packet Length: {len(packet)}")
     print(f"Packet Hex: {packet.hex()}")
 
-    # 1. Size Check
-    if len(packet) != 53:
-        print("FAILED: Packet size is not 53 bytes")
+    # 1. Header Check (F1 D0 [Length BE])
+    if packet[0] != 0xF1 or packet[1] != 0xD0:
+        print(f"FAILED: Header mismatch. Got {packet[0:2].hex()}")
         return False
 
-    # 2. Header Check (F1 D0 00 31)
-    if packet[0:4] != b'\xf1\xd0\x00\x31':
-        print(f"FAILED: Header mismatch. Got {packet[0:4].hex()}")
+    length_be = struct.unpack('>H', packet[2:4])[0]
+    expected_len = len(packet) - 4
+    if length_be != expected_len:
+        print(f"FAILED: Length mismatch. Header says {length_be}, actual payload is {expected_len}")
         return False
 
-    # 3. Subcommand Check (Byte 20 should be 0x04)
-    # 0-3 Header, 4-7 Wrapper, 8-15 Proto, 16-19 Cmd, 20 Subcmd
-    subcmd = packet[20]
-    if subcmd != 0x04:
-        print(f"FAILED: Subcommand is 0x{subcmd:02X} (Expected 0x04)")
+    # 2. Inner Header Check (D1 03 [Seq BE])
+    # Should be 4 bytes
+    inner = packet[4:8]
+    if inner[0] != 0xD1 or inner[1] != 0x03:
+         print(f"FAILED: Inner Header mismatch. Got {inner[0:2].hex()}")
+         return False
+
+    seq_be = struct.unpack('>H', inner[2:4])[0]
+    if seq_be != sequence:
+        print(f"FAILED: Sequence mismatch. Got {seq_be}, expected {sequence}")
+        return False
+
+    # 3. Payload Check
+    # "ARTEMIS\x00"
+    if packet[8:16] != b'ARTEMIS\x00':
+        print("FAILED: Protocol ID mismatch")
         return False
 
     # 4. Token Check
-    # Token "85087127" -> Base64 "ODUwODcxMjc="
-    # Should be at offset 28
-    # 28-39 should match Base64
-    # 40-52 should be nulls
-
-    expected_b64 = base64.b64encode(token.encode('utf-8'))
-    print(f"Expected Base64: {expected_b64}")
-
-    token_part = packet[28:53]
-    print(f"Token Part Hex: {token_part.hex()}")
-    print(f"Token Part Ascii: {token_part}")
-
-    if not token_part.startswith(expected_b64):
-        print("FAILED: Token part does not start with expected Base64")
-        return False
-
-    # Check padding
-    padding_len = 25 - len(expected_b64)
-    expected_padding = b'\x00' * padding_len
-    if token_part[len(expected_b64):] != expected_padding:
-        print("FAILED: Token padding is incorrect")
+    # Layer 4 (12 bytes) + Token
+    # Layer 4 starts at offset 16
+    # Token starts at offset 28
+    token_payload = packet[28:]
+    if token_payload.decode('utf-8') != token:
+        print(f"FAILED: Token mismatch. Got {token_payload}")
         return False
 
     print("SUCCESS: Packet structure verification passed!")
