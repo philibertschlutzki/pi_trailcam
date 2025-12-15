@@ -146,7 +146,7 @@ class PPPPProtocol:
         seq = self._increment_sequence()
         inner = PPPPInnerHeader(
             session_type=0xD1,  # Inner type is D1
-            subcommand=0x00,
+            subcommand=0x03,  # Subcommand 0x03 = Login
             sequence=seq
         )
         inner_bytes = inner.to_bytes()

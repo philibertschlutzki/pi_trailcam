@@ -38,7 +38,7 @@ class LoginPhase:
             artemis_payload = self.artemis_login.build()
             packet = self.pppp.wrap_login(artemis_payload)
 
-            logger.debug(f"[LOGIN] Sending login packet: {packet[:20].hex()}...")
+            logger.debug(f"[LOGIN] Sending login packet (Full Hex): {packet.hex()}")
             sock.sendto(packet, (self.camera_ip, 40611))
 
             loop = asyncio.get_running_loop()
