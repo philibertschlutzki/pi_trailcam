@@ -409,7 +409,37 @@ class CameraClient:
                 self.logger.info(f"[CONNECT] Sending LAN Search (0x30) to 32108...")
                 self.sock.sendto(lan_search, ('255.255.255.255', 32108))
                 self.sock.sendto(lan_search, (self.ip, 32108)) # Unicast too
-                time.sleep(0.1)
+
+                # FIX #69: Listen for response (0xF141) from camera.
+                # Camera responds from 40611, confirming it is awake and on that port.
+                # If we don't wait/listen, we might send Init packets too early or to wrong port.
+                try:
+                    # Short timeout for discovery response
+                    self.sock.settimeout(2.0)
+                    data, addr = self.sock.recvfrom(1024)
+                    self.logger.info(f"[CONNECT] Received LAN Search response from {addr}: {data.hex()}")
+
+                    # Update target ports if response comes from a new/different port
+                    resp_ip, resp_port = addr
+
+                    # If the camera responds, we should prioritize that port
+                    if resp_port not in target_ports:
+                         self.logger.info(f"[CONNECT] Adding discovered port {resp_port} to target list")
+                         target_ports.insert(0, resp_port)
+                    elif resp_port != target_ports[0]:
+                         # Move to front
+                         target_ports.remove(resp_port)
+                         target_ports.insert(0, resp_port)
+                         self.logger.info(f"[CONNECT] Prioritizing discovered port {resp_port}")
+
+                except socket.timeout:
+                    self.logger.debug("[CONNECT] No response to LAN Search (normal if camera asleep or on different network segment)")
+                except Exception as e:
+                    self.logger.warning(f"[CONNECT] Error listening for LAN Search response: {e}")
+                finally:
+                    # Restore default timeout
+                    self.sock.settimeout(config.ARTEMIS_LOGIN_TIMEOUT)
+
             except Exception as e:
                 self.logger.warning(f"[CONNECT] Failed to send LAN Search: {e}")
 
