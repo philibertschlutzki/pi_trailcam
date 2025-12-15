@@ -106,6 +106,7 @@ class CameraClient:
     PREFERRED_SOURCE_PORT = 5085
     DISCOVERY_PORT = 32108
     DEFAULT_LOGIN_PORT = 40611
+    FALLBACK_LOGIN_PORT = 59130
     DISCOVERY_TIMEOUT = 2.0
 
     def __init__(self, camera_ip=None, logger=None):
@@ -274,6 +275,55 @@ class CameraClient:
 
         return None
 
+    def send_with_logging(self, payload: bytes, addr: Tuple[str, int]):
+        """Sende UDP Packet mit vollständiger Diagnose"""
+        try:
+            log_entry = {
+                'timestamp': time.time(),
+                'action': 'SEND',
+                'destination': f"{addr[0]}:{addr[1]}",
+                'payload_len': len(payload),
+                'payload_hex': payload.hex(),
+                'socket_timeout': self.sock.gettimeout() if self.sock else None
+            }
+
+            self.logger.info(f"[UDP SEND] {addr[0]}:{addr[1]} | {payload[:16].hex()}... | {len(payload)} bytes")
+            self.logger.debug(f"Full packet: {json.dumps(log_entry, indent=2)}")
+
+            bytes_sent = self.sock.sendto(payload, addr)
+            self.logger.debug(f"[UDP OK] Sent {bytes_sent} bytes")
+            return bytes_sent
+        except OSError as e:
+            self.logger.error(f"[UDP ERROR] {e}")
+            raise
+
+    def recv_with_logging(self, timeout: float = 5.0) -> Optional[bytes]:
+        """Empfange UDP Packet mit Timeout-Logging"""
+        if not self.sock:
+             return None
+
+        self.sock.settimeout(timeout)
+        start_time = time.time()
+
+        try:
+            payload, addr = self.sock.recvfrom(2048)
+            elapsed = time.time() - start_time
+
+            self.logger.info(f"[UDP RECV] {addr[0]}:{addr[1]} | {payload[:16].hex()}... | {len(payload)} bytes | {elapsed:.3f}s")
+            self.logger.debug(f"Full response: {payload.hex()}")
+
+            return payload, addr
+
+        except socket.timeout:
+            elapsed = time.time() - start_time
+            self.logger.warning(f"[UDP TIMEOUT] No response after {elapsed:.1f}s")
+            self.logger.info("[UDP ICMP?] Possible ICMP Port Unreachable returned by router")
+            return None, None
+
+        except OSError as e:
+            self.logger.error(f"[UDP RECV ERROR] {e.errno}: {e.strerror}")
+            raise
+
     def _send_init_packets(self, dest_port: int) -> bool:
         """
         FIX #44: Send dual-phase initialization packets (0xE0 + 0xE1).
@@ -285,14 +335,12 @@ class CameraClient:
             with TimeoutContext(self.sock, config.ARTEMIS_LOGIN_TIMEOUT, self.logger):
                 # Phase 1: 0xF1E0 packet
                 init_ping = self.pppp.wrap_init_ping()
-                self.sock.sendto(init_ping, (self.ip, dest_port))
-                self.logger.debug(f"[INIT] Sent 0xE0 packet: {init_ping.hex()}")
+                self.send_with_logging(init_ping, (self.ip, dest_port))
                 time.sleep(0.05)  # 50ms delay
                 
                 # Phase 2: 0xF1E1 packet
                 init_secondary = self.pppp.wrap_init_secondary()
-                self.sock.sendto(init_secondary, (self.ip, dest_port))
-                self.logger.debug(f"[INIT] Sent 0xE1 packet: {init_secondary.hex()}")
+                self.send_with_logging(init_secondary, (self.ip, dest_port))
                 
                 self.logger.info("[INIT] ✓ Dual-phase wakeup sent successfully")
                 
@@ -340,49 +388,48 @@ class CameraClient:
 
             # FIX #48: Send login burst (3 packets like Android app)
             for attempt in range(3):
-                self.sock.sendto(packet, (self.ip, dest_port))
+                self.send_with_logging(packet, (self.ip, dest_port))
                 if attempt < 2:
                     time.sleep(0.1)
             
             # Wait for response
-            with TimeoutContext(self.sock, 5.0, self.logger):
-                start_time = time.time()
-                while time.time() - start_time < 5.0:
-                    try:
-                        data, addr = self.sock.recvfrom(2048)
+            start_time = time.time()
+            while time.time() - start_time < 5.0:
+                data_tuple = self.recv_with_logging(timeout=5.0 - (time.time() - start_time))
+                if not data_tuple or not data_tuple[0]:
+                    break
 
-                        # Unwrap
-                        try:
-                            response = self.pppp.unwrap_pppp(data)
-                        except Exception:
-                            continue
+                data, addr = data_tuple
 
-                        # Ignore delayed LAN Search Response (0x41)
-                        if response.get('outer_type') == 0x41:
-                            self.logger.debug("[LOGIN] Ignoring delayed LAN Search Response")
-                            continue
+                # Unwrap
+                try:
+                    response = self.pppp.unwrap_pppp(data)
+                except Exception:
+                    continue
 
-                        # Check for Success (0x01, 0x03, 0x04)
-                        if response['subcommand'] in [0x01, 0x03, 0x04]:
-                            self.logger.info(
-                                f"[LOGIN] ✓ SUCCESS on port {dest_port} "
-                                f"(Subcommand: 0x{response['subcommand']:02X})"
-                            )
+                # Ignore delayed LAN Search Response (0x41)
+                if response.get('outer_type') == 0x41:
+                    self.logger.debug("[LOGIN] Ignoring delayed LAN Search Response")
+                    continue
 
-                            # Validate JSON for 0x03
-                            if response['subcommand'] == 0x03:
-                                 payload = response.get('payload', b'')
-                                 self.logger.debug(f"[LOGIN] Payload: {payload}")
+                # Check for Success (0x01, 0x03, 0x04)
+                if response['subcommand'] in [0x01, 0x03, 0x04]:
+                    self.logger.info(
+                        f"[LOGIN] ✓ SUCCESS on port {dest_port} "
+                        f"(Subcommand: 0x{response['subcommand']:02X})"
+                    )
 
-                            self._set_state(CameraState.AUTHENTICATED, f"port {dest_port}")
-                            self.port = dest_port
+                    # Validate JSON for 0x03
+                    if response['subcommand'] == 0x03:
+                            payload = response.get('payload', b'')
+                            self.logger.debug(f"[LOGIN] Payload: {payload}")
 
-                            # Sync PPPP sequence
-                            self.pppp.reset_sequence(self.artemis_seq)
-                            return True
+                    self._set_state(CameraState.AUTHENTICATED, f"port {dest_port}")
+                    self.port = dest_port
 
-                    except socket.timeout:
-                        break
+                    # Sync PPPP sequence
+                    self.pppp.reset_sequence(self.artemis_seq)
+                    return True
 
             self.logger.warning(f"[LOGIN] Timeout on port {dest_port}")
             return False
@@ -438,13 +485,21 @@ class CameraClient:
 
             self.pppp.reset_sequence(1)
 
-            # 4. Login (No multi-port probing, just the target port)
+            # 4. Login (With Fallback)
             if self._try_login_on_port(target_port):
                 self.start_heartbeat()
                 return True
-            else:
-                self.logger.warning(f"[CONNECT] Login failed on port {target_port}")
-                self._socket_force_close()
+
+            # Fallback to Port 59130 if 40611 fails
+            if target_port == self.DEFAULT_LOGIN_PORT:
+                self.logger.warning(f"[CONNECT] Login failed on {target_port}. Attempting fallback to {self.FALLBACK_LOGIN_PORT}...")
+                if self._try_login_on_port(self.FALLBACK_LOGIN_PORT):
+                    self.logger.info(f"[CONNECT] ✓ Fallback successful on port {self.FALLBACK_LOGIN_PORT}")
+                    self.start_heartbeat()
+                    return True
+
+            self.logger.warning(f"[CONNECT] Login failed on port {target_port} and fallback")
+            self._socket_force_close()
 
             # Backoff
             backoff = config.RETRY_BACKOFF_SEQUENCE[

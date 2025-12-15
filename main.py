@@ -4,12 +4,21 @@ import sys
 import time
 
 # Configure logging
+import argparse
+
+parser = argparse.ArgumentParser(description="KJK230 Camera Controller")
+parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+args, unknown = parser.parse_known_args()
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG if args.debug else logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger("Main")
+
+if args.debug:
+    logger.info("Debug mode enabled")
 
 from modules.ble_manager import BLEManager
 from modules.wifi_manager import WiFiManager

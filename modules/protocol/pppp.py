@@ -130,6 +130,40 @@ class PPPPProtocol:
         logger.debug(f"[PPPP] wrap_discovery: seq={seq}, length={total_len}, payload={payload.hex()}")
         return packet
 
+    def validate_packet(self, packet: bytes) -> bool:
+        """
+        Validate a PPPP packet before sending.
+
+        Checks:
+        - Magic 0xF1
+        - PPPP Header Length
+        - Artemis Signature (if present)
+        - Packet Length Consistency
+        """
+        if len(packet) < 4:
+            raise ValueError("Packet too short")
+
+        # Check Magic
+        if packet[0] != 0xF1:
+             raise ValueError(f"Invalid PPPP Header: {packet[:2].hex()}")
+
+        # Parse Length Field
+        pkt_len = (packet[2] << 8) | packet[3]
+        if len(packet) != pkt_len + 4:
+            raise ValueError(f"Length mismatch: header={pkt_len}, actual={len(packet)-4}")
+
+        # Check Artemis Signature (only for Login packets typically, but general check)
+        # Login (0xD0) usually has Artemis signature starting at offset 8 (Header 4 + Inner 4)
+        if packet[1] == 0xD0: # Login Type
+             if len(packet) >= 16:
+                 # Check Signature at offset 8 (Header=4 + Inner=4 = 8)
+                 sig = packet[8:16]
+                 # Must be ARTEMIS\x00
+                 if sig != b'ARTEMIS\x00':
+                      raise ValueError(f"Invalid Artemis Signature: {sig.hex()}")
+
+        return True
+
     def wrap_login(self, artemis_payload: bytes) -> bytes:
         """
         Wraps Artemis login payload with 0xF1D0 outer type.
@@ -160,6 +194,10 @@ class PPPPProtocol:
         )
 
         packet = outer.to_bytes() + inner_bytes + artemis_payload
+
+        # Validation
+        self.validate_packet(packet)
+
         logger.debug(f"[PPPP] wrap_login: outer=0xD0, seq={seq}, length={total_len}")
         return packet
 
