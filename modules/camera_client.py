@@ -4,10 +4,13 @@ import logging
 import struct
 import threading
 import subprocess
+import base64
+import json
 from enum import Enum, auto
 from typing import Optional, Tuple
 import config
 from modules.protocol.pppp import PPPPProtocol
+from modules.packet_builder import ArtemisPacketBuilder
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -91,22 +94,20 @@ class TimeoutContext:
 class CameraClient:
     """
     FIX #48: UDP Client with direct login (no discovery phase).
+    OPTIMIZED: Port Discovery and Fixed Source Port (Fix #91)
     
     Connection Flow (Android App Verified):
-    Phase 1: Initialization (0xE0 + 0xE1) - Dual-phase wake sequence
-    Phase 2: Login (0xD0) - Direct authentication with BLE token
-    
-    REMOVED: Discovery phase (0xD1) - Camera ignores these packets!
-    
-    Critical Discovery from Issue #48:
-    - Discovery packets (0xF1D1) timeout on all ports
-    - Camera never responds to discovery
-    - tcpdump shows Android app sends 0xF1D0 (LOGIN) directly after init
-    - No 0xF1D1 packets in successful connection flow
-    
-    Conclusion: The "discovery" phase is actually the login phase.
-    The camera expects LOGIN (0xD0) immediately after init.
+    Phase 1: LAN Search (0x30) -> Camera responds from Port 40611
+    Phase 2: Initialization (0xE0 + 0xE1) - Dual-phase wake sequence to discovered port
+    Phase 3: Login (0xD0) - Direct authentication with BLE token to discovered port
     """
+
+    # Constants
+    PREFERRED_SOURCE_PORT = 5085
+    DISCOVERY_PORT = 32108
+    DEFAULT_LOGIN_PORT = 40611
+    FALLBACK_LOGIN_PORT = 59130
+    DISCOVERY_TIMEOUT = 2.0
 
     def __init__(self, camera_ip=None, logger=None):
         self.ip = camera_ip or config.CAM_IP
@@ -124,13 +125,15 @@ class CameraClient:
         self.active_port = None
         self.login_attempts = 0
         self.max_login_attempts = 3
+        self.login_port = None  # Stores the discovered port
 
         # FIX #42: Check firewall on init
         check_firewall(self.logger)
 
         # PPPP Integration
         self.pppp = PPPPProtocol(logger=self.logger)
-        self.artemis_seq = 0x001B  # Fallback if BLE sequence not available
+        # FIX #59: Initialize Artemis sequence to 1 (start of sequence counter, matches Android log)
+        self.artemis_seq = 1
 
     @property
     def state(self):
@@ -155,21 +158,13 @@ class CameraClient:
             self.sequence_bytes = sequence if use_ble_dynamic else None
             self.token_timestamp = time.time()
             
-            # FIX #23: Parse sequence bytes and set artemis_seq
-            if sequence and len(sequence) >= 4:
-                # Sequence is 4 bytes, little-endian
-                self.artemis_seq = struct.unpack('<I', sequence[:4])[0]
-                self.logger.info(
-                    f"[CREDENTIALS] Token={token[:20]}..., "
-                    f"Sequence={sequence.hex().upper()}, "
-                    f"Artemis Seq=0x{self.artemis_seq:04X} ({self.artemis_seq})"
-                )
-            else:
-                self.logger.warning(
-                    f"[CREDENTIALS] Token={token[:20]}..., "
-                    f"Sequence={sequence.hex().upper() if sequence else 'NONE'}, "
-                    f"Using fallback Artemis Seq=0x{self.artemis_seq:04X}"
-                )
+            # FIX #59: We now start artemis_seq at 1 and increment.
+            self.logger.info(
+                f"[CREDENTIALS] Token={token[:20]}..., "
+                f"Sequence={sequence.hex().upper() if sequence else 'NONE'}"
+            )
+            # Reset Artemis Seq to 1 on new credentials
+            self.artemis_seq = 1
 
     def _socket_force_close(self):
         if self.sock:
@@ -180,9 +175,10 @@ class CameraClient:
             finally:
                 self.sock = None
 
-    def _create_socket(self, port: int, timeout: Optional[float] = None) -> bool:
+    def _create_socket(self, timeout: Optional[float] = None, use_fixed_port: bool = True) -> bool:
         """
         Creates and binds the UDP socket.
+        Uses fixed port 5085 if available (like TrailCam Go), falls back to ephemeral.
         """
         # FIX #42: Explicit Interface Binding
         bind_ip = '0.0.0.0'
@@ -193,57 +189,165 @@ class CameraClient:
         else:
              self.logger.warning("[SOCKET] Could not detect camera AP IP, binding to 0.0.0.0")
 
-        self.logger.info(
-            f"[SOCKET] Binding local UDP source port {port} → Destination {self.ip}:{self.port} on {bind_ip}"
-        )
         try:
             self._socket_force_close()
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.sock.bind((bind_ip, port))
+
+            try:
+                if hasattr(socket, 'SO_REUSEPORT'):
+                    self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                    self.logger.debug("[SOCKET] SO_REUSEPORT enabled")
+            except Exception:
+                pass
+
+            bind_port = 0
+            if use_fixed_port:
+                try:
+                    self.sock.bind((bind_ip, self.PREFERRED_SOURCE_PORT))
+                    bind_port = self.PREFERRED_SOURCE_PORT
+                    self.logger.info(f"[SOCKET] ✓ Bound to fixed source port {bind_port}")
+                except OSError as e:
+                    self.logger.warning(f"[SOCKET] Cannot bind to fixed port {self.PREFERRED_SOURCE_PORT}: {e}")
+                    self.logger.warning("[SOCKET] Falling back to ephemeral port")
+                    self.sock.bind((bind_ip, 0))
+            else:
+                self.sock.bind((bind_ip, 0))
+
+            # Update active port
+            self.active_port = self.sock.getsockname()[1]
+            if not bind_port:
+                self.logger.info(f"[SOCKET] Using ephemeral source port {self.active_port}")
+
             timeout_val = timeout if timeout is not None else config.ARTEMIS_LOGIN_TIMEOUT
             self.sock.settimeout(timeout_val)
-            self.active_port = port
             return True
+
         except Exception as e:
             self.logger.error(f"[SOCKET] Creation failed: {e}")
             self._socket_force_close()
             return False
 
-    def _send_init_packets(self, dest_port: Optional[int] = None) -> bool:
+    def _discover_login_port(self) -> Optional[int]:
+        """
+        Sends LAN Search and waits for valid response to identify the camera's listening port.
+        Returns the discovered port (e.g., 40611) or None if failed.
+        """
+        self.logger.info(f"[DISCOVERY] Sending LAN Search to {self.ip}:{self.DISCOVERY_PORT}")
+        
+        try:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            lan_search = self.pppp.wrap_lan_search()
+
+            # Send to Broadcast and Unicast
+            self.sock.sendto(lan_search, ('255.255.255.255', self.DISCOVERY_PORT))
+            self.sock.sendto(lan_search, (self.ip, self.DISCOVERY_PORT))
+
+            # Wait for response
+            with TimeoutContext(self.sock, self.DISCOVERY_TIMEOUT, self.logger):
+                start_time = time.time()
+                while time.time() - start_time < self.DISCOVERY_TIMEOUT:
+                    try:
+                        data, addr = self.sock.recvfrom(1024)
+                        src_ip, src_port = addr
+
+                        if len(data) < 8:
+                            continue
+
+                        # We expect 0x41 (LAN Search Response)
+                        # Check magic F1
+                        if data[0] != 0xF1:
+                            continue
+
+                        # Check Outer Type (0x41)
+                        if data[1] == 0x41:
+                             self.logger.info(f"[DISCOVERY] ✓ Received LAN Search Response from {src_ip}:{src_port}")
+                             self.logger.debug(f"[DISCOVERY] Response hex: {data.hex()}")
+                             return src_port
+
+                    except socket.timeout:
+                        break
+                    except Exception as e:
+                        self.logger.warning(f"[DISCOVERY] Packet error: {e}")
+
+        except Exception as e:
+            self.logger.error(f"[DISCOVERY] Failed during discovery: {e}")
+
+        return None
+
+    def send_with_logging(self, payload: bytes, addr: Tuple[str, int]):
+        """Sende UDP Packet mit vollständiger Diagnose"""
+        try:
+            log_entry = {
+                'timestamp': time.time(),
+                'action': 'SEND',
+                'destination': f"{addr[0]}:{addr[1]}",
+                'payload_len': len(payload),
+                'payload_hex': payload.hex(),
+                'socket_timeout': self.sock.gettimeout() if self.sock else None
+            }
+
+            self.logger.info(f"[UDP SEND] {addr[0]}:{addr[1]} | {payload[:16].hex()}... | {len(payload)} bytes")
+            self.logger.debug(f"Full packet: {json.dumps(log_entry, indent=2)}")
+
+            bytes_sent = self.sock.sendto(payload, addr)
+            self.logger.debug(f"[UDP OK] Sent {bytes_sent} bytes")
+            return bytes_sent
+        except OSError as e:
+            self.logger.error(f"[UDP ERROR] {e}")
+            raise
+
+    def recv_with_logging(self, timeout: float = 5.0) -> Optional[bytes]:
+        """Empfange UDP Packet mit Timeout-Logging"""
+        if not self.sock:
+             return None
+
+        self.sock.settimeout(timeout)
+        start_time = time.time()
+
+        try:
+            payload, addr = self.sock.recvfrom(2048)
+            elapsed = time.time() - start_time
+
+            self.logger.info(f"[UDP RECV] {addr[0]}:{addr[1]} | {payload[:16].hex()}... | {len(payload)} bytes | {elapsed:.3f}s")
+            self.logger.debug(f"Full response: {payload.hex()}")
+
+            return payload, addr
+
+        except socket.timeout:
+            elapsed = time.time() - start_time
+            self.logger.warning(f"[UDP TIMEOUT] No response after {elapsed:.1f}s")
+            self.logger.info("[UDP ICMP?] Possible ICMP Port Unreachable returned by router")
+            return None, None
+
+        except OSError as e:
+            self.logger.error(f"[UDP RECV ERROR] {e.errno}: {e.strerror}")
+            raise
+
+    def _send_init_packets(self, dest_port: int) -> bool:
         """
         FIX #44: Send dual-phase initialization packets (0xE0 + 0xE1).
-        
-        From tcpdump_1800_connect.log:
-        17:55:23.927: 0xF1E0 0000 (first init)
-        17:55:23.928: 0xF1E1 0000 (second init)
-        
-        Returns:
-            bool: True if init packets were sent successfully
         """
-        target_port = dest_port if dest_port else self.port
         self._set_state(CameraState.INITIALIZING, "sending UDP init packets")
-        self.logger.info(f"[INIT] Sending dual-phase wakeup to {self.ip}:{target_port}...")
+        self.logger.info(f"[INIT] Sending dual-phase wakeup to {self.ip}:{dest_port}...")
         
         try:
             with TimeoutContext(self.sock, config.ARTEMIS_LOGIN_TIMEOUT, self.logger):
                 # Phase 1: 0xF1E0 packet
                 init_ping = self.pppp.wrap_init_ping()
-                self.sock.sendto(init_ping, (self.ip, target_port))
-                self.logger.debug(f"[INIT] Sent 0xE0 packet: {init_ping.hex()}")
+                self.send_with_logging(init_ping, (self.ip, dest_port))
                 time.sleep(0.05)  # 50ms delay
                 
                 # Phase 2: 0xF1E1 packet
                 init_secondary = self.pppp.wrap_init_secondary()
-                self.sock.sendto(init_secondary, (self.ip, target_port))
-                self.logger.debug(f"[INIT] Sent 0xE1 packet: {init_secondary.hex()}")
+                self.send_with_logging(init_secondary, (self.ip, dest_port))
                 
                 self.logger.info("[INIT] ✓ Dual-phase wakeup sent successfully")
                 
                 # FIX #48: Shorter wait (1s) before login
-                # Android app shows ~1.7s delay between init and login
-                self.logger.info("[INIT] Waiting 1s for camera UDP stack initialization...")
-                time.sleep(1.0)
+                # Android app shows ~0.5s delay between init and login
+                self.logger.info("[INIT] Waiting 0.5s for camera UDP stack initialization...")
+                time.sleep(0.5)
                 
                 return True
                 
@@ -251,174 +355,153 @@ class CameraClient:
             self.logger.warning(f"[INIT] Error during init phase: {e}")
             return True
 
-    def _try_login_on_port(self, dest_port: int, variant: str = 'BLE_DYNAMIC') -> bool:
+    def _try_login_on_port(self, dest_port: int) -> bool:
         """
-        FIX #48: Try login directly on a specific port (no discovery).
-        
-        This replaces the discovery_phase() method.
-        Android app sends LOGIN (0xD0) immediately after init.
-        
-        Args:
-            dest_port: Destination port to try
-            variant: Login variant to use
-            
-        Returns:
-            bool: True if login succeeded
+        Attempt login on the specific port.
         """
-        self.logger.info(f"[LOGIN] Attempting direct login to port {dest_port}...")
+        self.logger.info(f"[LOGIN] Attempting login to {self.ip}:{dest_port} (Source: {self.active_port})...")
         
         if not self.session_token:
             self.logger.error("[LOGIN] No session token available")
             return False
         
         try:
-            # Build Artemis payload
-            artemis_payload = self._build_login_payload(variant)
+            # Build Login Packet
+            packet = ArtemisPacketBuilder.build_login_packet(
+                self.session_token,
+                self.artemis_seq,
+                ble_seq=self.sequence_bytes
+            )
 
-            # Wrap in PPPP with 0xD0 outer type
-            packet = self.pppp.wrap_login(artemis_payload)
-
-            # Verify packet starts with correct bytes
-            if packet[0:2] != b'\xf1\xd0':
-                self.logger.warning(
-                    f"[LOGIN] Packet should start with f1d0 but starts with {packet[0:2].hex()}"
-                )
-
-            self.logger.info(f"[LOGIN] Sending to {self.ip}:{dest_port} (Variant: {variant})")
-            self.logger.debug(f"[LOGIN] Packet hex: {packet.hex()}")
-            self.logger.debug(f"[LOGIN] Artemis Seq: 0x{self.artemis_seq:04X}")
+            self.logger.info(f"[LOGIN] Sending to {self.ip}:{dest_port} (Seq: {self.artemis_seq})")
             
+            # FIX #89: Drain socket buffer to remove delayed LAN Search responses (0x41)
+            # which can cause race conditions.
+            try:
+                self.sock.settimeout(0.1)
+                while True:
+                    _ = self.sock.recv(4096)
+            except (socket.timeout, BlockingIOError, OSError):
+                pass
+            finally:
+                self.sock.settimeout(5.0)
+
             # FIX #48: Send login burst (3 packets like Android app)
             for attempt in range(3):
-                self.sock.sendto(packet, (self.ip, dest_port))
+                self.send_with_logging(packet, (self.ip, dest_port))
                 if attempt < 2:
-                    time.sleep(0.1)  # 100ms between packets
-            
-            self.logger.debug(f"[LOGIN] Sent burst of 3 packets to {self.ip}:{dest_port}")
+                    time.sleep(0.1)
             
             # Wait for response
             start_time = time.time()
-            data, addr = self.sock.recvfrom(2048)
-            duration = time.time() - start_time
-            
-            self.logger.debug(f"[LOGIN] Received {len(data)} bytes from {addr} in {duration:.2f}s")
-            self.logger.debug(f"[LOGIN] Response hex: {data.hex()}")
+            while time.time() - start_time < 5.0:
+                data_tuple = self.recv_with_logging(timeout=5.0 - (time.time() - start_time))
+                if not data_tuple or not data_tuple[0]:
+                    break
 
-            # Unwrap
-            response = self.pppp.unwrap_pppp(data)
-            
-            # FIX #24: Accept both 0x01 and 0x04 as valid login responses
-            if response['subcommand'] in [0x01, 0x04]:
-                self.logger.info(
-                    f"[LOGIN] ✓ SUCCESS on port {dest_port} "
-                    f"(Subcommand: 0x{response['subcommand']:02X}, Variant: {variant})"
-                )
-                self._set_state(CameraState.AUTHENTICATED, f"port {dest_port}")
-                self.port = dest_port  # Update port for future communications
-                return True
-            else:
-                self.logger.warning(
-                    f"[LOGIN] Unexpected subcommand: 0x{response['subcommand']:02X}"
-                )
-                self.logger.debug(f"[LOGIN] Full response: {response}")
-                return False
+                data, addr = data_tuple
 
-        except socket.timeout:
+                # Unwrap
+                try:
+                    response = self.pppp.unwrap_pppp(data)
+                except Exception:
+                    continue
+
+                # Ignore delayed LAN Search Response (0x41)
+                if response.get('outer_type') == 0x41:
+                    self.logger.debug("[LOGIN] Ignoring delayed LAN Search Response")
+                    continue
+
+                # Check for Success (0x01, 0x03, 0x04)
+                if response['subcommand'] in [0x01, 0x03, 0x04]:
+                    self.logger.info(
+                        f"[LOGIN] ✓ SUCCESS on port {dest_port} "
+                        f"(Subcommand: 0x{response['subcommand']:02X})"
+                    )
+
+                    # Validate JSON for 0x03
+                    if response['subcommand'] == 0x03:
+                            payload = response.get('payload', b'')
+                            self.logger.debug(f"[LOGIN] Payload: {payload}")
+
+                    self._set_state(CameraState.AUTHENTICATED, f"port {dest_port}")
+                    self.port = dest_port
+
+                    # Sync PPPP sequence
+                    self.pppp.reset_sequence(self.artemis_seq)
+                    return True
+
             self.logger.warning(f"[LOGIN] Timeout on port {dest_port}")
             return False
+
         except Exception as e:
             self.logger.error(f"[LOGIN] Error on port {dest_port}: {e}")
             return False
 
     def connect_with_retries(self) -> bool:
         """
-        FIX #48: Direct login flow (no discovery).
-        
-        Flow:
-        1. Create socket
-        2. Send init packets (0xE0 + 0xE1)
-        3. Try login (0xD0) on multiple ports
-        4. If successful, start heartbeat
+        Optimized Connection Flow:
+        1. Create Socket (Fixed Port 5085)
+        2. LAN Search Discovery -> Get Port
+        3. Wakeup (Init Packets) -> Discovered Port
+        4. Login -> Discovered Port
         """
         self._set_state(CameraState.CONNECTING, "starting connection")
         max_retries = config.MAX_CONNECTION_RETRIES
         start_time_total = time.time()
 
-        # FIX #48: Initialize PPPP sequence
-        self.logger.info("[CONNECT] Resetting PPPP sequence to 1")
+        # Reset sequences
         self.pppp.reset_sequence(1)
-
-        # Destination ports to try
-        target_ports = [
-            40611,    # Primary port from logs
-            32100,    # CS2P2P Standard
-            32108,    # Broadcast Discovery Standard
-        ]
+        self.artemis_seq = 1
 
         for attempt in range(max_retries):
             elapsed = time.time() - start_time_total
             if elapsed > config.MAX_TOTAL_CONNECTION_TIME:
-                self._set_state(CameraState.CONNECTION_FAILED, "total timeout")
-                self.logger.error(
-                    f"[CONNECT] Total connection time exceeded "
-                    f"({elapsed:.1f}s > {config.MAX_TOTAL_CONNECTION_TIME}s)"
-                )
-                return False
+                self.logger.error("[CONNECT] Total connection time exceeded")
+                break
 
             self.logger.info(f"[CONNECT] Attempt {attempt + 1}/{max_retries}")
 
-            # Create socket with OS-assigned port
-            if not self._create_socket(0, timeout=5.0):
-                self.logger.error("[CONNECT] Failed to create socket")
+            # 1. Create Socket (Try Fixed Port 5085)
+            if not self._create_socket(timeout=5.0, use_fixed_port=True):
                 time.sleep(1)
                 continue
 
-            # Get assigned port
-            try:
-                actual_local_ip, actual_local_port = self.sock.getsockname()
-                self.active_port = actual_local_port
-                self.logger.info(f"[CONNECT] Using source port: {actual_local_port}")
-            except Exception as e:
-                self.logger.error(f"[CONNECT] Failed to read assigned port: {e}")
+            # 2. Discovery
+            discovered_port = self._discover_login_port()
+
+            target_port = self.DEFAULT_LOGIN_PORT
+            if discovered_port:
+                self.logger.info(f"[CONNECT] Using discovered port: {discovered_port}")
+                target_port = discovered_port
+                self.login_port = discovered_port
+            else:
+                self.logger.warning(f"[CONNECT] Discovery failed, falling back to default port {target_port}")
+
+            # 3. Wakeup
+            if not self._send_init_packets(dest_port=target_port):
                 self._socket_force_close()
                 continue
 
-            # Send init packets to primary port
-            self.logger.info(f"[INIT] Sending to port {target_ports[0]}...")
-            if not self._send_init_packets(dest_port=target_ports[0]):
-                self.logger.warning("[INIT] Failed to send init packets")
-                self._socket_force_close()
-                continue
-
-            # FIX #48: Reset PPPP sequence after init
-            self.logger.info("[FIX #48] Resetting PPPP sequence to 1 after init")
             self.pppp.reset_sequence(1)
 
-            # Try login on each port
-            login_successful = False
-            for port in target_ports:
-                self.logger.info(f"[CONNECT] Trying login on port {port}...")
-                
-                # Try BLE_DYNAMIC variant first
-                if self._try_login_on_port(port, variant='BLE_DYNAMIC'):
-                    login_successful = True
-                    break
-                
-                # Increment Artemis sequence for next attempt
-                self.artemis_seq += 1
-
-            if login_successful:
-                self.logger.info(
-                    f"[CONNECT] ✓ Successfully authenticated on port {self.port}"
-                )
-                self._set_state(CameraState.CONNECTED, f"port {self.port}")
+            # 4. Login (With Fallback)
+            if self._try_login_on_port(target_port):
                 self.start_heartbeat()
                 return True
-            else:
-                self.logger.warning("[CONNECT] All ports failed this attempt.")
-                self._socket_force_close()
 
-            # Backoff before retry
+            # Fallback to Port 59130 if 40611 fails
+            if target_port == self.DEFAULT_LOGIN_PORT:
+                self.logger.warning(f"[CONNECT] Login failed on {target_port}. Attempting fallback to {self.FALLBACK_LOGIN_PORT}...")
+                if self._try_login_on_port(self.FALLBACK_LOGIN_PORT):
+                    self.logger.info(f"[CONNECT] ✓ Fallback successful on port {self.FALLBACK_LOGIN_PORT}")
+                    self.start_heartbeat()
+                    return True
+
+            self.logger.warning(f"[CONNECT] Login failed on port {target_port} and fallback")
+            self._socket_force_close()
+
+            # Backoff
             backoff = config.RETRY_BACKOFF_SEQUENCE[
                 min(attempt, len(config.RETRY_BACKOFF_SEQUENCE) - 1)
             ]
@@ -436,53 +519,8 @@ class CameraClient:
         self._socket_force_close()
         self._set_state(CameraState.DISCONNECTED, "closed")
 
-    def _build_login_payload(self, variant: str = 'BLE_DYNAMIC') -> bytes:
-        """
-        Build Artemis login payload.
-        
-        Structure:
-        - "ARTEMIS\x00" (8 bytes)
-        - Version (4 bytes, little-endian)
-        - Sequence from BLE or variant (4 bytes)
-        - Token length (4 bytes, little-endian)
-        - Token string + null terminator
-        """
-        if not self.session_token:
-            raise ValueError("No token set")
-        
-        artemis = b'ARTEMIS\x00'
-        version = b'\x02\x00\x00\x00'
-        
-        # Use BLE sequence if available and variant is BLE_DYNAMIC
-        if variant == 'BLE_DYNAMIC' and self.sequence_bytes:
-            sequence = self.sequence_bytes[:4] if len(self.sequence_bytes) >= 4 else b'\x00\x00\x00\x00'
-            self.logger.debug(f"[LOGIN PAYLOAD] Using BLE sequence: {sequence.hex().upper()}")
-        else:
-            sequence = MYSTERY_VARIANTS.get(variant, MYSTERY_VARIANTS['MYSTERY_09_01'])
-            self.logger.debug(f"[LOGIN PAYLOAD] Using variant '{variant}': {sequence.hex().upper()}")
-        
-        token_len = struct.pack('<I', len(self.session_token))
-        token_bytes = self.session_token.encode('ascii') + b'\x00'
-        
-        payload = artemis + version + sequence + token_len + token_bytes
-        self.logger.debug(f"[LOGIN PAYLOAD] Total length: {len(payload)} bytes")
-        
-        return payload
-
     def login(self, variant: str = 'BLE_DYNAMIC') -> bool:
-        """
-        FIX #48: This method is deprecated in favor of _try_login_on_port().
-        Kept for backward compatibility.
-        """
-        return self._try_login_on_port(self.port, variant=variant)
-
-    def try_all_variants(self) -> bool:
-        """
-        FIX #48: This method is deprecated.
-        Direct login flow tries BLE_DYNAMIC on all ports instead.
-        """
-        self.logger.warning("[LOGIN] try_all_variants() is deprecated in direct login flow")
-        return False
+        return self._try_login_on_port(self.port)
 
     def start_heartbeat(self):
         with self._lock:
@@ -496,10 +534,12 @@ class CameraClient:
         while self.running:
             try:
                 if self._state == CameraState.AUTHENTICATED:
-                    packet = self.pppp.wrap_heartbeat(self.artemis_seq)
+                    json_payload = json.dumps({"cmdId": 525}).encode('utf-8')
+                    packet = self.pppp.wrap_heartbeat(json_payload)
+
                     if self.sock:
                         self.sock.sendto(packet, (self.ip, self.port))
-                        self.logger.debug(f"[HEARTBEAT] Sent seq {self.artemis_seq}")
+                        self.logger.debug(f"[HEARTBEAT] Sent seq {self.pppp.get_sequence()}")
                 time.sleep(config.ARTEMIS_KEEPALIVE_INTERVAL)
             except Exception as e:
                 self.logger.error(f"[HEARTBEAT] Error: {e}")

@@ -36,8 +36,6 @@ class TokenListener:
         - Detects complete token based on length field
         - Sets event when complete
         - Logs detailed information for debugging
-        
-        FIX #26: Accept 80+ bytes as complete (not 87k+)
         """
         self.logger.info(f"[NOTIFICATION] Received {len(data)} bytes from {sender}")
         self.logger.debug(f"  Hex: {data.hex()}")
@@ -56,13 +54,13 @@ class TokenListener:
                     token_len = struct.unpack("<I", self.captured_data[0:4])[0]
                     expected_total = 8 + token_len
                     self.logger.info(
-                        f"[NOTIFICATION] Token is complete! "
+                        f"[NOTIFICATION] Packet is complete! "
                         f"({total_bytes} bytes total, length field says {token_len}, expected {expected_total})"
                     )
                 except struct.error:
-                    self.logger.info(f"[NOTIFICATION] Token is complete! ({total_bytes} bytes total)")
+                    self.logger.info(f"[NOTIFICATION] Packet is complete! ({total_bytes} bytes total)")
             else:
-                self.logger.info(f"[NOTIFICATION] Token is complete! ({total_bytes} bytes total)")
+                self.logger.info(f"[NOTIFICATION] Packet is complete! ({total_bytes} bytes total)")
             self.event.set()
         else:
             # Log how many more bytes we need
@@ -72,31 +70,19 @@ class TokenListener:
                     expected_total = 8 + token_len
                     remaining = expected_total - total_bytes
                     self.logger.debug(
-                        f"  Token not yet complete: {total_bytes}/{expected_total} bytes "
+                        f"  Packet not yet complete: {total_bytes}/{expected_total} bytes "
                         f"(waiting for {remaining} more, token_len={token_len})"
                     )
                 except Exception as e:
-                    self.logger.debug(f"  Token not yet complete: {total_bytes} bytes received")
+                    self.logger.debug(f"  Packet not yet complete: {total_bytes} bytes received")
             else:
-                self.logger.debug(f"  Token not yet complete: {total_bytes} bytes received")
+                self.logger.debug(f"  Packet not yet complete: {total_bytes} bytes received")
 
     def _is_token_complete(self) -> bool:
         """
         Check if we have received the complete token.
         
         FIX #26: Handle variable-length tokens correctly.
-        
-        Token structure (Variable length):
-        - Bytes 0-3: token length (little-endian uint32)
-        - Bytes 4-7: sequence (4 bytes)
-        - Bytes 8+: token data (variable length based on length field)
-        
-        Size detection (Fallback):
-        - If we have 53+ bytes, likely complete (45 byte token + 8 header)
-        - If we have 80+ bytes, definitely complete (72 byte token + 8 header)
-        
-        Returns:
-            True if we have received the complete token
         """
         total = len(self.captured_data)
         
@@ -109,8 +95,6 @@ class TokenListener:
             token_len = struct.unpack("<I", self.captured_data[0:4])[0]
             
             # FIX #26: Accept reasonable token lengths
-            # Real camera sends tokens around 45-72 bytes
-            # Allow up to 100 bytes for safety margin
             if 45 <= token_len <= 100:
                 expected_total = 8 + token_len
                 has_complete = total >= expected_total
@@ -120,9 +104,17 @@ class TokenListener:
                         f"Token complete (length-based): {total} >= {expected_total} "
                         f"(token_len={token_len})"
                     )
-                
                 return has_complete
             else:
+                # Token length is unreasonable (e.g., might be a small JSON packet with wifi info)
+                # If length is small (e.g. < 100), it might be a valid JSON packet even if not the token we want.
+                # We trust the length field if it matches the data we have.
+                if token_len < 1000:
+                    expected_total = 8 + token_len
+                    if total >= expected_total:
+                         self.logger.debug(f"Small packet complete: {total} >= {expected_total}")
+                         return True
+
                 # Token length is unreasonable, use size-based fallback
                 self.logger.debug(
                     f"Token length field suspicious: {token_len}. "
@@ -138,18 +130,6 @@ class TokenListener:
     def _is_token_complete_by_size(self, total: int) -> bool:
         """
         Fallback: Detect token completion by total size.
-        
-        Expected sizes:
-        - 53 bytes: 45-byte token + 8-byte header (minimum)
-        - 80 bytes: 72-byte token + 8-byte header (typical/most common)
-        
-        FIX #26: Accept 80 bytes as complete (this is what real camera sends)
-        
-        Args:
-            total: Total accumulated bytes
-            
-        Returns:
-            True if size suggests token is complete
         """
         # If we have 80 bytes or more, token is definitely complete
         if total >= 80:
@@ -167,20 +147,9 @@ class TokenListener:
         
         return False
 
-    # FIX #18: Split into two methods to prevent race condition
     async def start_listening(self):
         """
         Register notification handler IMMEDIATELY.
-        
-        This must be called BEFORE the camera sends token data.
-        Call this right after BLE wake, before waiting for token.
-        
-        This prevents race condition where:
-        - Old: Register handler → Wait (but camera already sent data)
-        - New: Register handler first (ready to receive) → Then wait
-        
-        Raises:
-            BleakError: If client not connected or subscription fails
         """
         if not self.client or not self.client.is_connected:
             raise BleakError(f"Client is not connected to {self.device_mac}")
@@ -202,170 +171,84 @@ class TokenListener:
         """
         Wait for token notification to arrive.
         
-        This must be called AFTER start_listening().
-        
-        Args:
-            timeout: Maximum time to wait in seconds (default 15s).
-                     Increased from 10s because camera needs time to power up
-                     and send token after magic packet.
-        
-        Returns:
-            {"token": "...", "sequence": b'...'}
-        
-        Raises:
-            asyncio.TimeoutError: If no complete token within timeout
+        FIX: Loop to ignore packets that only contain WiFi info ('pwd') but no 'token'.
         """
         self.logger.info("Waiting for token notification from camera...")
         
-        try:
-            # Wait for handler to receive complete token
-            await asyncio.wait_for(self.event.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            bytes_received = len(self.captured_data)
-            self.logger.error(
-                f"Token extraction timeout. "
-                f"Received {bytes_received} bytes so far (expected at least 53 bytes)."
-            )
-            if bytes_received > 0:
-                self.logger.error(
-                    f"Raw data (hex): {self.captured_data.hex()}"
-                )
-            # Try to cleanup subscription
-            try:
-                if self.client and self.client.is_connected:
-                    await self.client.stop_notify(self.NOTIFICATION_CHAR_UUID)
-            except Exception as e:
-                self.logger.warning(f"Failed to stop notify after timeout: {e}")
-            raise
+        start_time = asyncio.get_event_loop().time()
         
-        # Cleanup subscription on success
+        while (asyncio.get_event_loop().time() - start_time) < timeout:
+            try:
+                # Calculate remaining time
+                remaining = timeout - (asyncio.get_event_loop().time() - start_time)
+                if remaining <= 0:
+                    break
+
+                # Wait for handler to receive complete packet
+                await asyncio.wait_for(self.event.wait(), timeout=remaining)
+
+                # Check what we got
+                parsed = self._parse_payload(self.captured_data)
+
+                if parsed:
+                    return parsed
+
+                # If we got here, it means we parsed a packet but it wasn't the TOKEN.
+                # It was likely the WiFi info packet.
+                # Reset and continue waiting.
+                self.logger.info("[PARSE] Received packet with no token. Resetting buffer and waiting for next packet...")
+                self.captured_data = b''
+                self.event.clear()
+
+            except asyncio.TimeoutError:
+                break
+            except Exception as e:
+                self.logger.error(f"Error during token wait: {e}")
+                # Don't break immediately, maybe retry?
+                # But if parsing failed badly, maybe we should stop.
+                # For now, let's break to avoid infinite loops on hard errors.
+                break
+
+        # If we exit loop without returning
+        bytes_received = len(self.captured_data)
+        self.logger.error(
+            f"Token extraction timeout. "
+            f"Received {bytes_received} bytes in buffer."
+        )
+        if bytes_received > 0:
+            self.logger.error(
+                f"Raw data (hex): {self.captured_data.hex()}"
+            )
+
+        # Cleanup
         try:
             if self.client and self.client.is_connected:
                 await self.client.stop_notify(self.NOTIFICATION_CHAR_UUID)
-        except Exception as e:
-            self.logger.warning(f"Failed to stop notify after success: {e}")
-        
-        return self._parse_payload(self.captured_data)
+        except Exception:
+            pass
 
-    async def listen(self, timeout=10) -> dict:
-        """
-        Legacy method: Listen for BLE notification containing auth token.
-        
-        This method combines start_listening() and wait_for_token().
-        Use start_listening() + wait_for_token() instead for better control.
-        
-        Returns:
-            {"token": "I3mbwVIx...", "sequence": b'\x2b\x00\x00\x00'}
-
-        Raises:
-            asyncio.TimeoutError: If no complete token within timeout
-            BleakError: If BLE connection fails
-        """
-        if self.client and self.client.is_connected:
-            self.logger.info(f"Using existing connection to {self.device_mac}...")
-            await self.start_listening()
-            return await self.wait_for_token(timeout=timeout)
-        else:
-            self.logger.info(f"Connecting to {self.device_mac} to listen for token...")
-            async with BleakClient(self.device_mac, timeout=20.0) as client:
-                self.client = client
-                await self.start_listening()
-                return await self.wait_for_token(timeout=timeout)
-
-    async def _listen_with_client(self, client, timeout):
-        """
-        Internal method to listen using a specific client instance.
-        (Kept for backward compatibility, but not used in new code)
-        """
-        if not client.is_connected:
-            raise BleakError(f"Client is not connected to {self.device_mac}")
-
-        self.logger.info(f"Subscribing to {self.NOTIFICATION_CHAR_UUID}...")
-
-        try:
-            await client.start_notify(self.NOTIFICATION_CHAR_UUID, self._notification_handler)
-        except Exception as e:
-            self.logger.error(f"Failed to start notify on {self.NOTIFICATION_CHAR_UUID}: {e}")
-            raise BleakError(f"Could not subscribe to notification characteristic: {e}")
-
-        self.logger.info("Waiting for notification (may be fragmented)...")
-        try:
-            # Wait for token to be complete (handles fragmentation automatically)
-            await asyncio.wait_for(self.event.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            self.logger.error(f"Token extraction timeout. Received {len(self.captured_data)} bytes so far.")
-            # Cleanup subscription on timeout
-            try:
-                await client.stop_notify(self.NOTIFICATION_CHAR_UUID)
-            except Exception as e:
-                self.logger.warning(f"Failed to stop notify after timeout: {e}")
-            raise
-
-        # Cleanup subscription on success
-        try:
-            await client.stop_notify(self.NOTIFICATION_CHAR_UUID)
-        except Exception as e:
-             self.logger.warning(f"Failed to stop notify after success: {e}")
-
-        return self._parse_payload(self.captured_data)
+        raise asyncio.TimeoutError("Failed to extract valid token")
 
     def _parse_payload(self, data: bytes) -> dict:
         """
         Parse token and sequence from complete notification payload.
         
-        FIX #20: Support both raw tokens and JSON-wrapped tokens.
-        FIX #26: Handle variable-length tokens correctly (80 bytes typical)
-        FIX #50: Extract 'pwd' field from JSON as primary token (Android app behavior)
-        
-        Structures supported:
-        1. Raw format: [4 bytes: token_length] [4 bytes: sequence] [N bytes: token]
-        2. JSON format: [4 bytes: json_length] [4 bytes: sequence] [JSON string with token field]
-        
-        JSON Parsing Logic (FIX #50 - NEW PRIORITY):
-        - **PRIMARY**: Check for 'pwd' field (WiFi password) - THIS IS THE ACTUAL TOKEN
-          - Android app log (2025-12-08log.txt:183354.307) confirms:
-            "Device network start result{ret:0,ssid:KJK_E0FF,bssid:1C:4E:A2:92:E0:FF,pwd:85087127}"
-          - The 'pwd' field (85087127) is the token used for UDP login
-        - Fallback: Check for 'token' field (for backward compatibility)
-        - Last resort: Use full JSON string if no specific field found
-        
-        Real-world example from Issue #50:
-        ```json
-        {
-          "ret": 0,
-          "ssid": "KJK_E0FF",
-          "bssid": "1C:4E:A2:92:E0:FF",
-          "pwd": "85087127"  <-- THIS is the token!
-        }
-        ```
-
-        Why JSON?
-        Newer firmware versions wrap the token in JSON to include additional metadata
-        (like SSID, return codes) which provides context for the connection.
-
-        See PROTOCOL_ANALYSIS.md for detailed token context.
-        
-        FIX #26: Support 80-byte tokens (most common from camera)
+        FIX #78:
+        - Strict check for 'token' field.
+        - DO NOT fallback to 'pwd' field.
+        - Return None if token is missing (so wait_for_token can continue).
         """
         if not data:
-            raise ValueError("Received empty data payload")
+            return None
 
         if len(data) < 8:
-            raise ValueError(f"Payload too short: {len(data)} bytes (expected >= 8)")
+            return None
 
         # Extract token_length (little-endian)
         try:
             token_len = struct.unpack("<I", data[0:4])[0]
-        except struct.error as e:
-            self.logger.error(f"Failed to parse token_len: {e}")
-            # FIX #26: If we have 80 bytes, assume it's a complete token
-            if len(data) >= 80:
-                token_len = len(data) - 8  # Treat remainder as token
-                self.logger.warning(f"Using fallback token_len: {token_len} (from 80-byte packet)")
-            else:
-                # Try 72-byte token as default
-                token_len = 72
-                self.logger.warning(f"Using fallback token_len: {token_len}")
+        except struct.error:
+            token_len = len(data) - 8
 
         # Extract sequence bytes
         sequence = data[4:8]
@@ -373,89 +256,62 @@ class TokenListener:
         # Extract token data
         actual_data_length = len(data) - 8
         if actual_data_length < token_len:
-            self.logger.warning(
-                f"Data length {actual_data_length} < expected {token_len}. "
-                f"Using available {actual_data_length} bytes."
-            )
-            token_bytes = data[8:]
+             token_bytes = data[8:]
         else:
-            token_bytes = data[8:8+token_len]
+             token_bytes = data[8:8+token_len]
 
+        token_str = ""
         # Decode as ASCII and strip nulls
         try:
             token_str = token_bytes.decode('ascii').rstrip('\x00')
             
-            # FIX #20 + #50: Check if it's JSON and parse it
+            # Check for JSON
             if token_str.startswith('{') and '}' in token_str:
-                self.logger.info(f"[PARSE] Detected JSON token format")
+                self.logger.info(f"[PARSE] Detected JSON payload")
                 try:
                     token_json = json.loads(token_str)
-                    self.logger.debug(f"[PARSE] Parsed JSON: {json.dumps(token_json, indent=2)[:200]}...")
+                    self.logger.debug(f"[PARSE] JSON Content: {json.dumps(token_json, indent=2)[:200]}...")
                     
-                    # FIX #50: PRIMARY - Extract 'pwd' field (WiFi password = actual token)
-                    # This matches Android app behavior (see 2025-12-08log.txt)
                     actual_token = None
-                    if 'pwd' in token_json:
-                        actual_token = token_json['pwd']
-                        self.logger.info(f"[PARSE] ✓ Using 'pwd' field as token (Android app behavior)")
-                    # Fallback: Check for 'token' field (backward compatibility)
-                    elif 'token' in token_json:
+
+                    # PRIMARY: Check for 'token' field (Session Token)
+                    if 'token' in token_json:
                         actual_token = token_json['token']
-                        self.logger.info(f"[PARSE] Using 'token' field (legacy format)")
-                    # Last resort: Try other common token fields
-                    else:
-                        for field_name in ['data', 'key', 'auth_token', 'access_token']:
-                            if field_name in token_json:
-                                actual_token = token_json[field_name]
-                                self.logger.info(f"[PARSE] Using '{field_name}' field as fallback")
-                                break
+                        self.logger.info(f"[PARSE] ✓ Found 'token' field: {str(actual_token)[:10]}...")
                     
+                    # LOGGING ONLY for pwd
+                    if 'pwd' in token_json:
+                        self.logger.info(f"[PARSE] Found 'pwd' (WiFi Password): {token_json['pwd']}")
+                        if not actual_token:
+                            self.logger.warning("[PARSE] Packet contains 'pwd' but NO 'token'. Ignoring as auth token.")
+
                     if actual_token:
                         token_str = str(actual_token)
-                        self.logger.info(f"[PARSE] Extracted token: {token_str} (length: {len(token_str)})")
+                        return {
+                            "token": token_str,
+                            "sequence": sequence
+                        }
                     else:
-                        self.logger.warning(
-                            f"[PARSE] JSON has no recognized token field. "
-                            f"Available keys: {list(token_json.keys())}. "
-                            f"Using entire JSON as token (likely incorrect!)."
-                        )
-                        # Try to use the entire JSON string as token (least preferred)
-                        token_str = json.dumps(token_json)
+                        # Valid JSON but no token found. Return None to signal "keep waiting"
+                        return None
                         
-                except json.JSONDecodeError as e:
-                    self.logger.warning(
-                        f"[PARSE] Failed to parse JSON token: {e}. "
-                        f"Using raw string as token."
-                    )
+                except json.JSONDecodeError:
+                    self.logger.warning(f"[PARSE] Failed to parse JSON. Raw: {token_str}")
             else:
-                self.logger.debug(f"[PARSE] Token is not JSON, using raw format")
+                self.logger.debug(f"[PARSE] Payload is not JSON. Using raw string.")
                     
         except UnicodeDecodeError:
-            # Fallback if not pure ASCII, though it should be base64
-            self.logger.warning("[PARSE] Token bytes are not valid ASCII, using replace")
+            self.logger.warning("[PARSE] Payload bytes are not valid ASCII.")
             token_str = token_bytes.decode('ascii', errors='replace').rstrip('\x00')
 
-        self.logger.debug(f"Raw BLE payload: {data.hex()}")
-        self.logger.debug(f"Token length field: {token_len}")
-        self.logger.debug(f"Sequence bytes: {sequence.hex()}")
-        self.logger.info(f"Success: Token extracted: {token_str[:20]}... (len={len(token_str)})")
-
-        # FIX #26: More lenient token length validation
-        # Accept tokens in expected range without warning
-        if not token_str.startswith('{'):
-            if len(token_str) not in self.EXPECTED_TOKEN_LENGTHS:
-                # Only warn if dramatically outside range
-                if len(token_str) < 40 or len(token_str) > 150:
-                    self.logger.warning(
-                        f"Token length {len(token_str)} is unusual (expected 45/72/80). "
-                        f"This might indicate an encoding issue."
-                    )
+        # If not JSON, or JSON parsing failed, check if we have a raw token string
+        # BUT only if it looks like a token (length check)
+        if len(token_str) > 20: # Arbitrary min length for a token
+             self.logger.info(f"[PARSE] Using raw string as token (len={len(token_str)})")
+             return {
+                "token": token_str,
+                "sequence": sequence
+             }
         
-        # Validate token is not empty
-        if not token_str or token_str == '':
-            raise ValueError("Extracted token is empty")
-
-        return {
-            "token": token_str,
-            "sequence": sequence
-        }
+        self.logger.warning("[PARSE] Payload does not contain a valid token.")
+        return None

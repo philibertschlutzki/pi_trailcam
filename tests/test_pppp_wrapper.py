@@ -20,25 +20,27 @@ def test_outer_header_serialization():
     assert data == b'\xf1\xd1\x00\x06'
 
 def test_inner_header_serialization():
-    # InnerHeader(0xD1, 0x00, 1, 0) -> bytes
-    header = PPPPInnerHeader(0xD1, 0x00, 1, 0)
+    # InnerHeader(0xD1, 0x00, 1) -> bytes (4 bytes)
+    header = PPPPInnerHeader(0xD1, 0x00, 1)
     data = header.to_bytes()
-    assert data == b'\xd1\x00\x00\x01\x00'
+    assert data == b'\xd1\x00\x00\x01'
 
 def test_wrap_discovery_packet(protocol):
     # wrap_discovery(0x0048)
     # Payload: 00 48 (2 bytes)
-    # Inner: D1 00 00 01 00 (5 bytes)
-    # Outer Length: 7 bytes
+    # Inner: D1 00 00 01 (4 bytes)
+    # Outer Length: 4 + 2 = 6 bytes
     packet = protocol.wrap_discovery(0x0048)
 
-    assert packet.startswith(b'\xf1\xd1\x00\x07') # Outer
-    assert packet[4:9] == b'\xd1\x00\x00\x01\x00' # Inner
-    assert packet[9:] == b'\x00\x48' # Payload
+    assert packet.startswith(b'\xf1\xd1\x00\x06') # Outer (Length 6)
+    assert packet[4:8] == b'\xd1\x00\x00\x01' # Inner (4 bytes)
+    assert packet[8:] == b'\x00\x48' # Payload
     assert protocol.pppp_sequence == 2
 
 def test_wrap_init_packet(protocol):
     packet = protocol.wrap_init()
+    # Updated: Init packet (0xE1) has 0 length and no payload
+    # Outer Header: F1 E1 00 00
     assert packet == b'\xf1\xe1\x00\x00'
     # Sequence should NOT increment for init
     assert protocol.pppp_sequence == 1
@@ -52,9 +54,9 @@ def test_wrap_login_packet(protocol):
     assert packet[1] == 0xD0
 
     # Check length
-    # Inner (5) + Payload (15) = 20
+    # Inner (4) + Payload (15) = 19
     length = struct.unpack('>H', packet[2:4])[0]
-    assert length == 5 + len(payload)
+    assert length == 4 + len(payload)
 
     assert protocol.pppp_sequence == 2
 

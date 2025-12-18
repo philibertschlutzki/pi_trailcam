@@ -32,7 +32,7 @@ class MockCamera:
 
     def handle_packet(self, sock, data, addr):
         port = sock.getsockname()[1]
-        print(f"Received on {port} from {addr}: {data.hex()}")
+        # print(f"Received on {port} from {addr}: {data.hex()}")
 
         if len(data) < 2: return
 
@@ -43,8 +43,9 @@ class MockCamera:
             return
 
         if port == 32108:
-            # Phase 1: Discovery (D1)
-            if cmd == 0xD1:
+            # Phase 1: Discovery (D1 or 30)
+            # The client now sends 0x30 (LAN Search)
+            if cmd == 0xD1 or cmd == 0x30:
                 # Respond with DD
                 # Mock response: F1 DD [Len] [Payload: Device Info]
                 # Payload needs to be at least 52 bytes for client to be happy
@@ -60,7 +61,7 @@ class MockCamera:
                 resp.extend(payload)
 
                 sock.sendto(resp, addr)
-                print("Sent Phase 1 Response")
+                # print("Sent Phase 1 Response")
 
         elif port == 40611:
             # Phase 2: Port Punching (41)
@@ -68,11 +69,11 @@ class MockCamera:
             if cmd == 0x41:
                 # Respond with 41
                 sock.sendto(data, addr) # Echo back
-                print("Sent Phase 2 Response")
+                # print("Sent Phase 2 Response")
             elif cmd == 0x42:
                 # Respond with 42
                 sock.sendto(data, addr) # Echo back
-                print("Sent Phase 3 Response")
+                # print("Sent Phase 3 Response")
 
 if __name__ == "__main__":
     mock = MockCamera()

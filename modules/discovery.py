@@ -20,6 +20,10 @@ class DiscoveryPhase:
             if not await self.phase_1_lan_search():
                 return {"success": False, "error": "Phase 1 failed"}
 
+            # Wakeup Burst is REQUIRED to open the port 40611 on the camera side.
+            if not await self.phase_1b_wakeup_burst():
+                return {"success": False, "error": "Phase 1b (Wakeup) failed"}
+
             if not await self.phase_2_port_punching():
                 return {"success": False, "error": "Phase 2 failed"}
 
@@ -35,17 +39,64 @@ class DiscoveryPhase:
             logger.error(f"Discovery execution failed: {e}")
             return {"success": False, "error": str(e)}
 
+    async def phase_1b_wakeup_burst(self) -> bool:
+        """
+        Sends the wakeup burst (0xE0 and 0xE1) to port 40611.
+        This is critical to "wake up" the camera's PPPP service on the primary port.
+        """
+        logger.info("[DISCOVERY] Phase 1b: Wakeup burst starting...")
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(('0.0.0.0', 0))
+        sock.setblocking(False)
+
+        try:
+            # Send 0xE0 (Wakeup 1)
+            pkt_e0 = self.pppp.wrap_init_ping()
+            sock.sendto(pkt_e0, (self.camera_ip, 40611))
+            logger.debug(f"Sent Wakeup 0xE0: {pkt_e0.hex()}")
+
+            # Short delay between packets? Memory says "Wakeup burst".
+            # Usually sent back-to-back or with small delay.
+            # But "0.5 second delay is mandatory AFTER the UDP initialization burst".
+
+            # Send 0xE1 (Wakeup 2)
+            pkt_e1 = self.pppp.wrap_init_secondary()
+            sock.sendto(pkt_e1, (self.camera_ip, 40611))
+            logger.debug(f"Sent Wakeup 0xE1: {pkt_e1.hex()}")
+
+            # Memory: "A 0.5 second delay is mandatory after the UDP initialization burst"
+            logger.info("Waiting 0.5s for camera wakeup...")
+            await asyncio.sleep(0.5)
+
+            # We don't necessarily expect a response here, or do we?
+            # The memory implies this is just to "wake up" the port.
+            # ICMP Port Unreachable might happen if it's not ready yet, but we ignore it here?
+            # Or this *causes* it to open.
+
+            return True
+
+        except Exception as e:
+            logger.error(f"[DISCOVERY] Phase 1b error: {e}")
+            return False
+        finally:
+            sock.close()
+
     async def phase_1_lan_search(self) -> bool:
         logger.info("[DISCOVERY] Phase 1: LAN search starting...")
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         sock.bind(('0.0.0.0', 0))
         sock.setblocking(False) # For asyncio
 
         try:
-            packet = self.pppp.wrap_discovery(self.artemis_seq)
+            # Use 0x30 LAN Search packet instead of 0xD1
+            packet = self.pppp.wrap_lan_search()
             logger.debug(f"Sending discovery packet: {packet.hex()}")
 
+            # Send to Broadcast and Unicast (just in case)
+            sock.sendto(packet, ('255.255.255.255', 32108))
             sock.sendto(packet, (self.camera_ip, 32108))
 
             # Async receive with timeout
