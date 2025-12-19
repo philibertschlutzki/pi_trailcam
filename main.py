@@ -96,12 +96,27 @@ class BLEWorker:
             logger.info("Subscribed to notifications.")
 
             logger.info("Sending Wake-Up Command...")
-            await client.write_gatt_char(UUID_WRITE, CMD_WAKEUP)
-
-            # Wait for credentials (timeout 20s as camera boots WiFi)
+            
+            # VERSUCH 1: Mit Bestätigung (response=True)
+            logger.info("Attempt 1: Sending with response=True...")
+            await client.write_gatt_char(UUID_WRITE, CMD_WAKEUP, response=True)
+            
+            # Warten auf Antwort (kurz)
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=20.0)
+                await asyncio.wait_for(stop_event.wait(), timeout=5.0)
             except asyncio.TimeoutError:
+                logger.warning("No reply yet. Trying again...")
+                
+                # VERSUCH 2: Ohne Bestätigung (falls Kamera das bevorzugt)
+                if not wifi_creds["ssid"]:
+                    logger.info("Attempt 2: Sending with response=False...")
+                    await client.write_gatt_char(UUID_WRITE, CMD_WAKEUP, response=False)
+                    try:
+                        await asyncio.wait_for(stop_event.wait(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        logger.error("Still no reply from camera.")
+
+            if not wifi_creds["ssid"]:
                 logger.warning("Timed out waiting for WiFi credentials via BLE.")
 
             logger.info("Disconnecting BLE...")
