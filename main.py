@@ -73,12 +73,16 @@ class WiFiWorker:
         """Sucht in einer Schleife nach dem WLAN und verbindet sich."""
         logger.info(f"PHASE 2: Suche nach WLAN '{ssid}' auf {interface}...")
         
-        max_retries = 20 # 20 Versuche a 3 Sekunden = 60 Sekunden Timeout
+        # SCHRITT 0: Altes/Defektes Profil löschen (Der Fix für "key-mgmt" Fehler)
+        # Wir löschen pro-aktiv alles, was so heißt, damit nmcli ein sauberes neues Profil erstellt.
+        subprocess.run(["sudo", "nmcli", "connection", "delete", ssid], capture_output=True)
+        
+        max_retries = 20 
         
         for i in range(max_retries):
-            # 1. Scannen (erzwingt Update der Liste)
+            # 1. Scannen
             subprocess.run(["sudo", "nmcli", "device", "wifi", "rescan", "ifname", interface], capture_output=True)
-            time.sleep(2) # Kurz warten
+            time.sleep(2)
             
             # 2. Prüfen ob SSID sichtbar ist
             check = subprocess.run(
@@ -89,7 +93,7 @@ class WiFiWorker:
             if ssid in check.stdout:
                 logger.info(f"WLAN '{ssid}' gefunden! Verbinde...")
                 
-                # Verbinden
+                # Verbinden (Das erstellt automatisch ein frisches WPA2 Profil)
                 cmd = [
                     "sudo", "nmcli", "device", "wifi", "connect", ssid, 
                     "password", password, "ifname", interface
@@ -101,13 +105,15 @@ class WiFiWorker:
                     return True
                 else:
                     logger.error(f"Verbindung fehlgeschlagen: {proc.stderr.strip()}")
+                    # Falls es fehlschlägt, löschen wir das Profil sofort wieder für den nächsten Versuch
+                    subprocess.run(["sudo", "nmcli", "connection", "delete", ssid], capture_output=True)
             else:
                 logger.info(f"Warte auf WLAN... (Versuch {i+1}/{max_retries})")
                 
             time.sleep(1)
             
         return False
-
+        
 class UDPWorker:
     @staticmethod
     def start_session():
