@@ -18,7 +18,6 @@ UUID_WRITE = "00000002-0000-1000-8000-00805f9b34fb"
 CMD_WAKEUP = bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
 ARTEMIS_TOKEN = "MzlB36X/IVo8ZzI5rG9j1w=="
 
-# Standard IP (wird durch Discovery bestätigt)
 CAMERA_IP = "192.168.43.1"
 CAMERA_PORT = 40611 
 LOCAL_PORT = 5085
@@ -48,6 +47,7 @@ class WiFiWorker:
     @staticmethod
     def wait_and_connect(ssid, password, interface="wlan0"):
         logger.info(f"PHASE 2: WLAN Verbindung '{ssid}'...")
+        # Profil Löschen für sauberen Start
         subprocess.run(["sudo", "nmcli", "connection", "delete", ssid], capture_output=True)
         
         for i in range(15):
@@ -67,8 +67,21 @@ class WiFiWorker:
 
 class UDPWorker:
     @staticmethod
+    def get_wlan_ip(interface="wlan0"):
+        """Ermittelt die IP-Adresse des WLAN-Interfaces."""
+        try:
+            cmd = ["ip", "-4", "addr", "show", interface]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            for line in result.stdout.splitlines():
+                if "inet " in line:
+                    # Format: inet 192.168.43.20/24 ...
+                    return line.strip().split(" ")[1].split("/")[0]
+        except Exception as e:
+            logger.error(f"IP Ermittlung Fehler: {e}")
+        return None
+
+    @staticmethod
     def create_packet(payload_bytes):
-        # Header: F1 D0 + Length (2 Bytes Big Endian)
         header = struct.pack('>BBH', 0xF1, 0xD0, len(payload_bytes))
         return header + payload_bytes
 
@@ -76,105 +89,115 @@ class UDPWorker:
     def start_session():
         logger.info("PHASE 3: UDP Discovery & Login...")
         
+        # 1. Lokale IP auf wlan0 ermitteln (WICHTIG!)
+        local_ip = UDPWorker.get_wlan_ip(WIFI_INTERFACE)
+        if not local_ip:
+            logger.error(f"Konnte keine IP auf {WIFI_INTERFACE} finden!")
+            return False, None, None
+            
+        logger.info(f"Binde Socket an Interface-IP: {local_ip}")
+
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        try: sock.bind(('0.0.0.0', LOCAL_PORT))
-        except: pass
+        
+        try:
+            # Explizites Binden an die WLAN-IP verhindert Routing über eth0
+            sock.bind((local_ip, LOCAL_PORT))
+        except Exception as e:
+            logger.error(f"Socket Bind Fehler: {e}")
+            return False, None, None
+        
         sock.settimeout(2.0)
 
         # --- A: DISCOVERY ---
-        # Sende an Broadcast UND direkt an Gateway
-        targets = [('255.255.255.255', 40611), ('255.255.255.255', 32108), (CAMERA_IP, 40611)]
         discovery_pkt = bytes.fromhex("f1300000")
-        
         camera_addr = None
-        logger.info("Sende Discovery...")
         
-        for _ in range(3):
-            for t in targets:
-                try: sock.sendto(discovery_pkt, t)
-                except: pass
+        logger.info("Sende Discovery (Broadcast & Unicast)...")
+        for _ in range(5):
+            # Broadcast ins Subnetz (x.x.x.255)
+            subnet_broadcast = ".".join(local_ip.split(".")[:3]) + ".255"
+            
             try:
-                data, addr = sock.recvfrom(1024)
-                logger.info(f"✅ Kamera gefunden bei {addr}!")
-                camera_addr = addr
-                break
+                sock.sendto(discovery_pkt, (subnet_broadcast, 40611)) # Broadcast
+                sock.sendto(discovery_pkt, (CAMERA_IP, 40611))        # Direkt
+            except Exception as e:
+                logger.warning(f"Send Fehler: {e}")
+
+            try:
+                while True:
+                    data, addr = sock.recvfrom(1024)
+                    logger.info(f"✅ Antwort von {addr} erhalten!")
+                    camera_addr = addr
+                    break
             except socket.timeout: pass
+            
+            if camera_addr: break
+            time.sleep(1)
         
         if not camera_addr:
-            logger.warning("Keine Antwort auf Discovery. Versuche Standard-IP.")
+            logger.warning("Keine Antwort auf Discovery. Nutze Standard-IP.")
             camera_addr = (CAMERA_IP, 40611)
 
-        # --- B: INIT ---
-        logger.info("Sende Init Pakete...")
+        # --- B: LOGIN ---
+        # 1. Init
         sock.sendto(bytes.fromhex("f1e00000"), camera_addr)
         time.sleep(0.1)
         sock.sendto(bytes.fromhex("f1e10000"), camera_addr)
         time.sleep(0.5)
 
-        # --- C: LOGIN METHODE 1 (ARTEMIS HANDSHAKE) ---
-        logger.info("Versuche Methode 1: Artemis Handshake...")
+        # 2. Login (Artemis Token)
+        logger.info("Sende Login Token...")
         token_bytes = ARTEMIS_TOKEN.encode('ascii') + b'\x00'
         p1 = b'\xd1\x00\x00\x05' + b'ARTEMIS\x00' + b'\x02\x00\x00\x00' + b'\x04\x00\x01\x00'
         p1 += struct.pack('<I', len(token_bytes)) + token_bytes
         
-        if UDPWorker._try_login(sock, UDPWorker.create_packet(p1), camera_addr):
-            return True, sock, camera_addr
-
-        # --- D: LOGIN METHODE 2 (JSON DIREKT) ---
-        logger.info("Methode 1 fehlgeschlagen. Versuche Methode 2: JSON Login...")
-        login_json = {
-            "cmdId": 0,
-            "usrName": "admin",
-            "password": "admin",
-            "needVideo": 0,
-            "needAudio": 0,
-            "utcTime": int(time.time()),
-            "supportHeartBeat": True
-        }
-        json_bytes = json.dumps(login_json).encode('utf-8')
+        packet = UDPWorker.create_packet(p1)
         
-        if UDPWorker._try_login(sock, UDPWorker.create_packet(json_bytes), camera_addr):
-            return True, sock, camera_addr
-
-        logger.error("❌ Alle Login-Methoden fehlgeschlagen.")
-        return False, sock, camera_addr
-
-    @staticmethod
-    def _try_login(sock, packet, addr):
-        for i in range(2):
-            sock.sendto(packet, addr)
+        for i in range(3):
+            sock.sendto(packet, camera_addr)
             try:
                 data, _ = sock.recvfrom(2048)
-                # Antwort beginnt meist mit F1 D0
                 if data.startswith(b'\xf1\xd0'):
                     logger.info("✅ LOGIN ERFOLGREICH!")
-                    return True
-            except socket.timeout:
-                pass
+                    return True, sock, camera_addr
+            except socket.timeout: pass
             time.sleep(1)
-        return False
+
+        # Fallback: JSON Login
+        logger.info("Fallback: Versuche JSON Login...")
+        login_json = {"cmdId":0, "usrName":"admin", "password":"admin", "supportHeartBeat":True}
+        packet_json = UDPWorker.create_packet(json.dumps(login_json).encode('utf-8'))
+        sock.sendto(packet_json, camera_addr)
+        
+        try:
+            data, _ = sock.recvfrom(2048)
+            if data.startswith(b'\xf1\xd0'):
+                logger.info("✅ JSON LOGIN ERFOLGREICH!")
+                return True, sock, camera_addr
+        except socket.timeout: pass
+
+        logger.error("❌ Login endgültig fehlgeschlagen.")
+        return False, sock, camera_addr
 
 # --- MAIN ---
 
 async def main():
-    logger.info("=== KJK Controller v3 ===")
-    
-    # WICHTIG: Stelle sicher, dass die App am Handy wirklich AUS ist (Prozess gekillt)!
+    logger.info("=== KJK Controller v4 (Fix Interface Binding) ===")
     
     await BLEWorker.wake_camera_blindly()
     
     if not WiFiWorker.wait_and_connect(WIFI_SSID, WIFI_PASS, WIFI_INTERFACE):
         return
         
-    logger.info("Warte 5s auf Netzwerk-Stack...")
+    logger.info("Warte 5s auf DHCP...")
     await asyncio.sleep(5)
     
     success, sock, dest = UDPWorker.start_session()
     
     if success:
-        logger.info("--- SESSION AKTIV ---")
+        logger.info("--- KAMERA VERBUNDEN ---")
         try:
             while True:
                 await asyncio.sleep(3)
@@ -182,7 +205,7 @@ async def main():
                 sock.sendto(bytes.fromhex("f1e00000"), dest)
         except KeyboardInterrupt: pass
     
-    sock.close()
+    if sock: sock.close()
 
 if __name__ == "__main__":
     try: asyncio.run(main())
