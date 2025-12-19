@@ -78,13 +78,16 @@ class WiFiWorker:
     def connect_nmcli(ssid, password):
         logger.info(f">>> SCHRITT 2: Verbinde WLAN {ssid}...")
         
-        # Scan erzwingen, damit der Pi das Netz sieht
-        subprocess.run(["sudo", "nmcli", "device", "wifi", "rescan"], capture_output=True)
-        # Kurze Wartezeit für Scan-Ergebnisse
-        import time
-        time.sleep(3) 
+        # 1. Altes Profil löschen (WICHTIG!)
+        # Das behebt den "key-mgmt" Fehler, indem wir bei Null anfangen.
+        subprocess.run(["sudo", "nmcli", "connection", "delete", ssid], capture_output=True)
         
-        # Verbinden
+        # 2. Scan erzwingen (damit nmcli das Netz 'sieht' und die Verschlüsselung erkennt)
+        subprocess.run(["sudo", "nmcli", "device", "wifi", "rescan"], capture_output=True)
+        time.sleep(4) # Scan braucht Zeit
+        
+        # 3. Verbinden
+        logger.info("Sende Verbindungsanfrage...")
         cmd = ["sudo", "nmcli", "device", "wifi", "connect", ssid, "password", password]
         proc = subprocess.run(cmd, capture_output=True, text=True)
         
