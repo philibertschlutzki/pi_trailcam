@@ -25,7 +25,7 @@ CMD_WAKEUP = bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
 ARTEMIS_TOKEN = "MzlB36X/IVo8ZzI5rG9j1w=="
 
 # UDP Settings
-CAMERA_IP = "192.168.43.1" # Standard IP for the camera AP
+CAMERA_IP = "192.168.30.1" # Standard IP for the camera AP
 CAMERA_PORT = 40611        # Port found in logs
 LOCAL_PORT = 5085          # Local port to bind to
 
