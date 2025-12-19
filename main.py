@@ -2,203 +2,235 @@ import asyncio
 import logging
 import sys
 import time
+import struct
+import socket
+import json
+import subprocess
+from bleak import BleakScanner, BleakClient
 
-# Configure logging
-import argparse
+# --- CONFIGURATION ---
+# Replace with your camera's actual MAC address if known to speed up connection
+CAMERA_BLE_MAC = None  # Auto-scan if None
 
-parser = argparse.ArgumentParser(description="KJK230 Camera Controller")
-parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-args, unknown = parser.parse_known_args()
+# UUIDs for KJK Camera (Standard for this chipset)
+# These are the standard Artemis BLE Service/Char UUIDs
+UUID_SERVICE = "0000ffe0-0000-1000-8000-00805f9b34fb"
+UUID_WRITE   = "0000ffe1-0000-1000-8000-00805f9b34fb"
+UUID_NOTIFY  = "0000ffe2-0000-1000-8000-00805f9b34fb"
 
+# The "Magic" Wake-up Command [0x13, 0x57, 0x01...] found in DevSetupDialog.java
+CMD_WAKEUP = bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
+
+# The Static UDP Token (Derived from Wireshark Frame 2743)
+ARTEMIS_TOKEN = "MzlB36X/IVo8ZzI5rG9j1w=="
+
+# UDP Settings
+CAMERA_IP = "192.168.43.1" # Standard IP for the camera AP
+CAMERA_PORT = 40611        # Port found in logs
+LOCAL_PORT = 5085          # Local port to bind to
+
+# Logging Setup
 logging.basicConfig(
-    level=logging.DEBUG if args.debug else logging.INFO,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler(sys.stdout)]
 )
-logger = logging.getLogger("Main")
+logger = logging.getLogger("KJK_Controller")
 
-if args.debug:
-    logger.info("Debug mode enabled")
+# --- GLOBAL STATE ---
+wifi_creds = {"ssid": None, "pwd": None}
+stop_event = asyncio.Event()
 
-from modules.ble_manager import BLEManager
-from modules.wifi_manager import WiFiManager
-from modules.camera_client import CameraClient
-from modules.ble_token_listener import TokenListener
-import config
+# --- MODULES ---
 
-async def main():
-    """
-    Complete workflow with 3 phases.
-    Phase 1: BLE Wake
-    Phase 2: Token Extraction via BLE
-    Phase 3: UDP Login with variant testing
-    
-    FIX #25: Added proper timing between BLE wakeup and UDP connection.
-    Camera's UDP stack needs ~8 seconds to initialize after BLE magic packet.
-    """
-    logger.info("Starting KJK230 Camera Controller...")
+class BLEWorker:
+    @staticmethod
+    async def wake_and_get_creds():
+        """Connects via BLE, sends wake command, waits for WiFi creds."""
+        logger.info(f"Scanning for camera ({CAMERA_BLE_MAC if CAMERA_BLE_MAC else 'Auto'})...")
 
-    # Step 1: Define MAC Address
-    mac_address = config.BLE_MAC_ADDRESS
-    if not mac_address:
-        logger.info("BLE MAC Address not in config. Scanning...")
-        mac_address = await BLEManager.scan_for_camera()
-        if not mac_address:
-            logger.critical("Could not find KJK Camera via BLE. Exiting.")
-            return
-        logger.info(f"Using found MAC Address: {mac_address}")
-    else:
-        logger.info(f"Using Configured MAC Address: {mac_address}")
-
-    CAMERA_IP = config.CAM_IP
-    ble_client = None
-
-    try:
-        # PHASE 1: BLE WAKE
-        logger.info("="*60)
-        logger.info("PHASE 1: BLE WAKE")
-        logger.info("="*60)
-
-        # Updated: Keep connection open for token extraction
-        success, ble_client = await BLEManager.wake_camera(mac_address, keep_connected=True)
-
-        if not success:
-            logger.error("Failed to wake camera or establish BLE connection.")
-            return
-
-        if not ble_client or not ble_client.is_connected:
-            logger.error("BLE Client not connected after wake phase.")
-            return
-
-        # PHASE 2: TOKEN EXTRACTION
-        logger.info("="*60)
-        logger.info("PHASE 2: TOKEN EXTRACTION")
-        logger.info("="*60)
-
-        # FIX #18: Register notification handler IMMEDIATELY
-        # (before camera sends data, which happens ~1-5 seconds after magic packet)
-        # This prevents race condition where camera sends token before handler is ready
-        token_listener = TokenListener(mac_address, logger, client=ble_client)
-        
-        logger.info("Registering notification handler...")
-        await token_listener.start_listening()
-        logger.info("Notification handler is ready to receive token.")
-
-        # Now wait for camera to send token notification
-        # (camera sends token ~1-5 seconds after magic packet)
-        # Timeout increased to 15s because camera needs time to power up
-        logger.info("Waiting for camera to send token notification...")
-        creds = await token_listener.wait_for_token(timeout=15)
-
-        # We can disconnect BLE now with proper error handling
-        logger.info("Token extracted. Disconnecting BLE...")
-        await _disconnect_ble_safely(ble_client)
-        ble_client = None
-
-        logger.info(f"Success: Token: {creds['token'][:20]}...")
-        logger.info(f"Success: Sequence from BLE: {creds['sequence'].hex()}")
-
-        # PHASE 3: UDP LOGIN
-        logger.info("="*60)
-        logger.info("PHASE 3: UDP LOGIN")
-        logger.info("="*60)
-
-        logger.info("Waiting for WiFi connection...")
-        wifi = WiFiManager()
-        if not wifi.connect_to_camera_wifi():
-            logger.error("Failed to connect to Camera WiFi. Exiting.")
-            return
-
-        # FIX #25: Critical timing fix
-        # After BLE wakeup, camera's UDP stack needs time to initialize.
-        # Official app (TrailCam Go) shows ~7-8 second delay before discovery succeeds.
-        # Apply delay AFTER WiFi connected, BEFORE UDP discovery attempts.
-        logger.info(f"[TIMING FIX #25] Waiting {config.CAMERA_STARTUP_DELAY}s for camera UDP stack initialization...")
-        time.sleep(config.CAMERA_STARTUP_DELAY)
-        logger.info(f"[TIMING FIX #25] Camera should now be ready for UDP discovery.")
-
-        camera = CameraClient(CAMERA_IP, logger)
-        camera.set_session_credentials(creds['token'], creds['sequence'])
-
-        # Use connect_with_retries which includes discovery
-        if camera.connect_with_retries():
-            # Attempt standard login first
-            if camera.login():
-                logger.info("\n" + "SUCCESS "*10)
-                logger.info("AUTHENTICATION SUCCESSFUL!")
-                logger.info("SUCCESS "*10 + "\n")
-            # Fallback to variant testing if standard login fails
-            elif camera.try_all_variants():
-                logger.info("\n" + "SUCCESS "*10)
-                logger.info("AUTHENTICATION SUCCESSFUL (via fallback)!")
-                logger.info("SUCCESS "*10 + "\n")
-            else:
-                logger.error("FAILED: Login failed with all variants")
-                camera.close()
-                return False
-
-            # Keep alive for demonstration
-            logger.info("Keeping session alive for 10s...")
-            await asyncio.sleep(10)
-            camera.close()
-            return True
+        device = None
+        if CAMERA_BLE_MAC:
+            device = await BleakScanner.find_device_by_address(CAMERA_BLE_MAC, timeout=10.0)
         else:
-            logger.error("Failed to connect UDP socket (Discovery/Connection failed)")
+            device = await BleakScanner.find_device_by_filter(
+                lambda d, ad: d.name and ("KJK" in d.name or "Trail" in d.name),
+                timeout=10.0
+            )
+
+        if not device:
+            logger.error("Camera not found via BLE.")
             return False
 
-    except asyncio.TimeoutError:
-        logger.error("FAILED: Token extraction timeout")
-        return False
-    except Exception as e:
-        logger.error(f"FAILED: Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-    finally:
-        # Ensure BLE client is disconnected if something failed
-        if ble_client and ble_client.is_connected:
-            logger.info("Cleaning up BLE connection...")
-            await _disconnect_ble_safely(ble_client)
+        logger.info(f"Found device: {device.name} ({device.address})")
 
+        def notification_handler(sender, data):
+            # Parse incoming data. The App skips the first 8 bytes (header) then parses string.
+            try:
+                # Payload format: [Header 8B] [JSON String]
+                if len(data) > 8:
+                    payload = data[8:]
+                    text_data = payload.decode('utf-8', errors='ignore')
 
-async def _disconnect_ble_safely(client):
-    """
-    Safely disconnect BLE client with comprehensive error handling.
-    
-    Handles known issues with:
-    - EOFError from dbus-fast on abnormal disconnects (Pi Zero 2W)
-    - TimeoutError if camera killed connection
-    - Incomplete reads when connection is already dead
-    
-    Args:
-        client (BleakClient): The BLE client to disconnect
-    """
-    if not client:
+                    # Look for JSON start
+                    if "{" in text_data:
+                        json_str = text_data[text_data.find("{"):]
+                        logger.debug(f"Received BLE Data: {json_str}")
+
+                        try:
+                            data = json.loads(json_str)
+                            if "ssid" in data and "pwd" in data:
+                                wifi_creds["ssid"] = data["ssid"]
+                                wifi_creds["pwd"] = data["pwd"]
+                                logger.info(f"CAPTURED CREDENTIALS -> SSID: {wifi_creds['ssid']}, PASS: {wifi_creds['pwd']}")
+                                stop_event.set() # Signal that we have what we need
+                        except json.JSONDecodeError:
+                            pass # Might be a partial packet, ignore
+            except Exception as e:
+                logger.error(f"Error parsing BLE notification: {e}")
+
+        async with BleakClient(device) as client:
+            logger.info("BLE Connected!")
+
+            await client.start_notify(UUID_NOTIFY, notification_handler)
+            logger.info("Subscribed to notifications.")
+
+            logger.info("Sending Wake-Up Command...")
+            await client.write_gatt_char(UUID_WRITE, CMD_WAKEUP)
+
+            # Wait for credentials (timeout 20s as camera boots WiFi)
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=20.0)
+            except asyncio.TimeoutError:
+                logger.warning("Timed out waiting for WiFi credentials via BLE.")
+
+            logger.info("Disconnecting BLE...")
+
+        return wifi_creds["ssid"] is not None
+
+class WiFiWorker:
+    @staticmethod
+    def connect(ssid, password):
+        """Connects to WiFi using nmcli (Linux NetworkManager)."""
+        logger.info(f"Attempting WiFi connection to {ssid}...")
+
+        # 1. Rescan to ensure AP is visible
+        subprocess.run(["nmcli", "device", "wifi", "rescan"], capture_output=True)
+        time.sleep(3) # Give scan a moment
+
+        # 2. Connect
+        # WARNING: This will disconnect your current WiFi. Ensure you have another way to control the Pi!
+        cmd = ["nmcli", "device", "wifi", "connect", ssid, "password", password]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+
+        if proc.returncode == 0:
+            logger.info("WiFi Connected Successfully!")
+            return True
+        else:
+            logger.error(f"WiFi Connection Failed: {proc.stderr}")
+            return False
+
+class UDPWorker:
+    @staticmethod
+    def start_session():
+        """Performs the UDP Handshake and Login using the correct Artemis Token."""
+        logger.info("Starting UDP Session...")
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        try:
+            sock.bind(('0.0.0.0', LOCAL_PORT))
+        except Exception as e:
+            logger.warning(f"Could not bind to fixed port {LOCAL_PORT}, letting OS choose: {e}")
+
+        sock.settimeout(5.0)
+        dest = (CAMERA_IP, CAMERA_PORT)
+
+        # 1. Send UDP Wakeup Packets (Standard Artemis/Goke protocol)
+        logger.info("Sending UDP Init packets...")
+        sock.sendto(bytes.fromhex("f1e00000"), dest)
+        time.sleep(0.1)
+        sock.sendto(bytes.fromhex("f1e10000"), dest)
+        time.sleep(0.5)
+
+        # 2. Build Login Packet using the STATIC TOKEN (Correction from previous attempts)
+        # Payload Structure: [CmdID 4B] [Protocol 8B] [Ver 4B] [Unk 4B] [TokenLen 4B] [Token Var]
+
+        token_bytes = ARTEMIS_TOKEN.encode('ascii') + b'\x00' # Null terminate the token
+
+        payload = b''
+        payload += b'\xd1\x00\x00\x05'          # Command ID (Handshake/Login)
+        payload += b'ARTEMIS\x00'               # Protocol Signature
+        payload += b'\x02\x00\x00\x00'          # Version 2
+        payload += b'\x04\x00\x01\x00'          # Unknown constant
+        payload += struct.pack('<I', len(token_bytes)) # Token Length (Little Endian)
+        payload += token_bytes                  # The Token Itself
+
+        # Header Construction: Magic(F1) + Type(D0) + PayloadLength(Big Endian)
+        header = struct.pack('>BBH', 0xF1, 0xD0, len(payload))
+
+        login_packet = header + payload
+
+        logger.info(f"Sending Login Packet ({len(login_packet)} bytes)...")
+        # logger.debug(f"Packet Hex: {login_packet.hex()}")
+
+        sock.sendto(login_packet, dest)
+
+        # 3. Wait for Response
+        try:
+            data, addr = sock.recvfrom(1024)
+            logger.info(f"Received UDP Response from {addr}: {data.hex()}")
+
+            # Valid response starts with Magic F1 and Type D0
+            if data.startswith(b'\xf1\xd0'):
+                logger.info("SUCCESS: Camera accepted login! UDP Channel Open.")
+                return True, sock
+            else:
+                logger.warning(f"Received unexpected response type: {data.hex()[:4]}")
+                return False, sock
+        except socket.timeout:
+            logger.error("UDP Login Timed Out. (Check IP/Firewall)")
+            return False, sock
+
+# --- MAIN WORKFLOW ---
+
+async def main():
+    logger.info("=== KJK Camera Automation Script ===")
+
+    # PHASE 1: BLE Wakeup & Credential Fetch
+    if not await BLEWorker.wake_and_get_creds():
+        logger.error("Aborting: Failed to get WiFi credentials via BLE.")
         return
-    
-    try:
-        if client.is_connected:
-            await client.disconnect()
-            logger.debug("BLE client disconnected successfully")
-    except EOFError:
-        # Known issue: dbus-fast unmarshaller gets EOFError when
-        # camera or BLE stack kills connection abnormally
-        logger.warning("BLE disconnect: Ignored EOFError (camera killed connection)")
-    except asyncio.TimeoutError:
-        # Connection timeout during disconnect
-        logger.warning("BLE disconnect: Timeout - treating as disconnected")
-    except asyncio.IncompleteReadError as e:
-        # Connection broken mid-read
-        logger.warning(f"BLE disconnect: Connection broken during read - {e}")
-    except Exception as e:
-        # Any other exception during disconnect
-        logger.warning(f"BLE disconnect: Unexpected error (treating as safe) - {type(e).__name__}: {e}")
 
+    # PHASE 2: WiFi Connection
+    # Note: Ensure this doesn't lock you out of SSH!
+    if not WiFiWorker.connect(wifi_creds["ssid"], wifi_creds["pwd"]):
+        logger.error("Aborting: Failed to connect to Camera WiFi.")
+        return
+
+    # Wait for DHCP and UDP stack initialization on the camera
+    logger.info("Waiting 5 seconds for network stack to settle...")
+    await asyncio.sleep(5)
+
+    # PHASE 3: UDP Login
+    success, sock = UDPWorker.start_session()
+
+    if success:
+        logger.info("Workflow Complete. Entering Heartbeat Loop...")
+        try:
+            while True:
+                await asyncio.sleep(3)
+                logger.info("Sending Heartbeat (Keep-Alive)...")
+                # Send Heartbeat (Packet Type E0)
+                sock.sendto(bytes.fromhex("f1e00000"), (CAMERA_IP, CAMERA_PORT))
+        except KeyboardInterrupt:
+            logger.info("Stopping...")
+
+    sock.close()
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Interrupted by user.")
-    except Exception as e:
-        logger.exception(f"Fatal error: {e}")
+        pass
