@@ -4,30 +4,29 @@ import sys
 import time
 import struct
 import socket
-import json
 import subprocess
 from bleak import BleakScanner, BleakClient
 
-# --- CONFIGURATION ---
-# Replace with your camera's actual MAC address if known to speed up connection
-CAMERA_BLE_MAC = "C6:1E:0D:E0:32:E8"  # Auto-scan if None
+# --- KONFIGURATION ---
+CAMERA_BLE_MAC = "C6:1E:0D:E0:32:E8"
 
-# UUIDs for KJK Camera (Standard for this chipset)
-# These are the standard Artemis BLE Service/Char UUIDs
-UUID_SERVICE = "00008801-0000-1000-8000-00805f9b34fb"
+# WLAN Zugangsdaten (Aus deinem Log)
+WIFI_SSID = "KJK_E0FF"
+WIFI_PASS = "85087127"
+
+# UUIDs für KJK/TC100 Kamera
 UUID_WRITE   = "00000002-0000-1000-8000-00805f9b34fb" 
-UUID_NOTIFY  = "00000003-0000-1000-8000-00805f9b34fb"
 
-# Der korrekte Wake-Up Befehl aus deinem Tshark-Log (20 Bytes)
-CMD_WAKEUP = bytes.fromhex("1357010000000000000000000000000000000000")
+# Der 8-Byte Wake-Up Befehl (Java App Standard)
+CMD_WAKEUP = bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
 
-# The Static UDP Token (Derived from Wireshark Frame 2743)
+# Der Statische UDP Token (Aus Wireshark)
 ARTEMIS_TOKEN = "MzlB36X/IVo8ZzI5rG9j1w=="
 
 # UDP Settings
-CAMERA_IP = "192.168.43.1" # Standard IP for the camera AP
-CAMERA_PORT = 40611        # Port found in logs
-LOCAL_PORT = 5085          # Local port to bind to
+CAMERA_IP = "192.168.43.1"
+CAMERA_PORT = 40611        
+LOCAL_PORT = 5085          
 
 # Logging Setup
 logging.basicConfig(
@@ -37,211 +36,150 @@ logging.basicConfig(
 )
 logger = logging.getLogger("KJK_Controller")
 
-# --- GLOBAL STATE ---
-wifi_creds = {"ssid": None, "pwd": None}
-stop_event = asyncio.Event()
-
 # --- MODULES ---
 
 class BLEWorker:
     @staticmethod
-    async def wake_and_get_creds():
-        """Connects via BLE, sends wake command, waits for WiFi creds."""
-        logger.info(f"Scanning for camera ({CAMERA_BLE_MAC if CAMERA_BLE_MAC else 'Auto'})...")
-
-        device = None
-        if CAMERA_BLE_MAC:
-            device = await BleakScanner.find_device_by_address(CAMERA_BLE_MAC, timeout=10.0)
-        else:
-            device = await BleakScanner.find_device_by_filter(
-                lambda d, ad: d.name and ("KJK" in d.name or "Trail" in d.name),
-                timeout=10.0
-            )
+    async def wake_camera():
+        """Connects via BLE and sends wake command blindly."""
+        logger.info(f"Scanning for camera ({CAMERA_BLE_MAC})...")
+        
+        device = await BleakScanner.find_device_by_address(CAMERA_BLE_MAC, timeout=10.0)
 
         if not device:
             logger.error("Camera not found via BLE.")
             return False
 
-        logger.info(f"Found device: {device.name} ({device.address})")
-
-        def notification_handler(sender, data):
-            # Parse incoming data. The App skips the first 8 bytes (header) then parses string.
-            try:
-                # Payload format: [Header 8B] [JSON String]
-                if len(data) > 8:
-                    payload = data[8:]
-                    text_data = payload.decode('utf-8', errors='ignore')
-
-                    # Look for JSON start
-                    if "{" in text_data:
-                        json_str = text_data[text_data.find("{"):]
-                        logger.debug(f"Received BLE Data: {json_str}")
-
-                        try:
-                            data = json.loads(json_str)
-                            if "ssid" in data and "pwd" in data:
-                                wifi_creds["ssid"] = data["ssid"]
-                                wifi_creds["pwd"] = data["pwd"]
-                                logger.info(f"CAPTURED CREDENTIALS -> SSID: {wifi_creds['ssid']}, PASS: {wifi_creds['pwd']}")
-                                stop_event.set() # Signal that we have what we need
-                        except json.JSONDecodeError:
-                            pass # Might be a partial packet, ignore
-            except Exception as e:
-                logger.error(f"Error parsing BLE notification: {e}")
+        logger.info(f"Found device: {device.name}")
 
         async with BleakClient(device) as client:
             logger.info("BLE Connected!")
-
-            await client.start_notify(UUID_NOTIFY, notification_handler)
-            logger.info("Subscribed to notifications.")
-
+            
+            # Wir warten nicht mehr auf Notifications, wir feuern nur den Befehl ab.
             logger.info("Sending Wake-Up Command...")
-            
-            # VERSUCH 1: Mit Bestätigung (response=True)
-            logger.info("Attempt 1: Sending with response=True...")
-            await client.write_gatt_char(UUID_WRITE, CMD_WAKEUP, response=True)
-            
-            # Warten auf Antwort (kurz)
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
-                logger.warning("No reply yet. Trying again...")
-                
-                # VERSUCH 2: Ohne Bestätigung (falls Kamera das bevorzugt)
-                if not wifi_creds["ssid"]:
-                    logger.info("Attempt 2: Sending with response=False...")
-                    await client.write_gatt_char(UUID_WRITE, CMD_WAKEUP, response=False)
-                    try:
-                        await asyncio.wait_for(stop_event.wait(), timeout=15.0)
-                    except asyncio.TimeoutError:
-                        logger.error("Still no reply from camera.")
-
-            if not wifi_creds["ssid"]:
-                logger.warning("Timed out waiting for WiFi credentials via BLE.")
-
+                await client.write_gatt_char(UUID_WRITE, CMD_WAKEUP, response=True)
+                logger.info("Command sent successfully.")
+            except Exception as e:
+                logger.warning(f"Write failed (might still have worked): {e}")
+            
+            logger.info("Waiting 3 seconds to ensure command is processed...")
+            await asyncio.sleep(3)
             logger.info("Disconnecting BLE...")
 
-        return wifi_creds["ssid"] is not None
+        return True
 
 class WiFiWorker:
     @staticmethod
     def connect(ssid, password):
-        """Connects to WiFi using nmcli (Linux NetworkManager)."""
+        """Connects to WiFi using nmcli."""
         logger.info(f"Attempting WiFi connection to {ssid}...")
-
-        # 1. Rescan to ensure AP is visible
+        
+        # 1. Rescan
         subprocess.run(["nmcli", "device", "wifi", "rescan"], capture_output=True)
-        time.sleep(3) # Give scan a moment
-
+        time.sleep(2) 
+        
         # 2. Connect
-        # WARNING: This will disconnect your current WiFi. Ensure you have another way to control the Pi!
+        logger.info(f"Connecting to {ssid} with password {password}...")
         cmd = ["nmcli", "device", "wifi", "connect", ssid, "password", password]
         proc = subprocess.run(cmd, capture_output=True, text=True)
-
+        
         if proc.returncode == 0:
             logger.info("WiFi Connected Successfully!")
             return True
         else:
             logger.error(f"WiFi Connection Failed: {proc.stderr}")
+            # Manchmal klappt es beim zweiten Versuch besser
             return False
 
 class UDPWorker:
     @staticmethod
     def start_session():
-        """Performs the UDP Handshake and Login using the correct Artemis Token."""
+        """Performs the UDP Handshake and Login."""
         logger.info("Starting UDP Session...")
-
+        
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
+        
         try:
             sock.bind(('0.0.0.0', LOCAL_PORT))
-        except Exception as e:
-            logger.warning(f"Could not bind to fixed port {LOCAL_PORT}, letting OS choose: {e}")
-
+        except Exception:
+            logger.warning(f"Port {LOCAL_PORT} busy, using random port.")
+        
         sock.settimeout(5.0)
         dest = (CAMERA_IP, CAMERA_PORT)
 
-        # 1. Send UDP Wakeup Packets (Standard Artemis/Goke protocol)
+        # 1. UDP Init / Ping
         logger.info("Sending UDP Init packets...")
         sock.sendto(bytes.fromhex("f1e00000"), dest)
         time.sleep(0.1)
         sock.sendto(bytes.fromhex("f1e10000"), dest)
         time.sleep(0.5)
 
-        # 2. Build Login Packet using the STATIC TOKEN (Correction from previous attempts)
-        # Payload Structure: [CmdID 4B] [Protocol 8B] [Ver 4B] [Unk 4B] [TokenLen 4B] [Token Var]
-
-        token_bytes = ARTEMIS_TOKEN.encode('ascii') + b'\x00' # Null terminate the token
-
+        # 2. Login Packet
+        token_bytes = ARTEMIS_TOKEN.encode('ascii') + b'\x00'
+        
         payload = b''
-        payload += b'\xd1\x00\x00\x05'          # Command ID (Handshake/Login)
-        payload += b'ARTEMIS\x00'               # Protocol Signature
-        payload += b'\x02\x00\x00\x00'          # Version 2
-        payload += b'\x04\x00\x01\x00'          # Unknown constant
-        payload += struct.pack('<I', len(token_bytes)) # Token Length (Little Endian)
-        payload += token_bytes                  # The Token Itself
+        payload += b'\xd1\x00\x00\x05'          # Cmd
+        payload += b'ARTEMIS\x00'               # Protocol
+        payload += b'\x02\x00\x00\x00'          # Ver
+        payload += b'\x04\x00\x01\x00'          # Const
+        payload += struct.pack('<I', len(token_bytes)) 
+        payload += token_bytes                  
 
-        # Header Construction: Magic(F1) + Type(D0) + PayloadLength(Big Endian)
         header = struct.pack('>BBH', 0xF1, 0xD0, len(payload))
-
         login_packet = header + payload
-
+        
         logger.info(f"Sending Login Packet ({len(login_packet)} bytes)...")
-        # logger.debug(f"Packet Hex: {login_packet.hex()}")
-
         sock.sendto(login_packet, dest)
 
         # 3. Wait for Response
         try:
             data, addr = sock.recvfrom(1024)
-            logger.info(f"Received UDP Response from {addr}: {data.hex()}")
-
-            # Valid response starts with Magic F1 and Type D0
+            logger.info(f"Received UDP Response: {data.hex()}")
             if data.startswith(b'\xf1\xd0'):
-                logger.info("SUCCESS: Camera accepted login! UDP Channel Open.")
                 return True, sock
-            else:
-                logger.warning(f"Received unexpected response type: {data.hex()[:4]}")
-                return False, sock
+            return False, sock
         except socket.timeout:
-            logger.error("UDP Login Timed Out. (Check IP/Firewall)")
+            logger.error("UDP Login Timed Out.")
             return False, sock
 
 # --- MAIN WORKFLOW ---
 
 async def main():
-    logger.info("=== KJK Camera Automation Script ===")
+    logger.info("=== KJK Camera Automation (Hardcoded Creds) ===")
 
-    # PHASE 1: BLE Wakeup & Credential Fetch
-    if not await BLEWorker.wake_and_get_creds():
-        logger.error("Aborting: Failed to get WiFi credentials via BLE.")
+    # PHASE 1: BLE Wakeup
+    if not await BLEWorker.wake_camera():
         return
 
     # PHASE 2: WiFi Connection
-    # Note: Ensure this doesn't lock you out of SSH!
-    if not WiFiWorker.connect(wifi_creds["ssid"], wifi_creds["pwd"]):
-        logger.error("Aborting: Failed to connect to Camera WiFi.")
+    # Wir geben der Kamera Zeit, das WLAN hochzufahren
+    logger.info("Waiting 10 seconds for Camera WiFi to become ready...")
+    await asyncio.sleep(10)
+    
+    if not WiFiWorker.connect(WIFI_SSID, WIFI_PASS):
+        logger.error("Aborting: Could not connect to WiFi.")
         return
 
-    # Wait for DHCP and UDP stack initialization on the camera
-    logger.info("Waiting 5 seconds for network stack to settle...")
+    # Wait for DHCP
+    logger.info("Waiting 5 seconds for IP address...")
     await asyncio.sleep(5)
 
     # PHASE 3: UDP Login
     success, sock = UDPWorker.start_session()
-
+    
     if success:
-        logger.info("Workflow Complete. Entering Heartbeat Loop...")
+        logger.info("SUCCESS! Connected to Camera via UDP.")
+        logger.info("Entering Heartbeat Loop (Press Ctrl+C to stop)...")
         try:
             while True:
                 await asyncio.sleep(3)
-                logger.info("Sending Heartbeat (Keep-Alive)...")
-                # Send Heartbeat (Packet Type E0)
+                # Heartbeat senden
                 sock.sendto(bytes.fromhex("f1e00000"), (CAMERA_IP, CAMERA_PORT))
         except KeyboardInterrupt:
-            logger.info("Stopping...")
-
+            pass
+    
     sock.close()
 
 if __name__ == "__main__":
