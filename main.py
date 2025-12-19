@@ -10,7 +10,7 @@ from bleak import BleakScanner, BleakClient
 
 # --- CONFIGURATION ---
 # Replace with your camera's actual MAC address if known to speed up connection
-CAMERA_BLE_MAC = None  # Auto-scan if None
+CAMERA_BLE_MAC = "C6:1E:0D:E0:32:E8"  # Auto-scan if None
 
 # UUIDs for KJK Camera (Standard for this chipset)
 # These are the standard Artemis BLE Service/Char UUIDs
