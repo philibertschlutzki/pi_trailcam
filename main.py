@@ -3,105 +3,66 @@ import logging
 import sys
 import socket
 import json
-import struct
 import subprocess
-import time  # <--- Das hat gefehlt!
+import time
 from bleak import BleakScanner, BleakClient
 
 # --- KONFIGURATION ---
 
-# 1. BLUETOOTH (MAC ADRESSE AUS DEINEM LOG)
+# BLE (Deine MAC & UUIDs aus dem Scan)
 CAMERA_BLE_MAC = "C6:1E:0D:E0:32:E8"  
+UUID_WRITE     = "00000002-0000-1000-8000-00805f9b34fb"
+UUID_NOTIFY    = "00000003-0000-1000-8000-00805f9b34fb"
+BLE_WAKEUP     = bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
 
-# UUIDs (Aus deinem Scan)
-UUID_WRITE  = "00000002-0000-1000-8000-00805f9b34fb"
-UUID_NOTIFY = "00000003-0000-1000-8000-00805f9b34fb"
-
-# Magic Bytes
-BLE_WAKEUP_BYTES = bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
-
-# 2. WLAN (Aus Log bestätigt)
+# WLAN
 CAM_WIFI_SSID = "KJK_E0FF" 
 CAM_WIFI_PASS = "85087127"
 
-# 3. PROTOKOLL (Aus Log bestätigt)
-CAMERA_IP = "192.168.43.1"
-CAMERA_PORT = 40611
+# TCP (Aus Log)
+CAMERA_IP     = "192.168.43.1"
+CAMERA_PORT   = 40611
 
 # Logging Setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("KJK_Controller")
+logger = logging.getLogger("KJK_Control")
 
 class BLEWorker:
     @staticmethod
     async def wake_camera(retries=3):
-        """Versucht mehrfach, die Kamera per BLE zu wecken."""
         for attempt in range(1, retries + 1):
-            logger.info(f">>> SCHRITT 1: BLE Wakeup (Versuch {attempt}/{retries})...")
-            
-            device = None
-            if CAMERA_BLE_MAC:
-                try:
-                    device = await BleakScanner.find_device_by_address(CAMERA_BLE_MAC, timeout=10.0)
-                except Exception:
-                    pass
+            logger.info(f">>> SCHRITT 1: BLE Wakeup (Versuch {attempt})...")
+            device = await BleakScanner.find_device_by_address(CAMERA_BLE_MAC, timeout=10.0)
             
             if not device:
-                logger.info("Suche via Scan nach 'KJK' oder 'Trail'...")
-                device = await BleakScanner.find_device_by_filter(
-                    lambda d, ad: d.name and ("KJK" in d.name or "Trail" in d.name or "TC100" in d.name),
-                    timeout=10.0
-                )
-
-            if not device:
-                logger.warning("Kein Gerät gefunden. Ist Bluetooth am Handy AUS?")
+                logger.warning("Kamera nicht gefunden (Ist Bluetooth am Handy aus?)")
                 continue
 
-            logger.info(f"Gerät gefunden: {device.name} ({device.address})")
-            
             try:
                 async with BleakClient(device, timeout=15.0) as client:
-                    if not client.is_connected:
-                        logger.warning("Konnte nicht verbinden.")
-                        continue
-                        
-                    logger.info(f"BLE verbunden! Schreibe auf {UUID_WRITE}...")
-                    # Schreiben mit Response=True um sicherzugehen, dass es ankam
-                    await client.write_gatt_char(UUID_WRITE, BLE_WAKEUP_BYTES, response=True)
-                    logger.info(f"Gesendet: {BLE_WAKEUP_BYTES.hex()}")
-                    
-                    logger.info("Befehl akzeptiert. Trenne Verbindung...")
-                    await asyncio.sleep(2)
-                    return True # Erfolg
-
+                    logger.info("BLE verbunden! Sende Magic Bytes...")
+                    await client.write_gatt_char(UUID_WRITE, BLE_WAKEUP, response=True)
+                    logger.info("Befehl akzeptiert. Trenne...")
+                    await asyncio.sleep(1)
+                    return True
             except Exception as e:
-                logger.error(f"❌ BLE Fehler: {repr(e)}") 
+                logger.error(f"BLE Fehler: {e}")
                 await asyncio.sleep(2)
-        
         return False
 
 class WiFiWorker:
     @staticmethod
     def connect_nmcli(ssid, password):
-        logger.info(f">>> SCHRITT 2: Verbinde WLAN {ssid} mit PW {password}...")
-        
-        # 1. Altes Profil löschen (WICHTIG gegen key-mgmt Fehler)
+        logger.info(f">>> SCHRITT 2: Verbinde WLAN {ssid}...")
         subprocess.run(["sudo", "nmcli", "connection", "delete", ssid], capture_output=True)
-        
-        # 2. Scan erzwingen
         subprocess.run(["sudo", "nmcli", "device", "wifi", "rescan"], capture_output=True)
-        logger.info("Warte 4s auf Scan-Ergebnisse...")
-        time.sleep(4) 
+        time.sleep(3)
         
-        # 3. Verbinden
         cmd = ["sudo", "nmcli", "device", "wifi", "connect", ssid, "password", password]
         proc = subprocess.run(cmd, capture_output=True, text=True)
         
         if proc.returncode == 0:
             logger.info("✅ WLAN verbunden!")
-            return True
-        elif "already connected" in proc.stderr or "successfully activated" in proc.stdout:
-            logger.info("✅ WLAN war bereits verbunden.")
             return True
         else:
             logger.error(f"❌ WLAN Fehler: {proc.stderr.strip()}")
@@ -109,29 +70,48 @@ class WiFiWorker:
 
 class ProtocolWorker:
     @staticmethod
-    def send_json_command(sock, command_dict):
-        json_str = json.dumps(command_dict)
-        json_bytes = json_str.encode('utf-8')
-        logger.info(f"Sende: {json_str}")
-        try:
-            sock.sendall(json_bytes)
-            return True
-        except Exception as e:
-            logger.error(f"Sendefehler: {e}")
-            return False
+    def wait_for_port(ip, port, timeout=60):
+        """Wartet bis zu 60s, dass der Port TCP Connects annimmt."""
+        logger.info(f"⏳ Warte auf Port {port} bei {ip} (Max {timeout}s)...")
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex((ip, port))
+            sock.close()
+            
+            if result == 0:
+                logger.info(f"✅ Port {port} ist OFFEN!")
+                return True
+            else:
+                time.sleep(1)
+                print(".", end="", flush=True)
+        
+        logger.error(f"\n❌ Timeout: Port {port} blieb geschlossen.")
+        return False
 
     @staticmethod
     def run_session():
-        logger.info(f">>> SCHRITT 3: TCP Verbindung zu {CAMERA_IP}:{CAMERA_PORT}")
-        
+        if not ProtocolWorker.wait_for_port(CAMERA_IP, CAMERA_PORT):
+            # Fallback: Port Scan, falls 40611 falsch ist
+            logger.info("Starte Notfall-Port-Scan (Ports 3000-50000)...")
+            for p in [3333, 8080, 80, 40611, 554]: # Schnellcheck
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.2)
+                if sock.connect_ex((CAMERA_IP, p)) == 0:
+                    logger.info(f"GEFUNDEN: Port {p} ist offen!")
+                    # Hier könnte man weitermachen
+                sock.close()
+            return
+
+        logger.info(f">>> SCHRITT 3: Login an {CAMERA_IP}:{CAMERA_PORT}")
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(10.0) 
+        sock.settimeout(10.0)
 
         try:
             sock.connect((CAMERA_IP, CAMERA_PORT))
-            logger.info("✅ Socket verbunden! Sende Login...")
             
-            # Login Paket (JSON) - exakt wie im Log
+            # Login Payload (Exakt aus Log)
             login_cmd = {
                 "cmdId": 0,
                 "usrName": "admin",
@@ -141,46 +121,40 @@ class ProtocolWorker:
                 "utcTime": 0,
                 "supportHeartBeat": True
             }
+            json_payload = json.dumps(login_cmd).encode('utf-8')
             
-            if not ProtocolWorker.send_json_command(sock, login_cmd):
-                return
-
+            logger.info(f"Sende Login ({len(json_payload)} bytes)...")
+            sock.sendall(json_payload)
+            
             response = sock.recv(4096)
-            resp_str = response.decode('utf-8', errors='ignore')
-            logger.info(f"Antwort: {resp_str}")
+            logger.info(f"Antwort: {response.decode('utf-8', errors='ignore')}")
 
-            if '"result":0' in resp_str or '"result": 0' in resp_str:
-                logger.info("🎉 LOGIN ERFOLGREICH! Verbindung steht.")
+            # Heartbeat Loop
+            while True:
+                time.sleep(3)
+                # Keep-Alive senden?
                 
-                # Heartbeat Loop
-                while True:
-                    time.sleep(3)
-                    # Heartbeat (Sende einfach leeres JSON oder Status Check)
-                    # Falls Verbindung abbricht, merken wir es hier
-            else:
-                logger.warning("Login Antwort war nicht 'Success'.")
-
         except Exception as e:
-            logger.error(f"❌ TCP Protokoll Fehler: {e}")
+            logger.error(f"Protokoll-Fehler: {e}")
         finally:
             sock.close()
 
 async def main():
-    # 1. BLE Wakeup (mit Retries)
     if not await BLEWorker.wake_camera():
-        logger.error("Konnte Kamera nicht per Bluetooth wecken. Abbruch.")
         return
     
-    # 2. WLAN (Zeit lassen zum Starten des APs)
-    logger.info("Warte 8s, bis Kamera-WLAN hochgefahren ist...")
-    await asyncio.sleep(8)
+    # WLAN Connect
+    logger.info("Warte 10s auf WLAN-Signal...")
+    await asyncio.sleep(10)
     
     if not WiFiWorker.connect_nmcli(CAM_WIFI_SSID, CAM_WIFI_PASS):
         return
 
-    # 3. TCP Session
-    logger.info("Warte 5s auf DHCP/Netzwerk...")
+    # WICHTIG: DHCP braucht Zeit
+    logger.info("Warte 5s auf IP-Adresse...")
     await asyncio.sleep(5)
+    
+    # Protokoll starten
     ProtocolWorker.run_session()
 
 if __name__ == "__main__":
