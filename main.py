@@ -14,9 +14,9 @@ CAMERA_BLE_MAC = "C6:1E:0D:E0:32:E8"  # Auto-scan if None
 
 # UUIDs for KJK Camera (Standard for this chipset)
 # These are the standard Artemis BLE Service/Char UUIDs
-UUID_SERVICE = "0000ffe0-0000-1000-8000-00805f9b34fb"
-UUID_WRITE   = "0000ffe1-0000-1000-8000-00805f9b34fb"
-UUID_NOTIFY  = "0000ffe2-0000-1000-8000-00805f9b34fb"
+UUID_SERVICE = "00008801-0000-1000-8000-00805f9b34fb"
+UUID_WRITE   = "00000002-0000-1000-8000-00805f9b34fb" 
+UUID_NOTIFY  = "00000003-0000-1000-8000-00805f9b34fb"
 
 # The "Magic" Wake-up Command [0x13, 0x57, 0x01...] found in DevSetupDialog.java
 CMD_WAKEUP = bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
