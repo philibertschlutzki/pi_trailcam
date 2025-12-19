@@ -18,8 +18,8 @@ UUID_SERVICE = "00008801-0000-1000-8000-00805f9b34fb"
 UUID_WRITE   = "00000002-0000-1000-8000-00805f9b34fb" 
 UUID_NOTIFY  = "00000003-0000-1000-8000-00805f9b34fb"
 
-# The "Magic" Wake-up Command [0x13, 0x57, 0x01...] found in DevSetupDialog.java
-CMD_WAKEUP = bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
+# Der korrekte Wake-Up Befehl aus deinem Tshark-Log (20 Bytes)
+CMD_WAKEUP = bytes.fromhex("1357010000000000000000000000000000000000")
 
 # The Static UDP Token (Derived from Wireshark Frame 2743)
 ARTEMIS_TOKEN = "MzlB36X/IVo8ZzI5rG9j1w=="
