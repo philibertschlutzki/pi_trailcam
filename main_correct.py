@@ -121,6 +121,12 @@ class PPPPSession:
         except Exception as e:
             logger.error(f"Send Error: {e}")
 
+    def send_d1_packet(self, payload):
+        """Sends a packet with Outer Header 0xD1 (Type 0xD1)."""
+        # Outer Header: F1 D1 [Len] [Payload]
+        packet = struct.pack('>BBH', 0xF1, 0xD1, len(payload)) + payload
+        self._send_raw(packet)
+
     def _recv(self, timeout=None):
         if not self.sock: raise ConnectionError("No socket")
         if timeout: self.sock.settimeout(timeout)
@@ -143,9 +149,9 @@ class PPPPSession:
             logger.debug(f"Sending LBCS {i+1}/3")
             self._send_raw(packet)
             resp = self._recv(timeout=0.5)
-            if resp and len(resp) >= 24 and resp[0] == 0xF1 and resp[1] == 0x43:
+            if resp and len(resp) >= 28 and resp[0] == 0xF1 and resp[1] == 0x43:
                 logger.info(f"✅ LBCS Response (0x43) received! Len={len(resp)}")
-                self.session_id = resp[20:24]
+                self.session_id = resp[24:28]
                 logger.info(f"Session ID: {self.session_id.hex()}")
                 return True
             time.sleep(0.2)
@@ -162,49 +168,65 @@ class PPPPSession:
         for i in range(3):
             logger.debug(f"Sending 0xF9 {i+1}/3")
             self._send_raw(packet)
+
+            # Reactive: Wait for ACK or LBCS broadcast
+            resp = self._recv(timeout=1.0)
+            if resp and len(resp) > 2:
+                # Accept F1 D0 (Data/ACK) or F1 D1 (Control) or F1 42 (LBCS)
+                if resp[0] == 0xF1 and resp[1] in [0xD0, 0xD1, 0x42]:
+                    logger.info(f"✅ Phase 2 ACK/Response received (Type 0x{resp[1]:02X})")
+                    return True
+
+            logger.debug("No immediate Phase 2 ACK, retrying...")
             time.sleep(0.2)
-        logger.info("Phase 2 Sent (Blind).")
 
-    def phase3_login(self):
-        logger.info(">>> PHASE 3: Login (0xD0)")
-        token_bytes = self.token.encode('ascii')
+        logger.warning("⚠️ Phase 2: No ACK received, but continuing (blindly)...")
+        return True # Continue anyway to try login
 
-        # Artemis Payload
+    def send_artemis_command(self, cmd_type, payload_bytes):
+        """Constructs and sends an Artemis Command inside PPPP 0xD0."""
+        # Artemis Payload Structure:
         # Header: ARTEMIS\x00 (8)
         # Ver: 2 (4, LE)
-        # Type: 1 (4, LE)
-        # Len: token_len (4, LE)
-        # Token
+        # Type: cmd_type (4, LE)
+        # Len: payload_len (4, LE)
+        # Payload
         # Null (1)
 
         payload_body = (
             b'ARTEMIS\x00' +
             struct.pack('<I', 2) +
-            struct.pack('<I', 1) +
-            struct.pack('<I', len(token_bytes)) +
-            token_bytes +
+            struct.pack('<I', cmd_type) +
+            struct.pack('<I', len(payload_bytes)) +
+            payload_bytes +
             b'\x00'
         )
 
         # Inner Header: D1 00 [Seq]
+        # We need to generate the sequence and inner header here
         seq = self.seq_manager.next_pppp()
         inner = struct.pack('>BBH', 0xD1, 0x00, seq)
 
         full_payload = inner + payload_body
         outer = struct.pack('>BBH', 0xF1, 0xD0, len(full_payload)) + full_payload
 
-        logger.info(f"Sending Login (Seq={seq}, Len={len(outer)})")
+        logger.info(f"TX Cmd Type={cmd_type} (Seq={seq})")
         self._send_raw(outer)
+
+    def phase3_login(self):
+        logger.info(">>> PHASE 3: Login (0xD0)")
+        token_bytes = self.token.encode('ascii')
+
+        # Use new helper
+        # Type 1 = Login
+        self.send_artemis_command(1, token_bytes)
 
         start = time.time()
         while time.time() - start < 5.0:
             resp = self._recv(timeout=1.0)
             if resp and len(resp) > 4:
-                # Check for ACK or Response
-                # Assume 0xD0 response
                 if resp[0] == 0xF1 and resp[1] == 0xD0:
                     logger.info("✅ Login Response received!")
-                    # Check if Success (contains ARTEMIS)
                     if b'ARTEMIS' in resp:
                         logger.info("🎉 Login SUCCESS!")
                         return True
@@ -216,22 +238,35 @@ class PPPPSession:
 
     def phase4_heartbeat_loop(self):
         logger.info(">>> PHASE 4/5: Heartbeat/Session Loop")
-        # Just send heartbeats periodically
-        # Heartbeat Packet?
-        # User says: "GetState/Heartbeat: TX: F1 D0 ... Inner ... ARTEMIS ... Base64"
-        # Uses Artemis command structure.
-        # But also "Simple controller uses raw byte heartbeat F1 E0..." in memory?
-        # User prompt says: "Phase 5: Session-Daten (Typ 0xD1) ... GetState/Heartbeat TX F1 D0 ... 41 52 54 ..."
-        # So it uses the Artemis JSON command format.
 
-        # We will just listen for now.
+        # Example Heartbeat / GetState Command
+        # This needs to be adapted to what the camera expects.
+        # Often it sends a JSON payload or empty payload with a specific command type.
+        # For now, we simulate a "GetState" (Type 2? or 100? or similar)
+        # Let's assume Type 2 is a generic state query for now based on typical behavior,
+        # or just send a heartbeat if known.
+        # User analysis says: "Befehlskette nachbilden ... z.B. GetState Command senden"
+
+        # We will send a command every 2 seconds.
+
+        last_heartbeat = 0
+
         while True:
             try:
-                resp = self._recv(timeout=5.0)
+                # Receive with short timeout
+                resp = self._recv(timeout=1.0)
                 if resp:
                     logger.info(f"RX: {resp.hex()[:20]}...")
-                else:
-                    logger.info("Heartbeat tick...")
+                    # TODO: Parse response
+
+                now = time.time()
+                if now - last_heartbeat > 2.0:
+                    # Send Heartbeat / GetState
+                    # Using Type 10 as dummy "GetState" or KeepAlive if not specified.
+                    # Or reuse a known command.
+                    self.send_artemis_command(10, b'{}')
+                    last_heartbeat = now
+
             except KeyboardInterrupt:
                 break
 
