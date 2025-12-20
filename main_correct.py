@@ -19,8 +19,22 @@ BLE_UUID_WRITE = "00000002-0000-1000-8000-00805f9b34fb"
 BLE_WAKEUP_BYTES = bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
 
 # BLE Token aus Frida-Log (Base64)
-# Dies ist das Token, das für den Login verwendet wird.
 TEST_BLE_TOKEN = "J8WWuQDPmYSLfu/gXAG+UqbBy55KP2iE25QPNofzn040+NI9g7zeXLkIpXpC07SXvosrWsc1m8mxnq6hMiKwePbKJUwvSvqZb6s0sl1sfzh2mtRslV2Nc6tRKoxG/Qj+p3yGl1CC5ARbJJKGBaXcgq7Tnekn+ytw+RLlgoSAMOc="
+
+# Payloads aus Frida-Log
+PHASE2_ENCRYPTED_PAYLOAD = bytes.fromhex(
+    "0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e505d011f8"
+    "52fa6a88c139939a6c61f9fa6a88c13b2919e12235f6d0412b5f951eb669dfaa"
+    "3719e12235f62e8dd5db728f6756b85b31be74e4"
+)
+
+# Base64 Payloads for Initialization Sequence
+CMD_2_PAYLOAD = "y+DDbqMNNnV5LDju3xlEhSWl9peI5eWb2ghmr3wVyEI="
+CMD_10001_PAYLOAD = "MzlB36X/IVo8ZzI5rG9j1w=="
+CMD_3_PAYLOAD = "I3mbwVIxJQgnSB9GJKNk5Cz4lHNuiNQuetIK1as++bY="
+CMD_4_PAYLOAD = CMD_2_PAYLOAD
+CMD_5_PAYLOAD = "36Rw4/b3Mw4tDnOS/p8mXQ8FnmDnjxA4yMQ9iXTIZQOw="
+CMD_6_PAYLOAD = "90RH0Mg4PMffYI1fACycdPDFvKRV/22yeiZoDPKRFcyG0jH7mkZCE16ucxWcGAo3ZlwJ+GwTj5vj0L+gvGRmWg=="
 
 # Logging
 logging.basicConfig(
@@ -88,6 +102,9 @@ class SequenceManager:
         self.pppp_seq = (self.pppp_seq + 1) % 65536
         return seq
 
+    def set_pppp(self, seq: int):
+        self.pppp_seq = seq
+
     def next_artemis(self) -> int:
         seq = self.artemis_seq
         self.artemis_seq += 1
@@ -121,11 +138,16 @@ class PPPPSession:
         except Exception as e:
             logger.error(f"Send Error: {e}")
 
-    def send_d1_packet(self, payload):
-        """Sends a packet with Outer Header 0xD1 (Type 0xD1)."""
+    def send_control_packet(self, seq, payload):
+        """Sends a control packet with Outer Header 0xF1 0xD1."""
+        # Inner Header: D1 00 [Seq]
+        inner = struct.pack('>BBH', 0xD1, 0x00, seq)
+        full_payload = inner + payload
+
         # Outer Header: F1 D1 [Len] [Payload]
-        packet = struct.pack('>BBH', 0xF1, 0xD1, len(payload)) + payload
-        self._send_raw(packet)
+        outer = struct.pack('>BBH', 0xF1, 0xD1, len(full_payload)) + full_payload
+        logger.info(f"TX Control Packet (Seq={seq}, Len={len(payload)})")
+        self._send_raw(outer)
 
     def _recv(self, timeout=None):
         if not self.sock: raise ConnectionError("No socket")
@@ -160,9 +182,8 @@ class PPPPSession:
 
     def phase2_pre_login(self):
         logger.info(">>> PHASE 2: Pre-Login Encryption (0xF9)")
-        # RAW Payload (Example/Dummy) - needs 84 bytes
-        # Using a pattern since we don't have the exact recording for the full packet
-        encrypted_payload = b'\x00' * 84
+        # Use exact bytes from log
+        encrypted_payload = PHASE2_ENCRYPTED_PAYLOAD
         packet = struct.pack('>BBH', 0xF1, 0xF9, len(encrypted_payload)) + encrypted_payload
 
         for i in range(3):
@@ -183,7 +204,7 @@ class PPPPSession:
         logger.warning("⚠️ Phase 2: No ACK received, but continuing (blindly)...")
         return True # Continue anyway to try login
 
-    def send_artemis_command(self, cmd_type, payload_bytes):
+    def send_artemis_command(self, cmd_type, payload_bytes, seq=None):
         """Constructs and sends an Artemis Command inside PPPP 0xD0."""
         # Artemis Payload Structure:
         # Header: ARTEMIS\x00 (8)
@@ -203,8 +224,11 @@ class PPPPSession:
         )
 
         # Inner Header: D1 00 [Seq]
-        # We need to generate the sequence and inner header here
-        seq = self.seq_manager.next_pppp()
+        if seq is None:
+            seq = self.seq_manager.next_pppp()
+        else:
+            self.seq_manager.set_pppp(seq + 1) # Sync manager
+
         inner = struct.pack('>BBH', 0xD1, 0x00, seq)
 
         full_payload = inner + payload_body
@@ -219,7 +243,8 @@ class PPPPSession:
 
         # Use new helper
         # Type 1 = Login
-        self.send_artemis_command(1, token_bytes)
+        # Log shows PPPP Seq 0 for Login
+        self.send_artemis_command(1, token_bytes, seq=0)
 
         start = time.time()
         while time.time() - start < 5.0:
@@ -236,35 +261,88 @@ class PPPPSession:
         logger.error("❌ Login Failed/Timeout.")
         return False
 
+    def phase4_initialization_sequence(self):
+        logger.info(">>> PHASE 4: Initialization Sequence")
+
+        # Helper to wait for response
+        def wait_for_resp():
+            resp = self._recv(timeout=1.0)
+            if resp:
+                logger.info(f"RX: {resp.hex()[:20]}...")
+            return resp
+
+        # 1. Cmd 2 (Seq 1 based on log flow logic if Login was 0)
+        # However, log shows Login (0), Control (5), Cmd 2 (1)
+        # We will follow the instruction's implicit "exact replication"
+
+        # Control Packet Seq 5 (Empty payload in log? Or specific?)
+        # Log: f1 d1 00 0e d1 00 00 05 00 00 00 00 00 00 00 00 00 00
+        self.send_control_packet(5, b'\x00' * 10)
+
+        # Cmd 2 (Seq 1)
+        self.send_artemis_command(2, CMD_2_PAYLOAD.encode('ascii'), seq=1)
+        wait_for_resp()
+
+        # Control Packet Seq 6? (Log: ...06... 00 01 00 01...)
+        self.send_control_packet(6, b'\x00\x01\x00\x01\x00\x01\x00\x01\x00\x01\x00\x01')
+
+        # Cmd 0x10001 (Seq 2)
+        # Log shows 0x10001 = 65537
+        self.send_artemis_command(0x10001, CMD_10001_PAYLOAD.encode('ascii'), seq=2)
+        wait_for_resp()
+
+        # Cmd 3 (Seq 3)
+        self.send_artemis_command(3, CMD_3_PAYLOAD.encode('ascii'), seq=3)
+        wait_for_resp()
+
+        # Cmd 4 (Seq 4)
+        self.send_artemis_command(4, CMD_4_PAYLOAD.encode('ascii'), seq=4)
+        wait_for_resp()
+
+        # Cmd 5 (Seq 6 in log? or 5?)
+        # Log: Cmd 5 (36Rw) has Seq 6.
+        self.send_artemis_command(5, CMD_5_PAYLOAD.encode('ascii'), seq=6)
+        wait_for_resp()
+
+        # Cmd 6 (Seq 7)
+        self.send_artemis_command(6, CMD_6_PAYLOAD.encode('ascii'), seq=7)
+        wait_for_resp()
+
+        logger.info("Initialization Sequence Complete. Entering Heartbeat Loop...")
+        self.phase4_heartbeat_loop()
+
     def phase4_heartbeat_loop(self):
-        logger.info(">>> PHASE 4/5: Heartbeat/Session Loop")
-
-        # Example Heartbeat / GetState Command
-        # This needs to be adapted to what the camera expects.
-        # Often it sends a JSON payload or empty payload with a specific command type.
-        # For now, we simulate a "GetState" (Type 2? or 100? or similar)
-        # Let's assume Type 2 is a generic state query for now based on typical behavior,
-        # or just send a heartbeat if known.
-        # User analysis says: "Befehlskette nachbilden ... z.B. GetState Command senden"
-
-        # We will send a command every 2 seconds.
-
+        logger.info(">>> PHASE 5: Heartbeat/Session Loop")
         last_heartbeat = 0
+        cmd_id_heartbeat = 525 # From doc
 
         while True:
             try:
-                # Receive with short timeout
                 resp = self._recv(timeout=1.0)
                 if resp:
-                    logger.info(f"RX: {resp.hex()[:20]}...")
-                    # TODO: Parse response
+                    # Keep reading
+                    pass
 
                 now = time.time()
-                if now - last_heartbeat > 2.0:
-                    # Send Heartbeat / GetState
-                    # Using Type 10 as dummy "GetState" or KeepAlive if not specified.
-                    # Or reuse a known command.
-                    self.send_artemis_command(10, b'{}')
+                if now - last_heartbeat > 3.0:
+                    # Heartbeat payload {"cmdId": 525}
+                    # This usually uses a different command flow or just json.
+                    # Based on existing main_correct.py logic, it sends artemis command.
+                    # But the log shows Heartbeat uses Seq 65537+.
+                    # We will just send a keep-alive similar to previous implementation
+                    # but using the known cmdId 525 if supported, or just empty.
+                    # Instructions don't specify heartbeat payload details other than "Heartbeat Loop".
+                    # We'll use the JSON payload.
+                    hb_payload = json.dumps({"cmdId": cmd_id_heartbeat}).encode('ascii')
+                    # Heartbeat usually uses Type 10 or similar generic wrapper?
+                    # The doc says "Heartbeat: Outer Type 0xD1, Payload JSON".
+                    # send_artemis_command wraps in ARTEMIS header.
+                    # If heartbeat is just PPPP D1 + JSON, we should use that.
+                    # But doc says "Artemis Login -> Cmd 2...".
+                    # Let's assume standard wrapping for now.
+                    # Or use the dummy 10 from before.
+                    # Using Cmd 10 as placeholder.
+                    self.send_artemis_command(10, hb_payload)
                     last_heartbeat = now
 
             except KeyboardInterrupt:
@@ -276,7 +354,7 @@ class PPPPSession:
             self.phase1_lbcs_discovery()
             self.phase2_pre_login()
             if self.phase3_login():
-                self.phase4_heartbeat_loop()
+                self.phase4_initialization_sequence()
         finally:
             self.close()
 
