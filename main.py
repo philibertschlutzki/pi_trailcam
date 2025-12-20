@@ -146,6 +146,35 @@ class PPPPSession:
         logger.info(f"TX Control Packet (Seq={seq}, Len={len(payload)})")
         self._send_raw(outer)
 
+    def send_d1_ack_type_00(self, ack_seqs):
+        """Sends Type 00 ACK (Immediate)."""
+        # Inner Header: D1 00 [Seq]
+        # Payload: List of 2-byte sequences to ACK
+        payload = b''
+        for s in ack_seqs:
+            payload += struct.pack('>H', s)
+
+        seq = self.seq_manager.next()
+        inner = struct.pack('>BBH', 0xD1, 0x00, seq)
+        full_payload = inner + payload
+        outer = struct.pack('>BBH', 0xF1, 0xD1, len(full_payload)) + full_payload
+        logger.info(f"TX ACK Type 00 (Seq={seq}) ACKs: {ack_seqs}")
+        self._send_raw(outer)
+
+    def send_d1_ack_type_01(self, ack_seqs):
+        """Sends Type 01 ACK (Bundled/Delayed)."""
+        # Inner Header: D1 01 [Seq]
+        payload = b''
+        for s in ack_seqs:
+            payload += struct.pack('>H', s)
+
+        seq = self.seq_manager.next()
+        inner = struct.pack('>BBH', 0xD1, 0x01, seq)
+        full_payload = inner + payload
+        outer = struct.pack('>BBH', 0xF1, 0xD1, len(full_payload)) + full_payload
+        logger.info(f"TX ACK Type 01 (Seq={seq}) ACKs: {ack_seqs}")
+        self._send_raw(outer)
+
     def parse_ack_packet(self, data):
         """Parse ACK packet and return acknowledged sequence numbers."""
         if len(data) < 8:
@@ -177,12 +206,27 @@ class PPPPSession:
         try:
             data, addr = self.sock.recvfrom(4096)
 
-            if data and len(data) > 4 and data[0] == 0xF1 and data[1] == 0xD1:
-                acks = self.parse_ack_packet(data)
-                for seq in acks:
-                    if seq in self.seq_manager.pending_acks:
-                        logger.debug(f"ACK received for Seq {seq}")
-                        del self.seq_manager.pending_acks[seq]
+            if data and len(data) > 4:
+                # Handle ACKs from Camera (0xF1 0xD1)
+                if data[0] == 0xF1 and data[1] == 0xD1:
+                    acks = self.parse_ack_packet(data)
+                    for seq in acks:
+                        if seq in self.seq_manager.pending_acks:
+                            logger.debug(f"ACK received for Seq {seq}")
+                            del self.seq_manager.pending_acks[seq]
+
+                # Handle Data from Camera (0xF1 0xD0) -> Send ACK
+                elif data[0] == 0xF1 and data[1] == 0xD0:
+                    # Parse Inner Header to get Seq
+                    # Outer: F1 D0 LEN LEN (4 bytes)
+                    # Inner: D1 00 SEQ (4 bytes)
+                    if len(data) >= 8:
+                        inner = data[4:]
+                        if inner[0] == 0xD1 and inner[1] == 0x00:
+                            seq = struct.unpack('>H', inner[2:4])[0]
+                            # Send Immediate ACK (Type 00)
+                            # Note: In a full implementation, we might want to buffer these for Type 01
+                            self.send_d1_ack_type_00([seq])
 
             return data
         except socket.timeout:
@@ -201,10 +245,16 @@ class PPPPSession:
             logger.debug(f"Sending LBCS {i+1}/3")
             self._send_raw(packet)
             resp = self._recv(timeout=0.5)
+            # Response handling should filter for 0x43 type
+            # Note: _recv might pick up 0x43, but it might also be consumed by ACK handler if we are not careful
+            # But here we are in phase 1, so no other traffic usually.
             if resp and len(resp) >= 28 and resp[0] == 0xF1 and resp[1] == 0x43:
                 logger.info(f"✅ LBCS Response (0x43) received! Len={len(resp)}")
+
+                # Extract Session ID (Offset 24, 4 bytes)
+                # Issue #115: Session-ID aus 0x43-Response extrahieren und verwenden
                 self.session_id = resp[24:28]
-                logger.info(f"Session ID: {self.session_id.hex()}")
+                logger.info(f"Session ID Extracted: {self.session_id.hex()}")
                 return True
             time.sleep(0.2)
         logger.warning("⚠️ Phase 1: No response. Continuing...")
@@ -339,19 +389,19 @@ class PPPPSession:
         if not self.wait_for_ack(0, timeout=2.0):
             logger.warning("Login ACK not received, but proceeding...")
 
-        # Control packet Seq 2
-        # Note: Sending Seq 2 here, and then reusing Seq 2 for CMD 0x10001 later.
-        # This is based on specific issue instructions, despite being non-monotonic.
-        self.send_control_packet(2, b'\x00' * 4)
+        # Control packet Seq 3
+        # Issue #115: Control packet MUSS Seq 3 verwenden (nicht 2)
+        self.send_control_packet(3, b'\x00' * 4)
 
         # CMD sequence with proper waiting
         # Structure: (Seq, CmdType, Payload)
         commands = [
-            (1, 2, CMD_2_PAYLOAD),
-            (2, 0x10001, CMD_10001_PAYLOAD),
-            (3, 3, CMD_3_PAYLOAD),
-            (4, 4, CMD_4_PAYLOAD),
-            (5, 5, CMD_5_PAYLOAD),
+            (1, 2, CMD_2_PAYLOAD),           # CMD 2 mit Seq 1
+            (2, 0x10001, CMD_10001_PAYLOAD), # CMD 0x10001 mit Seq 2
+            (3, 3, CMD_3_PAYLOAD),           # CMD 3 mit Seq 3 (wird überschrieben/parallel)
+            (4, 4, CMD_4_PAYLOAD),           # CMD 4 mit Seq 4
+            (5, 5, CMD_5_PAYLOAD),           # CMD 5 mit Seq 5
+            (6, 6, CMD_6_PAYLOAD),           # CMD 6 mit Seq 6
         ]
 
         for seq, cmd_type, payload in commands:
@@ -360,10 +410,6 @@ class PPPPSession:
             self.collect_responses(timeout=0.5)
 
         # Control Acknowledgments (mehrere Seq-Ranges) - handled by _recv
-
-        # CMD 6 (Seq 6+)
-        self.send_artemis_command(6, CMD_6_PAYLOAD, seq=6)
-        self.collect_responses(timeout=0.5)
 
         logger.info("Initialization Sequence Complete. Entering Heartbeat Loop...")
         self.phase5_heartbeat_loop()
