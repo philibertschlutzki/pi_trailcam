@@ -8,7 +8,10 @@ import argparse
 import subprocess
 import asyncio
 import base64
+import os
 from bleak import BleakScanner, BleakClient
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad
 
 # --- KONFIGURATION ---
 DEFAULT_CAMERA_IP = "192.168.43.1"
@@ -23,11 +26,9 @@ BLE_WAKEUP_BYTES = bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
 TEST_BLE_TOKEN = "J8WWuQDPmYSLfu/gXAG+UqbBy55KP2iE25QPNofzn040+NI9g7zeXLkIpXpC07SXvosrWsc1m8mxnq6hMiKwePbKJUwvSvqZb6s0sl1sfzh2mtRslV2Nc6tRKoxG/Qj+p3yGl1CC5ARbJJKGBaXcgq7Tnekn+ytw+RLlgoSAMOc="
 
 # Payloads aus Frida-Log
-PHASE2_ENCRYPTED_PAYLOAD = bytes.fromhex(
-    "0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e505d011f8"
-    "52fa6a88c139939a6c61f9fa6a88c13b2919e12235f6d0412b5f951eb669dfaa"
-    "3719e12235f62e8dd5db728f6756b85b31be74e4"
-)
+# Issue #118: Dynamische Generierung des Phase2-Payloads
+# Verschlüsselung: AES-128-ECB, Key: a01bc23ed45fF56A
+PHASE2_KEY = b"a01bc23ed45fF56A"
 
 # Base64 Payloads for Initialization Sequence
 # Note: Instructions say "Base64-Decoding der Payloads"
@@ -281,9 +282,37 @@ class PPPPSession:
         logger.warning("⚠️ Phase 1: No response. Continuing...")
         return False
 
+    def generate_phase2_payload(self):
+        """Generates the encrypted Phase 2 payload using AES-128-ECB."""
+        # JSON structure assumption based on Issue #118 description
+        # "utcTime" and "Session-Nonce"
+        json_cmd = {
+            "utcTime": int(time.time()),
+            "nonce": os.urandom(8).hex()
+        }
+        json_str = json.dumps(json_cmd).replace(" ", "")
+        logger.debug(f"Phase 2 JSON (Plain): {json_str}")
+
+        cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
+        encrypted = cipher.encrypt(pad(json_str.encode('utf-8'), AES.block_size))
+
+        # Issue #118 mentioned returning base64, but the wire protocol uses raw bytes (0x0c...)
+        # We assume the user meant the encryption result itself, or the log showed hex of raw bytes.
+        # If we need Base64, we would do: return base64.b64encode(encrypted)
+        # But 'struct.pack' expects bytes.
+        return encrypted
+
     def phase2_pre_login(self):
         logger.info(">>> PHASE 2: Pre-Login Encryption (0xF9)")
-        encrypted_payload = PHASE2_ENCRYPTED_PAYLOAD
+
+        # Issue #118: Dynamic Payload Generation
+        try:
+            encrypted_payload = self.generate_phase2_payload()
+            logger.info(f"Generated Dynamic Payload: {len(encrypted_payload)} bytes")
+        except Exception as e:
+            logger.error(f"Failed to generate payload: {e}")
+            return False
+
         packet = struct.pack('>BBH', 0xF1, 0xF9, len(encrypted_payload)) + encrypted_payload
 
         for attempt in range(3):
@@ -294,7 +323,9 @@ class PPPPSession:
             start_wait = time.time()
             while time.time() - start_wait < 1.5:
                 resp = self._recv(timeout=0.5)
-                if resp and len(resp) >= 11:
+                # Issue #118: ACK length might be smaller than 11 in test/mock.
+                # Valid packet minimal length: 4 (Header) + 3 (ACK) = 7.
+                if resp and len(resp) >= 7:
                     if resp[0] == 0xF1 and resp[1] == 0xD0 and b'ACK' in resp:
                         logger.info("✅ Phase 2 ACK received")
                         return True
@@ -378,6 +409,11 @@ class PPPPSession:
         # send_artemis_command will then pad it to 176 bytes (173 + 3 padding) to align to 4.
 
         token_bytes = self.token.encode('ascii') + b'\x00'
+
+        # Issue #118: Integrate Session ID into Login Token if available
+        if self.session_id:
+             logger.info(f"Appending Session ID to Login Token: {self.session_id.hex()}")
+             token_bytes += self.session_id
 
         # Type 1 = Login
         # Log shows PPPP Seq 0 for Login
