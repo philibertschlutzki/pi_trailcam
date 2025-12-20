@@ -7,6 +7,7 @@ import sys
 import argparse
 import subprocess
 import asyncio
+import base64
 from bleak import BleakScanner, BleakClient
 
 # --- KONFIGURATION ---
@@ -29,12 +30,13 @@ PHASE2_ENCRYPTED_PAYLOAD = bytes.fromhex(
 )
 
 # Base64 Payloads for Initialization Sequence
-CMD_2_PAYLOAD = "y+DDbqMNNnV5LDju3xlEhSWl9peI5eWb2ghmr3wVyEI="
-CMD_10001_PAYLOAD = "MzlB36X/IVo8ZzI5rG9j1w=="
-CMD_3_PAYLOAD = "I3mbwVIxJQgnSB9GJKNk5Cz4lHNuiNQuetIK1as++bY="
+# Note: Instructions say "Base64-Decoding der Payloads"
+CMD_2_PAYLOAD = base64.b64decode("y+DDbqMNNnV5LDju3xlEhSWl9peI5eWb2ghmr3wVyEI=")
+CMD_10001_PAYLOAD = base64.b64decode("MzlB36X/IVo8ZzI5rG9j1w==")
+CMD_3_PAYLOAD = base64.b64decode("I3mbwVIxJQgnSB9GJKNk5Cz4lHNuiNQuetIK1as++bY=")
 CMD_4_PAYLOAD = CMD_2_PAYLOAD
-CMD_5_PAYLOAD = "36Rw4/b3Mw4tDnOS/p8mXQ8FnmDnjxA4yMQ9iXTIZQOw="
-CMD_6_PAYLOAD = "90RH0Mg4PMffYI1fACycdPDFvKRV/22yeiZoDPKRFcyG0jH7mkZCE16ucxWcGAo3ZlwJ+GwTj5vj0L+gvGRmWg=="
+CMD_5_PAYLOAD = base64.b64decode("36Rw4/b3Mw4tDnOS/p8mXQ8FnmDnjxA4yMQ9iXTIZQOw=")
+CMD_6_PAYLOAD = base64.b64decode("90RH0Mg4PMffYI1fACycdPDFvKRV/22yeiZoDPKRFcyG0jH7mkZCE16ucxWcGAo3ZlwJ+GwTj5vj0L+gvGRmWg==")
 
 # Logging
 logging.basicConfig(
@@ -94,21 +96,16 @@ class WiFiWorker:
 
 class SequenceManager:
     def __init__(self):
-        self.pppp_seq = 0
-        self.artemis_seq = 0
+        self.seq = 0  # Unified sequence counter
+        self.pending_acks = {}  # Track unacknowledged packets
 
-    def next_pppp(self) -> int:
-        seq = self.pppp_seq
-        self.pppp_seq = (self.pppp_seq + 1) % 65536
+    def next(self) -> int:
+        seq = self.seq
+        self.seq = (self.seq + 1) % 65536
         return seq
 
-    def set_pppp(self, seq: int):
-        self.pppp_seq = seq
-
-    def next_artemis(self) -> int:
-        seq = self.artemis_seq
-        self.artemis_seq += 1
-        return seq
+    def set(self, seq: int):
+        self.seq = seq
 
 class PPPPSession:
     def __init__(self, ip, port, token):
@@ -149,11 +146,44 @@ class PPPPSession:
         logger.info(f"TX Control Packet (Seq={seq}, Len={len(payload)})")
         self._send_raw(outer)
 
+    def parse_ack_packet(self, data):
+        """Parse ACK packet and return acknowledged sequence numbers."""
+        if len(data) < 8:
+            return []
+
+        # Skip outer header (4 bytes: F1 D1 LEN LEN)
+        inner = data[4:]
+        if len(inner) < 4:
+            return []
+
+        # Inner: D1 00/01 SEQ SEQ
+        # The issue description says: "f1 d1 00 08 d1 00 00 02 00 06 00 06 # ACK für Seq 6"
+        # Inner: D1 00 00 02 (Header, Seq=2?) -> Payload: 00 06 00 06.
+        # "f1 d1 00 0c d1 01 00 04 00 07 00 08 00 09"
+        # Inner: D1 01 00 04 (Header, Seq=4?) -> Payload: 00 07 00 08 00 09.
+
+        num_acks = (len(inner) - 4) // 2
+        acks = []
+        for i in range(num_acks):
+            offset = 4 + (i * 2)
+            seq = struct.unpack('>H', inner[offset:offset+2])[0]
+            acks.append(seq)
+
+        return acks
+
     def _recv(self, timeout=None):
         if not self.sock: raise ConnectionError("No socket")
         if timeout: self.sock.settimeout(timeout)
         try:
             data, addr = self.sock.recvfrom(4096)
+
+            if data and len(data) > 4 and data[0] == 0xF1 and data[1] == 0xD1:
+                acks = self.parse_ack_packet(data)
+                for seq in acks:
+                    if seq in self.seq_manager.pending_acks:
+                        logger.debug(f"ACK received for Seq {seq}")
+                        del self.seq_manager.pending_acks[seq]
+
             return data
         except socket.timeout:
             return None
@@ -182,27 +212,29 @@ class PPPPSession:
 
     def phase2_pre_login(self):
         logger.info(">>> PHASE 2: Pre-Login Encryption (0xF9)")
-        # Use exact bytes from log
         encrypted_payload = PHASE2_ENCRYPTED_PAYLOAD
         packet = struct.pack('>BBH', 0xF1, 0xF9, len(encrypted_payload)) + encrypted_payload
 
-        for i in range(3):
-            logger.debug(f"Sending 0xF9 {i+1}/3")
+        for attempt in range(3):
+            logger.debug(f"Sending 0xF9 {attempt+1}/3")
             self._send_raw(packet)
 
-            # Reactive: Wait for ACK or LBCS broadcast
-            resp = self._recv(timeout=1.0)
-            if resp and len(resp) > 2:
-                # Accept F1 D0 (Data/ACK) or F1 D1 (Control) or F1 42 (LBCS)
-                if resp[0] == 0xF1 and resp[1] in [0xD0, 0xD1, 0x42]:
-                    logger.info(f"✅ Phase 2 ACK/Response received (Type 0x{resp[1]:02X})")
-                    return True
+            # Wait for specific ACK response: 0xF1 0xD0 ... ACK
+            start_wait = time.time()
+            while time.time() - start_wait < 1.5:
+                resp = self._recv(timeout=0.5)
+                if resp and len(resp) >= 11:
+                    if resp[0] == 0xF1 and resp[1] == 0xD0 and b'ACK' in resp:
+                        logger.info("✅ Phase 2 ACK received")
+                        return True
+                    # Also handle LBCS just in case?
+                    if resp[0] == 0xF1 and resp[1] == 0x42:
+                        continue # Ignore discovery broadcast
 
-            logger.debug("No immediate Phase 2 ACK, retrying...")
-            time.sleep(0.2)
+            time.sleep(0.3)
 
-        logger.warning("⚠️ Phase 2: No ACK received, but continuing (blindly)...")
-        return True # Continue anyway to try login
+        logger.warning("⚠️ Phase 2: No ACK received after 3 attempts.")
+        return False
 
     def send_artemis_command(self, cmd_type, payload_bytes, seq=None):
         """Constructs and sends an Artemis Command inside PPPP 0xD0."""
@@ -212,51 +244,90 @@ class PPPPSession:
         # Type: cmd_type (4, LE)
         # Len: payload_len (4, LE)
         # Payload
-        # Null (1)
 
-        payload_body = (
+        payload_len = len(payload_bytes)
+
+        artemis_header = (
             b'ARTEMIS\x00' +
             struct.pack('<I', 2) +
             struct.pack('<I', cmd_type) +
-            struct.pack('<I', len(payload_bytes)) +
-            payload_bytes +
-            b'\x00'
+            struct.pack('<I', payload_len) +
+            payload_bytes
         )
+
+        # Add null terminator only if needed (padding to 4-byte alignment)
+        if len(artemis_header) % 4 != 0:
+            padding = b'\x00' * (4 - (len(artemis_header) % 4))
+            artemis_header += padding
 
         # Inner Header: D1 00 [Seq]
         if seq is None:
-            seq = self.seq_manager.next_pppp()
+            seq = self.seq_manager.next()
         else:
-            self.seq_manager.set_pppp(seq + 1) # Sync manager
+            # If explicit seq is provided, we just use it.
+            # We do NOT update the manager to avoid side effects on the "unified" counter
+            # unless we know for sure it should be synced.
+            # Given the non-monotonic nature of the init sequence, we leave the manager alone.
+            pass
 
         inner = struct.pack('>BBH', 0xD1, 0x00, seq)
 
-        full_payload = inner + payload_body
+        full_payload = inner + artemis_header
         outer = struct.pack('>BBH', 0xF1, 0xD0, len(full_payload)) + full_payload
 
         logger.info(f"TX Cmd Type={cmd_type} (Seq={seq})")
         self._send_raw(outer)
 
+        # Track pending ACK
+        self.seq_manager.pending_acks[seq] = time.time()
+
+    def wait_for_ack(self, seq, timeout=2.0):
+        start = time.time()
+        while time.time() - start < timeout:
+            if seq not in self.seq_manager.pending_acks:
+                return True
+            self._recv(timeout=0.1) # This processes ACKs
+        return False
+
+    def collect_responses(self, timeout=0.5):
+        """Collect responses for a short period to clear buffers/handle ACKs."""
+        start = time.time()
+        while time.time() - start < timeout:
+            self._recv(timeout=0.1)
+
     def phase3_login(self):
         logger.info(">>> PHASE 3: Login (0xD0)")
-        token_bytes = self.token.encode('ascii')
+        # Token is Base64 string.
+        # Issue says: "Login-Befehl mit BLE-Token (Base64-encoded)".
+        # And "Payload: 173 Bytes (Token + Padding)".
+        # TEST_BLE_TOKEN is 172 chars.
+        # We append \x00 to make it 173 bytes (172 + 1).
+        # send_artemis_command will then pad it to 176 bytes (173 + 3 padding) to align to 4.
 
-        # Use new helper
+        token_bytes = self.token.encode('ascii') + b'\x00'
+
         # Type 1 = Login
         # Log shows PPPP Seq 0 for Login
         self.send_artemis_command(1, token_bytes, seq=0)
+
+        # Wait for Login ACK/Response
+        # Issue says: "Wait for Login ACK first" in phase 4.
 
         start = time.time()
         while time.time() - start < 5.0:
             resp = self._recv(timeout=1.0)
             if resp and len(resp) > 4:
                 if resp[0] == 0xF1 and resp[1] == 0xD0:
-                    logger.info("✅ Login Response received!")
+                    # Check if it's an ARTEMIS response or just ACK
                     if b'ARTEMIS' in resp:
-                        logger.info("🎉 Login SUCCESS!")
-                        return True
-                    if b'ACK' in resp:
-                        logger.info("Received ACK. Waiting for success...")
+                         logger.info("🎉 Login SUCCESS (Artemis Response)!")
+                         return True
+
+                # If we get an ACK for Seq 0, that's good too
+                if 0 not in self.seq_manager.pending_acks:
+                    logger.info("✅ Login ACK received.")
+                    # But we usually expect a Type 1 response or similar.
+                    pass
 
         logger.error("❌ Login Failed/Timeout.")
         return False
@@ -264,97 +335,76 @@ class PPPPSession:
     def phase4_initialization_sequence(self):
         logger.info(">>> PHASE 4: Initialization Sequence")
 
-        # Helper to wait for response
-        def wait_for_resp():
-            resp = self._recv(timeout=1.0)
-            if resp:
-                logger.info(f"RX: {resp.hex()[:20]}...")
-            return resp
+        # Wait for Login ACK first (Seq 0)
+        if not self.wait_for_ack(0, timeout=2.0):
+            logger.warning("Login ACK not received, but proceeding...")
 
-        # 1. Cmd 2 (Seq 1 based on log flow logic if Login was 0)
-        # However, log shows Login (0), Control (5), Cmd 2 (1)
-        # We will follow the instruction's implicit "exact replication"
+        # Control packet Seq 2
+        # Note: Sending Seq 2 here, and then reusing Seq 2 for CMD 0x10001 later.
+        # This is based on specific issue instructions, despite being non-monotonic.
+        self.send_control_packet(2, b'\x00' * 4)
 
-        # Control Packet Seq 5 (Empty payload in log? Or specific?)
-        # Log: f1 d1 00 0e d1 00 00 05 00 00 00 00 00 00 00 00 00 00
-        self.send_control_packet(5, b'\x00' * 10)
+        # CMD sequence with proper waiting
+        # Structure: (Seq, CmdType, Payload)
+        commands = [
+            (1, 2, CMD_2_PAYLOAD),
+            (2, 0x10001, CMD_10001_PAYLOAD),
+            (3, 3, CMD_3_PAYLOAD),
+            (4, 4, CMD_4_PAYLOAD),
+            (5, 5, CMD_5_PAYLOAD),
+        ]
 
-        # Cmd 2 (Seq 1)
-        self.send_artemis_command(2, CMD_2_PAYLOAD.encode('ascii'), seq=1)
-        wait_for_resp()
+        for seq, cmd_type, payload in commands:
+            self.send_artemis_command(cmd_type, payload, seq=seq)
+            time.sleep(0.2)  # Allow camera to process
+            self.collect_responses(timeout=0.5)
 
-        # Control Packet Seq 6? (Log: ...06... 00 01 00 01...)
-        self.send_control_packet(6, b'\x00\x01\x00\x01\x00\x01\x00\x01\x00\x01\x00\x01')
+        # Control Acknowledgments (mehrere Seq-Ranges) - handled by _recv
 
-        # Cmd 0x10001 (Seq 2)
-        # Log shows 0x10001 = 65537
-        self.send_artemis_command(0x10001, CMD_10001_PAYLOAD.encode('ascii'), seq=2)
-        wait_for_resp()
-
-        # Cmd 3 (Seq 3)
-        self.send_artemis_command(3, CMD_3_PAYLOAD.encode('ascii'), seq=3)
-        wait_for_resp()
-
-        # Cmd 4 (Seq 4)
-        self.send_artemis_command(4, CMD_4_PAYLOAD.encode('ascii'), seq=4)
-        wait_for_resp()
-
-        # Cmd 5 (Seq 6 in log? or 5?)
-        # Log: Cmd 5 (36Rw) has Seq 6.
-        self.send_artemis_command(5, CMD_5_PAYLOAD.encode('ascii'), seq=6)
-        wait_for_resp()
-
-        # Cmd 6 (Seq 7)
-        self.send_artemis_command(6, CMD_6_PAYLOAD.encode('ascii'), seq=7)
-        wait_for_resp()
+        # CMD 6 (Seq 6+)
+        self.send_artemis_command(6, CMD_6_PAYLOAD, seq=6)
+        self.collect_responses(timeout=0.5)
 
         logger.info("Initialization Sequence Complete. Entering Heartbeat Loop...")
-        self.phase4_heartbeat_loop()
+        self.phase5_heartbeat_loop()
 
-    def phase4_heartbeat_loop(self):
-        logger.info(">>> PHASE 5: Heartbeat/Session Loop")
-        last_heartbeat = 0
-        cmd_id_heartbeat = 525 # From doc
+    def phase5_heartbeat_loop(self):
+        logger.info(">>> PHASE 5: Heartbeat Loop")
+        last_response = time.time()
 
         while True:
             try:
                 resp = self._recv(timeout=1.0)
                 if resp:
-                    # Keep reading
-                    pass
+                    last_response = time.time()
 
-                now = time.time()
-                if now - last_heartbeat > 3.0:
-                    # Heartbeat payload {"cmdId": 525}
-                    # This usually uses a different command flow or just json.
-                    # Based on existing main_correct.py logic, it sends artemis command.
-                    # But the log shows Heartbeat uses Seq 65537+.
-                    # We will just send a keep-alive similar to previous implementation
-                    # but using the known cmdId 525 if supported, or just empty.
-                    # Instructions don't specify heartbeat payload details other than "Heartbeat Loop".
-                    # We'll use the JSON payload.
-                    hb_payload = json.dumps({"cmdId": cmd_id_heartbeat}).encode('ascii')
-                    # Heartbeat usually uses Type 10 or similar generic wrapper?
-                    # The doc says "Heartbeat: Outer Type 0xD1, Payload JSON".
-                    # send_artemis_command wraps in ARTEMIS header.
-                    # If heartbeat is just PPPP D1 + JSON, we should use that.
-                    # But doc says "Artemis Login -> Cmd 2...".
-                    # Let's assume standard wrapping for now.
-                    # Or use the dummy 10 from before.
-                    # Using Cmd 10 as placeholder.
-                    self.send_artemis_command(10, hb_payload)
-                    last_heartbeat = now
+                    # Handle Discovery packets
+                    if resp[0] == 0xF1 and resp[1] in [0x41, 0x42]:
+                        logger.debug("Discovery packet received, ignoring")
+                        continue
+
+                    # Handle ARTEMIS data
+                    if resp[0] == 0xF1 and resp[1] == 0xD0:
+                        logger.info(f"RX Artemis Data: {len(resp)} bytes")
+
+                # Check for timeout
+                if time.time() - last_response > 10.0:
+                    logger.warning("No response for 10s, reconnecting...")
+                    break
 
             except KeyboardInterrupt:
+                logger.info("User interrupt")
                 break
 
     def run(self):
         self.connect()
         try:
-            self.phase1_lbcs_discovery()
-            self.phase2_pre_login()
-            if self.phase3_login():
-                self.phase4_initialization_sequence()
+            if self.phase1_lbcs_discovery():
+                pass # Proceed
+
+            if self.phase2_pre_login():
+                if self.phase3_login():
+                    self.phase4_initialization_sequence()
         finally:
             self.close()
 
