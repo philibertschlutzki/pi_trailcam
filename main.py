@@ -97,7 +97,8 @@ class WiFiWorker:
 class SequenceManager:
     def __init__(self):
         self.seq = 0  # Unified sequence counter
-        self.pending_acks = {}  # Track unacknowledged packets
+        self.pending_acks = {}  # Track unacknowledged packets (our TX)
+        self.pending_rx_acks = [] # Track received packets we need to ACK
 
     def next(self) -> int:
         seq = self.seq
@@ -115,6 +116,7 @@ class PPPPSession:
         self.sock = None
         self.seq_manager = SequenceManager()
         self.session_id = None
+        self.last_ack_time = 0
 
     def connect(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -147,7 +149,7 @@ class PPPPSession:
         self._send_raw(outer)
 
     def send_d1_ack_type_00(self, ack_seqs):
-        """Sends Type 00 ACK (Immediate)."""
+        """Sends Type 00 ACK (Immediate/Simple)."""
         # Inner Header: D1 00 [Seq]
         # Payload: List of 2-byte sequences to ACK
         payload = b''
@@ -174,6 +176,25 @@ class PPPPSession:
         outer = struct.pack('>BBH', 0xF1, 0xD1, len(full_payload)) + full_payload
         logger.info(f"TX ACK Type 01 (Seq={seq}) ACKs: {ack_seqs}")
         self._send_raw(outer)
+
+    def process_outgoing_acks(self):
+        """Process pending ACKs and send them."""
+        if not self.seq_manager.pending_rx_acks:
+            return
+
+        # Simple strategy:
+        # If > 1 ACK pending, use Type 01.
+        # If 1 ACK pending, use Type 00.
+        # Logic could be more complex based on timing.
+
+        acks = self.seq_manager.pending_rx_acks
+        if len(acks) > 1:
+            self.send_d1_ack_type_01(acks)
+        else:
+            self.send_d1_ack_type_00(acks)
+
+        self.seq_manager.pending_rx_acks = []
+        self.last_ack_time = time.time()
 
     def parse_ack_packet(self, data):
         """Parse ACK packet and return acknowledged sequence numbers."""
@@ -215,7 +236,7 @@ class PPPPSession:
                             logger.debug(f"ACK received for Seq {seq}")
                             del self.seq_manager.pending_acks[seq]
 
-                # Handle Data from Camera (0xF1 0xD0) -> Send ACK
+                # Handle Data from Camera (0xF1 0xD0) -> Queue ACK
                 elif data[0] == 0xF1 and data[1] == 0xD0:
                     # Parse Inner Header to get Seq
                     # Outer: F1 D0 LEN LEN (4 bytes)
@@ -224,9 +245,9 @@ class PPPPSession:
                         inner = data[4:]
                         if inner[0] == 0xD1 and inner[1] == 0x00:
                             seq = struct.unpack('>H', inner[2:4])[0]
-                            # Send Immediate ACK (Type 00)
-                            # Note: In a full implementation, we might want to buffer these for Type 01
-                            self.send_d1_ack_type_00([seq])
+                            # Queue ACK
+                            if seq not in self.seq_manager.pending_rx_acks:
+                                self.seq_manager.pending_rx_acks.append(seq)
 
             return data
         except socket.timeout:
@@ -337,6 +358,7 @@ class PPPPSession:
             if seq not in self.seq_manager.pending_acks:
                 return True
             self._recv(timeout=0.1) # This processes ACKs
+            self.process_outgoing_acks() # Send any pending ACKs
         return False
 
     def collect_responses(self, timeout=0.5):
@@ -344,6 +366,7 @@ class PPPPSession:
         start = time.time()
         while time.time() - start < timeout:
             self._recv(timeout=0.1)
+            self.process_outgoing_acks()
 
     def phase3_login(self):
         logger.info(">>> PHASE 3: Login (0xD0)")
@@ -366,6 +389,8 @@ class PPPPSession:
         start = time.time()
         while time.time() - start < 5.0:
             resp = self._recv(timeout=1.0)
+            self.process_outgoing_acks()
+
             if resp and len(resp) > 4:
                 if resp[0] == 0xF1 and resp[1] == 0xD0:
                     # Check if it's an ARTEMIS response or just ACK
@@ -417,10 +442,13 @@ class PPPPSession:
     def phase5_heartbeat_loop(self):
         logger.info(">>> PHASE 5: Heartbeat Loop")
         last_response = time.time()
+        last_heartbeat = time.time()
 
         while True:
             try:
                 resp = self._recv(timeout=1.0)
+                self.process_outgoing_acks()
+
                 if resp:
                     last_response = time.time()
 
@@ -432,6 +460,13 @@ class PPPPSession:
                     # Handle ARTEMIS data
                     if resp[0] == 0xF1 and resp[1] == 0xD0:
                         logger.info(f"RX Artemis Data: {len(resp)} bytes")
+
+                # Send Heartbeat (CMD 5) every 5 seconds
+                if time.time() - last_heartbeat > 5.0:
+                    logger.debug("Sending Heartbeat (CMD 5)...")
+                    # Use next sequence number from manager
+                    self.send_artemis_command(5, CMD_5_PAYLOAD)
+                    last_heartbeat = time.time()
 
                 # Check for timeout
                 if time.time() - last_response > 10.0:
