@@ -3,28 +3,49 @@ import logging
 import sys
 import socket
 import json
+import struct
 import subprocess
 import time
 from bleak import BleakScanner, BleakClient
 
 # --- KONFIGURATION ---
 
-# BLE (MAC aus Log)
+# 1. BLUETOOTH (MAC aus deinem Log)
 CAMERA_BLE_MAC = "C6:1E:0D:E0:32:E8"  
 UUID_WRITE     = "00000002-0000-1000-8000-00805f9b34fb"
-BLE_WAKEUP     = bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
+BLE_WAKEUP_BYTES = bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
 
-# WLAN
+# 2. WLAN (Aus Log bestätigt)
 CAM_WIFI_SSID = "KJK_E0FF" 
 CAM_WIFI_PASS = "85087127"
 
-# TCP
+# 3. PROTOKOLL (UDP P2P / Artemis)
 CAMERA_IP     = "192.168.43.1"
 CAMERA_PORT   = 40611
 
+# Magic Bytes & Packet Types
+MAGIC_BYTE    = 0xF1
+TYPE_WAKEUP   = 0xE1
+TYPE_LOGIN    = 0xD0
+TYPE_HEARTBEAT= 0xD0 # Oft gleich wie Login/Command für JSON Payloads
+
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("KJK_Control")
+logger = logging.getLogger("KJK_Final")
+
+class PacketBuilder:
+    @staticmethod
+    def build(packet_type, payload_bytes):
+        """
+        Erstellt ein Artemis-Paket:
+        Header: [Magic F1] [Type 1B] [Length 2B BigEndian]
+        Body:   [Payload]
+        """
+        length = len(payload_bytes)
+        # struct.pack: B=unsigned char (1 byte), H=unsigned short (2 bytes)
+        # > bedeutet Big Endian (Netzwerk-Byte-Order)
+        header = struct.pack('>BBH', MAGIC_BYTE, packet_type, length)
+        return header + payload_bytes
 
 class BLEWorker:
     @staticmethod
@@ -32,55 +53,43 @@ class BLEWorker:
         for attempt in range(1, retries + 1):
             logger.info(f">>> SCHRITT 1: BLE Wakeup (Versuch {attempt})...")
             
-            # Kurzer Scan Check ob Gerät überhaupt da ist
+            # Kurzer Check ob Kamera da ist
             device = await BleakScanner.find_device_by_address(CAMERA_BLE_MAC, timeout=8.0)
-            
             if not device:
-                logger.warning("BLE Gerät nicht gefunden (Kamera schon im WiFi Modus?)")
-                # Wenn wir die Kamera per BLE nicht sehen, ist sie evtl schon an.
-                # Wir geben hier nicht sofort auf, sondern lassen main() entscheiden.
-                continue
+                logger.warning("BLE Gerät nicht gefunden (Evtl. schon im WiFi Modus?)")
+                if attempt > 1: return False # Nach Scan-Fehler abbrechen oder weitermachen?
+                continue 
 
             try:
                 async with BleakClient(device, timeout=15.0) as client:
                     logger.info("BLE verbunden! Sende Magic Bytes...")
-                    await client.write_gatt_char(UUID_WRITE, BLE_WAKEUP, response=True)
-                    logger.info("Befehl akzeptiert.")
-                    # Wir ignorieren Fehler beim Trennen, da die Kamera oft hart trennt
+                    await client.write_gatt_char(UUID_WRITE, BLE_WAKEUP_BYTES, response=True)
+                    logger.info("BLE Befehl akzeptiert.")
                     return True
             except Exception as e:
-                # Ein Fehler NACH dem Senden ist oft kein echter Fehler, da die Kamera rebootet
-                if "Befehl akzeptiert" in str(e): 
-                    return True
-                logger.error(f"BLE Fehler (oft normal beim Umschalten): {e}")
-                await asyncio.sleep(2)
+                # "Not connected" Fehler sind normal beim Umschalten auf WiFi
+                logger.info(f"BLE Aktion beendet ({e}). Kamera sollte starten.")
+                return True 
         return False
 
 class WiFiWorker:
     @staticmethod
-    def is_wifi_visible(ssid):
-        """Prüft kurz, ob das WLAN schon sichtbar ist."""
-        logger.info("Prüfe, ob Kamera-WLAN schon aktiv ist...")
+    def is_connected_to(ssid):
         try:
-            # Schneller Scan
-            subprocess.run(["sudo", "nmcli", "device", "wifi", "rescan"], capture_output=True)
-            time.sleep(2)
-            # Liste abrufen
-            result = subprocess.run(["sudo", "nmcli", "-t", "-f", "SSID", "dev", "wifi"], capture_output=True, text=True)
-            if ssid in result.stdout:
-                logger.info(f"✅ WLAN '{ssid}' gefunden! Überspringe BLE.")
-                return True
-        except Exception:
-            pass
-        logger.info("WLAN noch nicht sichtbar.")
-        return False
+            res = subprocess.run(["iwgetid", "-r"], capture_output=True, text=True)
+            return ssid in res.stdout.strip()
+        except:
+            return False
 
     @staticmethod
     def connect_nmcli(ssid, password):
         logger.info(f">>> SCHRITT 2: Verbinde WLAN {ssid}...")
         
-        # Verbindungsprofil bereinigen (verhindert Key-Mgmt Fehler)
+        # Verbindung bereinigen
         subprocess.run(["sudo", "nmcli", "connection", "delete", ssid], capture_output=True)
+        # Scan triggern
+        subprocess.run(["sudo", "nmcli", "device", "wifi", "rescan"], capture_output=True)
+        time.sleep(3)
         
         # Verbinden
         cmd = ["sudo", "nmcli", "device", "wifi", "connect", ssid, "password", password]
@@ -95,89 +104,106 @@ class WiFiWorker:
 
 class ProtocolWorker:
     @staticmethod
-    def wait_for_port(ip, port, timeout=60):
-        logger.info(f"⏳ Warte auf Port {port} bei {ip} (Max {timeout}s)...")
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(1)
-            try:
-                result = sock.connect_ex((ip, port))
-                if result == 0:
-                    logger.info(f"✅ Port {port} ist OFFEN!")
-                    sock.close()
-                    return True
-            except:
-                pass
-            sock.close()
-            time.sleep(1)
-            print(".", end="", flush=True)
-        print("")
-        return False
-
-    @staticmethod
     def run_session():
-        # Warte, bis der Port wirklich da ist (verhindert Connection Refused)
-        if not ProtocolWorker.wait_for_port(CAMERA_IP, CAMERA_PORT):
-            logger.error("Kamera nicht erreichbar (Port zu).")
-            return
-
-        logger.info(f">>> SCHRITT 3: Login an {CAMERA_IP}:{CAMERA_PORT}")
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(10.0)
+        logger.info(f">>> SCHRITT 3: UDP Session an {CAMERA_IP}:{CAMERA_PORT}")
+        
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(5.0) # Timeout für Empfang
 
         try:
-            sock.connect((CAMERA_IP, CAMERA_PORT))
+            # 1. WAKE-UP / INIT (Das fehlende Puzzleteil!)
+            # Paket: F1 E1 00 04 E1 00 00 01
+            # Payload ist E1 00 00 01 (Inner Type + Seq?)
+            wakeup_payload = bytes.fromhex("E1000001") 
+            wakeup_packet = PacketBuilder.build(TYPE_WAKEUP, wakeup_payload)
             
-            # JSON Login (aus Log)
+            logger.info("Sende Wake-Up Paket (0xE1)...")
+            # Wir senden es ein paar Mal, da UDP unzuverlässig ist
+            for _ in range(3):
+                sock.sendto(wakeup_packet, (CAMERA_IP, CAMERA_PORT))
+                time.sleep(0.2)
+
+            # 2. LOGIN (JSON verpackt in 0xD0)
             login_cmd = {
                 "cmdId": 0,
                 "usrName": "admin",
                 "password": "admin",
                 "needVideo": 0,
                 "needAudio": 0,
-                "utcTime": 0,
+                "utcTime": int(time.time()),
                 "supportHeartBeat": True
             }
-            json_payload = json.dumps(login_cmd).encode('utf-8')
-            
-            logger.info(f"Sende Login...")
-            sock.sendall(json_payload)
-            
-            response = sock.recv(4096)
-            resp_text = response.decode('utf-8', errors='ignore')
-            logger.info(f"Antwort: {resp_text}")
+            json_str = json.dumps(login_cmd)
+            login_payload = json_str.encode('utf-8')
+            login_packet = PacketBuilder.build(TYPE_LOGIN, login_payload)
 
-            if '"result":0' in resp_text or '"result": 0' in resp_text:
-                logger.info("🎉 LOGIN ERFOLGREICH! Sende Heartbeats...")
-                while True:
-                    time.sleep(3)
-                    # Optional: Heartbeat senden, falls nötig
-            else:
-                logger.warning("Login fehlgeschlagen?")
+            logger.info(f"Sende Login Paket (Länge: {len(login_packet)} Bytes)...")
+            sock.sendto(login_packet, (CAMERA_IP, CAMERA_PORT))
 
+            # 3. EMPFANGSSCHLEIFE
+            while True:
+                try:
+                    data, addr = sock.recvfrom(4096)
+                    
+                    # Header parsen (ersten 4 Bytes)
+                    if len(data) >= 4:
+                        magic, p_type, length = struct.unpack('>BBH', data[:4])
+                        payload = data[4:]
+                        
+                        # Versuch, Payload als JSON zu lesen
+                        try:
+                            json_resp = json.loads(payload.decode('utf-8', errors='ignore'))
+                            logger.info(f"📩 ANTWORT (JSON): {json_resp}")
+                            
+                            if json_resp.get("result") == 0:
+                                logger.info("🎉 LOGIN ERFOLGREICH! Verbindung steht.")
+                                # Hier könnte man den Stream starten oder Heartbeats senden
+                                
+                        except:
+                            # Falls kein JSON, Hex anzeigen
+                            logger.info(f"📩 ANTWORT (HEX): {data.hex()}")
+
+                        # Heartbeat Logik (Keep-Alive)
+                        # Wenn wir eine Antwort bekommen, senden wir einen Heartbeat hinterher
+                        # cmdId 259 (Heartbeat) oder 525 (GetState)
+                        time.sleep(2)
+                        hb_cmd = {"cmdId": 259} 
+                        hb_packet = PacketBuilder.build(TYPE_HEARTBEAT, json.dumps(hb_cmd).encode('utf-8'))
+                        sock.sendto(hb_packet, (CAMERA_IP, CAMERA_PORT))
+                        logger.info("💓 Heartbeat gesendet.")
+
+                except socket.timeout:
+                    logger.warning("Keine Antwort erhalten. Sende Login erneut...")
+                    sock.sendto(login_packet, (CAMERA_IP, CAMERA_PORT))
+
+        except KeyboardInterrupt:
+            logger.info("Beende...")
         except Exception as e:
-            logger.error(f"Session Fehler: {e}")
+            logger.error(f"Fehler: {e}")
         finally:
             sock.close()
 
 async def main():
-    # NEU: Prüfe zuerst WLAN. Nur wenn weg -> BLE Wakeup
-    if WiFiWorker.is_wifi_visible(CAM_WIFI_SSID):
-        logger.info("Kamera ist bereits wach.")
+    # 1. WLAN prüfen & BLE Wakeup
+    if WiFiWorker.is_connected_to(CAM_WIFI_SSID):
+        logger.info("WLAN bereits verbunden. Überspringe BLE.")
     else:
-        if not await BLEWorker.wake_camera():
-            logger.warning("BLE fehlgeschlagen oder übersprungen. Versuche trotzdem WLAN...")
-    
-    # WLAN Verbinden
-    if not WiFiWorker.connect_nmcli(CAM_WIFI_SSID, CAM_WIFI_PASS):
-        return
+        # Versuche BLE Wakeup
+        await BLEWorker.wake_camera()
+        
+        # Warte kurz auf WLAN Start der Kamera
+        logger.info("Warte 10s auf Kamera-WLAN...")
+        await asyncio.sleep(10)
+        
+        # Verbinde WLAN
+        if not WiFiWorker.connect_nmcli(CAM_WIFI_SSID, CAM_WIFI_PASS):
+            return
 
-    # Warten auf DHCP
-    logger.info("Warte 5s auf IP-Adresse...")
+    # 2. Protokoll starten
+    # Wichtig: Warten bis DHCP durch ist
+    logger.info("Warte 5s auf stabile Netzwerkverbindung...")
     await asyncio.sleep(5)
     
-    # Protokoll
     ProtocolWorker.run_session()
 
 if __name__ == "__main__":
