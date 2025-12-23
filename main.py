@@ -8,7 +8,7 @@ import argparse
 import subprocess
 import asyncio
 import os
-import netifaces
+import threading
 from bleak import BleakScanner, BleakClient
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
@@ -42,15 +42,8 @@ ARTEMIS_HELLO = bytes.fromhex(
     "676f53414d4f633d00"
 )
 
-# Payload für 53-Byte Keep-Alive (aus traffic_port.log)
+# Payload für 53-Byte Keep-Alive (Das einzige statische Paket!)
 PAYLOAD_53 = bytes.fromhex("4d7a6c423336582f49566f385a7a49357247396a31773d3d00")
-
-# Payload für 73-Byte Status-Request
-PAYLOAD_73 = bytes.fromhex(
-    "792b444462714d4e4e6e56354c446a7533786c45"
-    "6853576c39706549356557623267686d72337756"
-    "7945493d00"
-)
 
 # Crypto
 PHASE2_KEY = b"a01bc23ed45fF56A"
@@ -59,16 +52,50 @@ PHASE2_STATIC_HEADER = bytes.fromhex("0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger("CamClient")
 
+# --- HILFSKLASSEN ---
+
+class SystemTweaks:
+    @staticmethod
+    def disable_wifi_powersave():
+        try:
+            logger.info("🔧 Deaktiviere WLAN Power-Management...")
+            subprocess.run(["sudo", "iwconfig", "wlan0", "power", "off"], check=False)
+        except Exception as e:
+            logger.warning(f"Konnte Power-Save nicht deaktivieren: {e}")
+
+class NetworkPinger(threading.Thread):
+    def __init__(self, target_ip):
+        super().__init__()
+        self.target_ip = target_ip
+        self.daemon = True
+        self.running = True
+
+    def run(self):
+        logger.info("📡 Background ICMP Ping gestartet.")
+        while self.running:
+            try:
+                subprocess.run(
+                    ["ping", "-c", "1", "-W", "1", self.target_ip], 
+                    stdout=subprocess.DEVNULL, 
+                    stderr=subprocess.DEVNULL
+                )
+                time.sleep(1.0) 
+            except Exception:
+                pass
+    
+    def stop(self):
+        self.running = False
+
 class BLEWorker:
     @staticmethod
     async def wake_camera(mac):
         logger.info(f"Suche BLE {mac}...")
         try:
-            dev = await BleakScanner.find_device_by_address(mac, timeout=45.0)
+            dev = await BleakScanner.find_device_by_address(mac, timeout=20.0)
             if not dev: 
                 logger.warning("BLE Gerät nicht gefunden (vielleicht schon wach?).")
                 return False
-            async with BleakClient(dev, timeout=15.0) as client:
+            async with BleakClient(dev, timeout=10.0) as client:
                 await client.write_gatt_char("00000002-0000-1000-8000-00805f9b34fb", 
                                              bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]), 
                                              response=True)
@@ -81,6 +108,7 @@ class BLEWorker:
 class WiFiWorker:
     @staticmethod
     def connect(ssid, password):
+        SystemTweaks.disable_wifi_powersave()
         try:
             iw_out = subprocess.run(["iwgetid", "-r"], capture_output=True, text=True).stdout.strip()
             if iw_out == ssid:
@@ -94,9 +122,13 @@ class WiFiWorker:
         time.sleep(3)
         cmd = ["sudo", "nmcli", "d", "wifi", "connect", ssid, "password", password, "ifname", "wlan0"]
         res = subprocess.run(cmd, capture_output=True)
+        
+        SystemTweaks.disable_wifi_powersave()
+
         if res.returncode == 0:
             logger.info("WLAN verbunden.")
             return True
+        
         err_msg = res.stderr.decode('utf-8', errors='ignore').strip()
         logger.error(f"WLAN Fehler: {err_msg}")
         return False
@@ -107,10 +139,8 @@ class Session:
         self.local_ip = None
         self.active_port = None
         self.running = True
-        
-        # RUDP State
-        self.global_seq = 1 # Header-Sequenz
-        self.cmd_cnt = 1    # Interner Body-Counter
+        self.global_seq = 1 
+        self.cmd_cnt = 1    
 
     def setup_network(self):
         try:
@@ -119,7 +149,7 @@ class Session:
             self.local_ip = s.getsockname()[0]
             s.close()
         except:
-            logger.error("❌ Netzwerk nicht bereit.")
+            logger.error("❌ Netzwerk nicht bereit (Keine IP).")
             return False
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -142,40 +172,25 @@ class Session:
         if self.global_seq == 0: self.global_seq = 1
         return s
 
-    def build_packet(self, seq_to_use, is_status_req):
-        # Erhöht internen Counter
+    def build_heartbeat_packet(self, seq_to_use):
+        """Erstellt NUR das 53-Byte Keep-Alive Paket"""
         self.cmd_cnt = (self.cmd_cnt + 1) % 255
         
         pkt = bytearray()
-        
-        # Header (Länge berechnen)
-        # 53 Byte Paket = Header Len 0x31 (49) + 4 = 53
-        # 73 Byte Paket = Header Len 0x45 (69) + 4 = 73
-        
-        if is_status_req:
-            # 73 Byte Paket (Status)
-            pkt.extend(bytes.fromhex("f1d00045d10000")) 
-        else:
-            # 53 Byte Paket (Keep-Alive)
-            pkt.extend(bytes.fromhex("f1d00031d10000"))
-            
+        # 53 Byte Paket Header (Len 0x31)
+        pkt.extend(bytes.fromhex("f1d00031d10000"))
         pkt.append(seq_to_use) 
         
         # ARTEMIS Body
         pkt.extend(bytes.fromhex("415254454d495300")) 
         pkt.extend(bytes.fromhex("02000000"))         
         
-        # Der magische Counter an Offset 20!
+        # Counter
         pkt.append(self.cmd_cnt)
         
-        if is_status_req:
-            # Rest für 73-Byte Paket
-            pkt.extend(bytes.fromhex("0000002d000000")) # Padding + Len 45
-            pkt.extend(PAYLOAD_73)
-        else:
-            # Rest für 53-Byte Paket (Wichtig: "01" Byte nach Counter aus Log)
-            pkt.extend(bytes.fromhex("00010019000000")) # Padding + Len 25
-            pkt.extend(PAYLOAD_53)
+        # Rest für 53-Byte Paket
+        pkt.extend(bytes.fromhex("00010019000000")) 
+        pkt.extend(PAYLOAD_53)
             
         return pkt
 
@@ -229,13 +244,17 @@ class Session:
                 logger.info(f"✅ Login Antwort erhalten ({len(data)} bytes).")
                 return True
         except:
-            logger.warning("Keine Antwort, versuche trotzdem weiter...")
+            logger.warning("Keine Login-Antwort, versuche trotzdem weiter...")
             return True
         return True
 
     def run(self):
+        ping_thread = None
         try:
             if self.setup_network():
+                ping_thread = NetworkPinger(TARGET_IP)
+                ping_thread.start()
+
                 if self.discover():
                     if self.login():
                         
@@ -243,19 +262,16 @@ class Session:
                         self.sock.sendto(ARTEMIS_HELLO, (TARGET_IP, self.active_port))
                         time.sleep(0.1)
                         
-                        logger.info(">>> VERBINDUNG STABILISIERT (Dual RUDP Mode)...")
+                        logger.info(">>> VERBINDUNG STABILISIERT (Nur Keep-Alive)...")
                         
                         last_send = 0
                         last_stats = time.time()
                         
-                        # RUDP Variablen
                         pending_packet = None
                         pending_seq = 0
                         waiting_for_ack = False
                         last_tx_time = 0
                         retransmits = 0
-                        
-                        toggle_type = False # Wechselt zwischen 53 und 73 bytes
                         
                         rx_count = 0
                         tx_count = 0
@@ -263,15 +279,12 @@ class Session:
                         while self.running:
                             now = time.time()
                             
-                            # --- 1. SENDEN (Stop-and-Wait ARQ) ---
+                            # --- 1. SENDEN (Nur das sichere 53-Byte Paket) ---
                             if not waiting_for_ack:
-                                # Senden alle 1.0s (schneller Takt)
-                                if now - last_send > 1.0:
+                                # Sende alle 2.5 Sekunden (gemütlicher Heartbeat, wie im Log)
+                                if now - last_send > 2.5:
                                     pending_seq = self.next_seq()
-                                    
-                                    # Wechseln zwischen Keep-Alive (53) und Status (73)
-                                    pending_packet = self.build_packet(pending_seq, toggle_type)
-                                    toggle_type = not toggle_type
+                                    pending_packet = self.build_heartbeat_packet(pending_seq)
                                     
                                     try:
                                         self.sock.sendto(pending_packet, (TARGET_IP, self.active_port))
@@ -280,19 +293,22 @@ class Session:
                                         last_tx_time = now
                                         waiting_for_ack = True
                                         retransmits = 0
-                                    except OSError: break
+                                    except OSError as e: 
+                                        logger.error(f"Send Error: {e}")
+                                        break
                             
                             else:
-                                # Warten auf ACK (Timeout 0.5s)
-                                if now - last_tx_time > 0.5:
-                                    if retransmits < 5:
+                                # Retransmission Logic
+                                if now - last_tx_time > 0.8: 
+                                    if retransmits < 3:
                                         try:
                                             self.sock.sendto(pending_packet, (TARGET_IP, self.active_port))
                                             last_tx_time = now
                                             retransmits += 1
                                         except OSError: break
                                     else:
-                                        waiting_for_ack = False # Give up
+                                        logger.warning(f"Packet Seq {pending_seq} verloren. Mache weiter.")
+                                        waiting_for_ack = False 
 
                             # --- 2. EMPFANGEN ---
                             try:
@@ -300,30 +316,27 @@ class Session:
                                 d_len = len(data)
                                 
                                 if d_len > 4 and data[0] == 0xF1:
-                                    
-                                    # DATEN von Kamera -> ACK senden
+                                    # DATEN von Kamera (0xD0) -> Wir müssen ACKen
                                     if data[1] == 0xD0:
                                         rx_seq = data[7]
                                         ack_pkt = self.build_ack(rx_seq)
                                         self.sock.sendto(ack_pkt, (TARGET_IP, self.active_port))
                                         rx_count += 1
-                                        
-                                    # ACK von Kamera -> Pending löschen
+                                    
+                                    # ACK von Kamera (0xD1) -> Unser Paket kam an
                                     elif data[1] == 0xD1:
                                         if waiting_for_ack:
-                                            # Payload ab Byte 8 prüfen
-                                            if pending_seq in data[8:]:
-                                                waiting_for_ack = False
-                                                rx_count += 1
+                                            waiting_for_ack = False
+                                            rx_count += 1
                                     
                             except socket.timeout:
                                 pass
                             except OSError:
                                 break
                             
-                            # --- 3. STATUS ---
-                            if now - last_stats > 5.0:
-                                logger.info(f"♻️  Dual RUDP: TX: {tx_count} | RX: {rx_count} | Seq: {self.global_seq} | CmdCnt: {self.cmd_cnt}")
+                            # --- 3. STATISTIK ---
+                            if now - last_stats > 10.0:
+                                logger.info(f"♻️  Heartbeat OK: TX: {tx_count} | RX: {rx_count} (Seq: {self.global_seq})")
                                 rx_count = 0
                                 tx_count = 0
                                 last_stats = now
@@ -333,13 +346,20 @@ class Session:
         except KeyboardInterrupt:
             logger.info("Abbruch durch User.")
         finally:
-            if self.sock: self.sock.close()
+            self.running = False
+            if ping_thread:
+                ping_thread.stop()
+            if self.sock: 
+                self.sock.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--wifi", action="store_true")
     parser.add_argument("--ble", action="store_true")
     args = parser.parse_args()
+
+    if os.geteuid() != 0:
+        logger.warning("⚠️  Skript läuft nicht als root. Ping und WiFi-Steuerung könnten fehlschlagen!")
 
     if args.ble:
         asyncio.run(BLEWorker.wake_camera(BLE_MAC)) 
