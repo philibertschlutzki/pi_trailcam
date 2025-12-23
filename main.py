@@ -25,7 +25,7 @@ BLE_MAC = "C6:1E:0D:E0:32:E8"
 # --- RAW PAYLOAD BODIES ---
 LBCS_PAYLOAD = bytes.fromhex("f14100144c42435300000000000000004343434a4a000000")
 
-# ARTEMIS Hello Body (Nur der Inhalt, Header wird dynamisch gebaut)
+# ARTEMIS Hello Body
 ARTEMIS_HELLO_BODY = bytes.fromhex(
     "415254454d495300" 
     "0200000001000000ad0000004a385757"
@@ -42,12 +42,12 @@ ARTEMIS_HELLO_BODY = bytes.fromhex(
     "2b726431446d453d00"
 )
 
-# Magic Packets (aus Log, ohne Header)
-MAGIC_BODY_1 = bytes.fromhex("03000000000000") # Wird zu seq 2
-MAGIC_BODY_2 = bytes.fromhex("010000")         # Wird zu seq 3
+# KORREKTUR: Magic Packets sind nur Nullen als Payload!
+MAGIC_BODY_1 = bytes.fromhex("000000000000") # 6 Bytes Nullen
+MAGIC_BODY_2 = bytes.fromhex("0000")         # 2 Bytes Nullen
 
-# Keep-Alive Payload (Artemis Heartbeat)
-HEARTBEAT_BODY_START = bytes.fromhex("415254454d49530002000000") # Artemis...
+# Keep-Alive Parts
+HEARTBEAT_BODY_START = bytes.fromhex("415254454d49530002000000") 
 HEARTBEAT_PAYLOAD_END = bytes.fromhex("000100190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00")
 
 # Crypto
@@ -63,7 +63,7 @@ class SystemTweaks:
     @staticmethod
     def disable_wifi_powersave():
         try:
-            subprocess.run(["sudo", "iwconfig", "wlan0", "power", "off"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "iwconfig", "wlan0", "power", "off"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except: pass
 
 class NetworkPinger(threading.Thread):
@@ -133,7 +133,7 @@ class Session:
         self.sock = None
         self.active_port = None
         self.running = True
-        self.global_seq = 0 # Start bei 0
+        self.global_seq = 0 
         self.cmd_cnt = 1    
 
     def setup_network(self):
@@ -157,55 +157,34 @@ class Session:
         return self.global_seq
 
     def build_rudp_packet(self, packet_type, payload):
-        """
-        KORRIGIERTE Header-Struktur (12 Bytes Minimum für ACKs, 4 Bytes Preamble)
-        Format: F1 [Type] [LenH] [LenL] | D1 00 00 [Seq] | [Payload...]
-        """
         seq = self.next_seq()
-        
-        # Preamble ist immer 4 Bytes: D1 00 00 Seq
-        # Length Field im Header = 4 (Preamble) + len(payload)
-        
-        body_len = len(payload) + 4
+        body_len = len(payload) + 4 # 4 Bytes Preamble (D1 00 00 Seq)
         
         header = bytearray()
-        header.append(0xF1)         # Magic
-        header.append(packet_type)  # Type (D0 oder D1)
+        header.append(0xF1)
+        header.append(packet_type)
         header.append((body_len >> 8) & 0xFF)
         header.append(body_len & 0xFF)
         
-        # Preamble (Der kritische Teil!)
-        header.append(0xD1)         # Immer D1 im Body-Start
-        header.append(0x00)         # Padding 1
-        header.append(0x00)         # Padding 2
-        header.append(seq)          # Sequence
+        # Preamble
+        header.append(0xD1)
+        header.append(0x00)
+        header.append(0x00)
+        header.append(seq)
         
         return header + payload, seq
 
     def build_heartbeat(self):
-        """Erstellt das Keep-Alive Paket"""
         self.cmd_cnt = (self.cmd_cnt + 1) % 255
-        
         body = bytearray()
         body.extend(HEARTBEAT_BODY_START)
         body.append(self.cmd_cnt)   
         body.extend(HEARTBEAT_PAYLOAD_END)
-        
-        # Heartbeats sind Type D0 im Header, aber D1 intern
         return self.build_rudp_packet(0xD0, body) 
 
     def build_ack(self, rx_seq):
-        """
-        Baut ein ACK Paket.
-        ACK Payload Struktur aus Log: 00 [RxSeq] 00 [RxSeq]
-        """
-        payload = bytearray()
-        payload.append(0x00)
-        payload.append(rx_seq)
-        payload.append(0x00)
-        payload.append(rx_seq)
-        
-        # ACK ist Type D1
+        # ACK Payload: 00 [RxSeq] 00 [RxSeq]
+        payload = bytearray([0x00, rx_seq, 0x00, rx_seq])
         return self.build_rudp_packet(0xD1, payload)[0]
 
     def discover_and_login(self):
@@ -231,7 +210,12 @@ class Session:
         pkt = struct.pack('>BBH', 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)) + PHASE2_STATIC_HEADER + enc
         
         self.sock.sendto(pkt, (TARGET_IP, self.active_port))
-        time.sleep(0.2)
+        
+        try:
+            data, _ = self.sock.recvfrom(1024)
+            if data: logger.info("✅ Login Antwort erhalten.")
+        except: pass 
+        
         return True
 
     def run(self):
@@ -249,21 +233,22 @@ class Session:
                     time.sleep(0.05)
                     
                     logger.info(">>> Sende Magic Handshake Pakete...")
+                    # 1. Magic Packet (6 Bytes Zero Payload)
                     pkt, seq = self.build_rudp_packet(0xD1, MAGIC_BODY_1)
                     self.sock.sendto(pkt, (TARGET_IP, self.active_port))
                     time.sleep(0.02)
                     
+                    # 2. Magic Packet (2 Bytes Zero Payload)
                     pkt, seq = self.build_rudp_packet(0xD1, MAGIC_BODY_2)
                     self.sock.sendto(pkt, (TARGET_IP, self.active_port))
                     
-                    logger.info(">>> VERBINDUNG STABILISIERT...")
+                    logger.info(">>> VERBINDUNG STABILISIERT (Keep-Alive Mode)...")
                     
                     last_send = 0
                     last_stats = time.time()
                     waiting_for_ack = False
                     last_tx_time = 0
                     retransmits = 0
-                    
                     rx_count = 0
                     tx_count = 0
                     
@@ -302,7 +287,9 @@ class Session:
                             if len(data) > 4 and data[0] == 0xF1:
                                 # Data (D0) -> ACK senden
                                 if data[1] == 0xD0:
-                                    rx_seq = data[7] # Seq ist an Byte 7 im neuen Format
+                                    rx_seq = data[7]
+                                    self.build_ack(rx_seq) # Just build to increment seq? No send?
+                                    # KORREKTUR: Wir müssen das ACK senden!
                                     self.sock.sendto(self.build_ack(rx_seq), (TARGET_IP, self.active_port))
                                     rx_count += 1
                                 
@@ -316,7 +303,7 @@ class Session:
                         
                         # C) STATS
                         if now - last_stats > 10.0:
-                            logger.info(f"♻️  Stats: TX: {tx_count} | RX: {rx_count} (Seq: {self.global_seq})")
+                            logger.info(f"♻️  Heartbeat OK: TX: {tx_count} | RX: {rx_count} (Seq: {self.global_seq})")
                             rx_count = 0; tx_count = 0; last_stats = now
 
                 else: logger.error("❌ Discovery Failed.")
