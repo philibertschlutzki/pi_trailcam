@@ -24,14 +24,14 @@ DEFAULT_BLE_MAC = "C6:1E:0D:E0:32:E8"
 BLE_UUID_WRITE = "00000002-0000-1000-8000-00805f9b34fb"
 BLE_WAKEUP_BYTES = bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
 
-# Login Token (aus deinem Log)
+# Login Token
 TEST_BLE_TOKEN = "J8WWuQDPmYSLfu/gXAG+UqbBy55KP2iE25QPNofzn040+NI9g7zeXLkIpXpC07SXvosrWsc1m8mxnq6hMiKwePbKJUwvSvqZb6s0sl1sfzh2mtRslV2Nc6tRKoxG/Qj+p3yGl1CC5ARbJJKGBaXcgq7Tnekn+ytw+RLlgoSAMOc="
 
 # --- CRYPTO KONFIGURATION (PHASE 2) ---
 PHASE2_KEY = b"a01bc23ed45fF56A"
 PHASE2_STATIC_HEADER = bytes.fromhex("0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5")
 
-# Statische Payloads (Replay aus Log)
+# Statische Payloads
 CMD_2_PAYLOAD = base64.b64decode("y+DDbqMNNnV5LDju3xlEhSWl9peI5eWb2ghmr3wVyEI=")
 CMD_10001_PAYLOAD = base64.b64decode("MzlB36X/IVo8ZzI5rG9j1w==")
 CMD_3_PAYLOAD = base64.b64decode("I3mbwVIxJQgnSB9GJKNk5Cz4lHNuiNQuetIK1as++bY=")
@@ -67,17 +67,19 @@ class InnerType:
 class BLEWorker:
     @staticmethod
     async def wake_camera(mac_address):
-        logger.info(f"Attempting BLE Wakeup for {mac_address}...")
+        # Timeout massiv erhöht auf 45s, da Kamera nur alle 30s sendet
+        logger.info(f"Suche BLE Gerät {mac_address} (Scan: 45s)...")
         try:
-            device = await BleakScanner.find_device_by_address(mac_address, timeout=10.0)
+            device = await BleakScanner.find_device_by_address(mac_address, timeout=45.0)
             if not device:
-                logger.warning("BLE Device not found (already in WiFi mode?)")
+                logger.warning("❌ BLE Gerät nicht gefunden (Kamera im Deep Sleep oder außer Reichweite?)")
                 return False
 
+            logger.info(f"Gerät gefunden! Verbinde...")
             async with BleakClient(device, timeout=15.0) as client:
                 logger.info("BLE Connected. Sending Wakeup Magic Bytes...")
                 await client.write_gatt_char(BLE_UUID_WRITE, BLE_WAKEUP_BYTES, response=True)
-                logger.info("BLE Wakeup Sent.")
+                logger.info("✅ BLE Wakeup Sent.")
                 return True
         except Exception as e:
             logger.error(f"BLE Error: {e}")
@@ -227,7 +229,6 @@ class PPPPSession:
 
     # --- PHASE 0: UDP WAKEUP ---
     def udp_stack_wakeup(self):
-        # Sende aggressive Wakeup Pakete
         pkt1 = struct.pack('>BBH', 0xF1, PacketType.WAKEUP_1, 0x0000)
         pkt2 = struct.pack('>BBH', 0xF1, PacketType.WAKEUP_2, 0x0000)
         for _ in range(4):
@@ -238,7 +239,6 @@ class PPPPSession:
 
     # --- PHASE 1: DISCOVERY ---
     def phase1_lbcs_discovery(self, retries=3, timeout=1.0):
-        # Konfigurierbares Discovery für den Loop
         payload = b'LBCS' + b'\x00'*8 + b'CCCJJ' + b'\x00'*3
         packet = struct.pack('>BBH', 0xF1, PacketType.LBCS_REQ, len(payload)) + payload
 
@@ -358,35 +358,25 @@ class PPPPSession:
     def run_session(self):
         self.connect()
         try:
-            # 1. ROBUSTER DISCOVERY LOOP (Bis zu 40s)
             logger.info("Starte Wakeup/Discovery Loop (Max 40s)...")
             start_time = time.time()
             discovery_success = False
 
             while time.time() - start_time < 40:
-                # Schritt A: Wakeup senden
                 self.udp_stack_wakeup()
-                
-                # Schritt B: Kurz Discovery probieren (nicht blockieren)
-                # Wir versuchen es 1x mit 2s Timeout
                 if self.phase1_lbcs_discovery(retries=1, timeout=2.0):
                     discovery_success = True
                     break
-                
                 logger.info("Kamera antwortet noch nicht, erneuter Versuch...")
-                # Kurze Pause für den Bootvorgang der Kamera
                 time.sleep(1.0)
 
             if not discovery_success:
                 logger.error("❌ TIMEOUT: Kamera hat nach 40s nicht geantwortet.")
                 return
 
-            # Ab hier ist die Verbindung stabil
-            # 3. Dynamic Encryption Handshake
             if not self.phase2_pre_login():
                 return False
 
-            # 4. Login Sequence
             self.execute_artemis_sequence()
 
             logger.info(">>> PHASE 5: Heartbeat Loop")
@@ -418,14 +408,21 @@ def main():
     parser.add_argument("--ble", action="store_true", help="BLE Wakeup first")
     args = parser.parse_args()
 
+    # 1. WIFI Connect (falls gewünscht)
     if args.wifi:
         if not WiFiWorker.connect_nmcli(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS):
             return
 
+    # 2. BLE Wakeup (jetzt robuster!)
     if args.ble:
-        asyncio.run(BLEWorker.wake_camera(DEFAULT_BLE_MAC))
-        time.sleep(5)
+        success = asyncio.run(BLEWorker.wake_camera(DEFAULT_BLE_MAC))
+        if success:
+            logger.info("Warte 10 Sekunden auf WLAN-Boot...")
+            time.sleep(10)
+        else:
+            logger.warning("BLE fehlgeschlagen oder Timeout. Versuche UDP trotzdem...")
 
+    # 3. UDP Session
     session = PPPPSession(args.ip, DEFAULT_CAMERA_PORT, args.token)
     session.run_session()
 
