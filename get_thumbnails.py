@@ -26,6 +26,7 @@ BLE_MAC = "C6:1E:0D:E0:32:E8"
 
 # --- CRYPTO & CONSTANTS ---
 PHASE2_KEY = b"a01bc23ed45fF56A"
+# Statischer Header Teil für Login
 PHASE2_STATIC_HEADER = bytes.fromhex("0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5")
 LBCS_PAYLOAD = bytes.fromhex("f14100144c42435300000000000000004343434a4a000000")
 
@@ -67,22 +68,25 @@ def analyze_packet(data):
         return "HEARTBEAT (Raw 00000000)"
     
     if len(data) < 8 or data[0] != 0xF1:
-        # Check for specific error codes seen in logs
-        if data == b'\xf1\xe0\x00\x00': return "ERROR (0xE0) - Packet Rejected?"
-        if data == b'\xf1\xf0\x00\x00': return "FATAL (0xF0) - State Error?"
+        if data == b'\xf1\xe0\x00\x00': return "ERROR (0xE0) - Session/Auth Fail"
+        if data == b'\xf1\xf0\x00\x00': return "FATAL (0xF0) - State Error"
         return f"UNKNOWN/RAW ({len(data)} bytes)"
     
     p_type = data[1]
     rudp_seq = data[7]
     base_info = f"RUDP(Type={p_type:02X}, Seq={rudp_seq})"
     
-    if p_type == 0xD1: # ACK/Control
+    if p_type == 0xD1:
         if len(data) >= 12:
             ack_seq = data[9]
             return f"{base_info} -> ACK(für Seq {ack_seq})"
         return f"{base_info} -> CONTROL"
         
-    if p_type == 0xD0: # DATA
+    if p_type == 0xD0:
+        # Check for Text ACK
+        if len(data) >= 11 and data[8:11] == b'ACK':
+             return f"{base_info} -> TEXT ACK"
+
         if len(data) > 24 and data[8:15] == b'ARTEMIS':
             try:
                 app_seq = struct.unpack('<I', data[20:24])[0]
@@ -128,6 +132,7 @@ class HeartbeatThread(threading.Thread):
     def run(self):
         while self.running:
             try:
+                # Sende 4 Null-Bytes als Keep-Alive
                 self.sock.sendto(HEARTBEAT_PAYLOAD, self.target)
                 time.sleep(1.0)
             except: pass
@@ -145,10 +150,14 @@ class Session:
 
     def log_packet(self, direction, data, addr=None):
         if not self.debug: return
+        # Filter LBCS Broadcast noise (Type 42)
+        if len(data) > 2 and data[1] == 0x42: return 
+        
         desc = analyze_packet(data)
         addr_str = f" {addr}" if addr else ""
         logger.debug(f"{direction} {desc} ({len(data)} bytes){addr_str}")
-        logger.debug("\n" + hex_dump_str(data))
+        if "UNKNOWN" in desc or "ARTEMIS" in desc or "Login" in desc:
+             logger.debug("\n" + hex_dump_str(data))
 
     def setup_network(self):
         try:
@@ -182,20 +191,17 @@ class Session:
     def build_packet(self, p_type, payload):
         seq = self.next_seq()
         bl = len(payload) + 4
+        # RUDP Header: F1 [Type] [LenH] [LenL] D1 00 00 [Seq]
         return bytearray([0xF1, p_type, (bl >> 8) & 0xFF, bl & 0xFF, 0xD1, 0x00, 0x00, seq]) + payload, seq
 
     def build_cmd_packet(self, encrypted_payload):
-        """
-        CORRECTED: Returns ONLY the ARTEMIS payload (bytes).
-        Does NOT wrap in RUDP anymore (handled by send_reliable).
-        """
+        # 1. Base64
         b64_payload = base64.b64encode(encrypted_payload)
+        # 2. Artemis Header
         self.app_seq += 1
-        # ARTEMIS Header: Magic(8) + Type(4) + AppSeq(4) + Len(4)
         wrapper_header = b'ARTEMIS\x00' + struct.pack('<III', 2, self.app_seq, len(b64_payload) + 1)
         full_payload = wrapper_header + b64_payload + b'\x00'
-        
-        # FIX: return payload directly, do not call build_packet here!
+        # Return raw payload (send_reliable wraps it in RUDP)
         return full_payload
 
     def build_batch_ack(self, seq_list):
@@ -210,12 +216,16 @@ class Session:
         self.sock.sendto(pkt, (TARGET_IP, self.active_port))
 
     def send_reliable(self, p_type, payload, label="Packet"):
-        """Wraps payload in RUDP and sends with retry"""
-        # FIX: Always wrap in RUDP. No special check for 0xF1 needed anymore.
         pkt, seq = self.build_packet(p_type, payload)
         
+        # Check if already wrapped
+        if isinstance(payload, bytes) and len(payload) > 8 and payload[0] == 0xF1:
+            pkt = payload
+            seq = pkt[7]
+
         logger.info(f"Sende {label} (Seq {seq})...")
         
+        # Burst senden (3x schnell), dann warten
         for attempt in range(5): 
             self.send_raw(pkt)
             
@@ -226,16 +236,28 @@ class Session:
                     self.log_packet("📥 [RX]", data, addr)
 
                     if len(data) > 8 and data[0] == 0xF1:
-                        if data[1] == 0xD1: # ACK
-                            if (len(data) >= 10 and data[9] == seq) or data[7] == seq:
-                                return True
-                        elif data[1] == 0xD0: # DATA (implicit ACK)
-                             pass 
+                        # Case A: Protocol ACK (D1)
+                        if data[1] == 0xD1: 
+                            if (len(data) >= 10 and data[9] == seq) or data[7] == seq: return True
+                        
+                        # Case B: Text ACK (D0 containing 'ACK')
+                        elif data[1] == 0xD0: 
+                             if len(data) >= 11 and data[8:11] == b'ACK':
+                                 # logger.debug("✅ Text ACK empfangen")
+                                 return True
+                             
+                             # Case C: Implicit ACK (Daten kommen zurück)
+                             # Wenn wir schon Daten empfangen (z.B. Dateiliste), war der Request erfolgreich
+                             # Wir returnen NICHT True, weil wir die Daten sonst verlieren würden.
+                             # Aber wir stoppen das Retransmit für diesen Loop
+                             pass
 
                 except socket.timeout: pass
                 except Exception: pass
             
         logger.warning(f"❌ Kein explizites ACK für {label} (Seq {seq}) nach Bursts.")
+        # Wir returnen hier False, aber im Main-Loop machen wir trotzdem weiter,
+        # da UDP manchmal ACKs verschluckt, aber die Gegenseite den Befehl trotzdem verarbeitet hat.
         return False
 
     def wait_for_data(self, timeout=8.0):
@@ -279,12 +301,7 @@ class Session:
         }
         
         enc = self.encrypt_json(req_json)
-        # build_cmd_packet returns RAW payload now
         payload = self.build_cmd_packet(enc)
-        
-        # We use send_reliable/build_packet to wrap it, OR send_raw if we build RUDP manually.
-        # But for download, usually we fire & forget. 
-        # Let's wrap it in RUDP manually for send_raw to keep sequence correct
         pkt, _ = self.build_packet(0xD0, payload)
         self.send_raw(pkt) 
         
@@ -297,11 +314,12 @@ class Session:
             try:
                 self.sock.settimeout(3.0)
                 data, addr = self.sock.recvfrom(4096)
-                if self.debug and len(received_chunks) % 10 == 0:
+                # Bei hohem Traffic (Download) loggen wir nicht jedes Paket im Debug
+                if self.debug and len(received_chunks) % 20 == 0:
                     self.log_packet("📥 [RX]", data, addr)
 
                 if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
-                    if data[4] == 0xD1: 
+                    if data[4] == 0xD1: # Bulk Header
                         seq_16 = (data[6] << 8) | data[7]
                         payload = data[8:]
                         if seq_16 not in received_chunks:
@@ -341,37 +359,43 @@ class Session:
         if not self.active_port: logger.error("Discovery Failed."); return
 
         hb = HeartbeatThread(self.sock, TARGET_IP, self.active_port)
-        hb.start()
+        # Heartbeat noch nicht starten, erst nach Login
 
         logger.info("1. Login...")
         login_payload = { "utcTime": int(time.time()), "nonce": os.urandom(8).hex() }
         enc_login = self.encrypt_json(login_payload)
-        login_body = struct.pack('>BBH', 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc_login)) + PHASE2_STATIC_HEADER + enc_login
-        self.send_raw(login_body)
-        time.sleep(0.5)
+        
+        # Build Login Packet (F9) wrapped in RUDP (via build_packet)
+        # Login Payload: Static Header + Encrypted JSON
+        full_login_payload = PHASE2_STATIC_HEADER + enc_login
+        
+        # Wir müssen das manuell bauen, da es Type F9 ist
+        if not self.send_reliable(0xF9, full_login_payload, "Login"):
+            logger.warning("Kein Login-ACK erhalten, mache trotzdem weiter...")
+        
+        hb.start() # Jetzt Heartbeat starten
+        time.sleep(0.2)
 
         logger.info("2. Handshake...")
         self.send_reliable(0xD0, ARTEMIS_HELLO, "Hello")
         
-        pkt, _ = self.build_packet(0xD1, MAGIC_BODY_1)
-        self.send_raw(pkt)
+        # Magic Packets
+        self.send_reliable(0xD0, MAGIC_BODY_1, "Magic1")
         time.sleep(0.05)
-        pkt, _ = self.build_packet(0xD1, MAGIC_BODY_2)
-        self.send_raw(pkt)
+        self.send_reliable(0xD0, MAGIC_BODY_2, "Magic2")
         time.sleep(0.5)
 
         logger.info("3. Get Media List (Cmd 768)...")
         req_list = { "cmdId": 768, "itemCntPerPage": 10, "pageNo": 0 }
         
         enc_list = self.encrypt_json(req_list)
-        # FIX: build_cmd_packet returns RAW payload now
+        # build_cmd_packet liefert RAW bytes (Artemis Header + Base64)
         payload = self.build_cmd_packet(enc_list)
         
-        # FIX: send_reliable wraps it ONCE
+        # send_reliable packt RUDP Header drauf
         if self.send_reliable(0xD0, payload, "GetMediaList"): 
-             logger.info("Warte auf Dateiliste (bis zu 10s)...")
+             logger.info("Warte auf Dateiliste...")
              resp = self.wait_for_data(timeout=10.0)
-             
              if resp and "mediaFiles" in resp:
                  files = resp["mediaFiles"]
                  logger.info(f"✅ {len(files)} Dateien gefunden.")
@@ -386,19 +410,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--wifi", action="store_true")
     parser.add_argument("--ble", action="store_true")
-    parser.add_argument("--debug", action="store_true", help="Aktiviert Hexdumps und Packet-Analyse")
+    parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
-
     setup_logging(args.debug)
-
-    if os.geteuid() != 0:
-        logger.warning("⚠️  Bitte als root starten!")
-
-    if args.ble:
-        asyncio.run(BLEWorker.wake_camera(BLE_MAC))
-        time.sleep(20)
-
-    if args.wifi:
-        WiFiWorker.connect(DEFAULT_SSID, DEFAULT_PASS)
-
+    if os.geteuid() != 0: logger.warning("⚠️  Bitte als root starten!")
+    if args.ble: asyncio.run(BLEWorker.wake_camera(BLE_MAC)); time.sleep(20)
+    if args.wifi: WiFiWorker.connect(DEFAULT_SSID, DEFAULT_PASS)
     Session(debug=args.debug).run()
