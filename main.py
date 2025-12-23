@@ -28,16 +28,10 @@ BLE_WAKEUP_BYTES = bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00])
 TEST_BLE_TOKEN = "J8WWuQDPmYSLfu/gXAG+UqbBy55KP2iE25QPNofzn040+NI9g7zeXLkIpXpC07SXvosrWsc1m8mxnq6hMiKwePbKJUwvSvqZb6s0sl1sfzh2mtRslV2Nc6tRKoxG/Qj+p3yGl1CC5ARbJJKGBaXcgq7Tnekn+ytw+RLlgoSAMOc="
 
 # --- CRYPTO KONFIGURATION (PHASE 2) ---
-# Der gefundene AES Key aus JADX
 PHASE2_KEY = b"a01bc23ed45fF56A"
+PHASE2_STATIC_HEADER = bytes.fromhex("0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5")
 
-# Der statische Header-Teil für Phase 2 (aus den Logs extrahiert)
-# Bytes 4 bis 31 des Pakets sind konstant
-PHASE2_STATIC_HEADER = bytes.fromhex(
-    "0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5"
-)
-
-# Statische Payloads für Initialisierung (Könnten später dynamisiert werden)
+# Statische Payloads (Replay aus Log)
 CMD_2_PAYLOAD = base64.b64decode("y+DDbqMNNnV5LDju3xlEhSWl9peI5eWb2ghmr3wVyEI=")
 CMD_10001_PAYLOAD = base64.b64decode("MzlB36X/IVo8ZzI5rG9j1w==")
 CMD_3_PAYLOAD = base64.b64decode("I3mbwVIxJQgnSB9GJKNk5Cz4lHNuiNQuetIK1as++bY=")
@@ -57,15 +51,15 @@ logger = logging.getLogger("ArtemisClient")
 class PacketType:
     LBCS_REQ = 0x41
     LBCS_RESP = 0x43
-    DATA = 0xD0      # Artemis Commands / Login
-    CONTROL = 0xD1   # ACKs / Control
+    DATA = 0xD0
+    CONTROL = 0xD1
     PRE_LOGIN = 0xF9
-    WAKEUP_1 = 0xE0  # UDP Wakeup Step 1
-    WAKEUP_2 = 0xE1  # UDP Wakeup Step 2
+    WAKEUP_1 = 0xE0
+    WAKEUP_2 = 0xE1
 
 class InnerType:
-    ACK_TYPE_00 = 0x00 # Immediate
-    ACK_TYPE_01 = 0x01 # Bundled
+    ACK_TYPE_00 = 0x00
+    ACK_TYPE_01 = 0x01
     IMAGE_DATA = 0x04
 
 # --- HELPER CLASSES ---
@@ -101,7 +95,6 @@ class WiFiWorker:
         except FileNotFoundError:
             pass 
 
-        # Reconnect logic
         subprocess.run(["sudo", "nmcli", "connection", "delete", ssid], capture_output=True)
         subprocess.run(["sudo", "nmcli", "device", "wifi", "rescan"], capture_output=True)
         time.sleep(3)
@@ -150,7 +143,7 @@ class SequenceManager:
     def check_retransmissions(self):
         now = time.time()
         for seq, info in list(self.pending_acks.items()):
-            if now - info["timestamp"] > 0.5: # 500ms Retry
+            if now - info["timestamp"] > 0.5:
                 if info["retries"] < 3:
                     info["timestamp"] = now
                     info["retries"] += 1
@@ -167,8 +160,6 @@ class PPPPSession:
         self.sock = None
         self.seq_manager = SequenceManager()
         self.session_id = None
-        
-        # State
         self.pending_rx_acks = []
 
     def connect(self):
@@ -176,7 +167,7 @@ class PPPPSession:
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.sock.settimeout(2.0)
-        self.sock.bind(('0.0.0.0', 0)) # Bind to ephemeral port to receive ACKs
+        self.sock.bind(('0.0.0.0', 0))
 
     def close(self):
         if self.sock:
@@ -208,13 +199,11 @@ class PPPPSession:
         
         if outer_magic != 0xF1: return
 
-        # Handle ACKs (0xF1 0xD1)
         if outer_type == PacketType.CONTROL:
             inner = data[4:]
             if len(inner) >= 4:
                 i_magic, i_type, _ = struct.unpack('>BBH', inner[:4])
                 if i_magic == 0xD1 and i_type in [0, 1]:
-                    # Extract Seq Nums
                     num_acks = (len(inner) - 4) // 2
                     for i in range(num_acks):
                         offset = 4 + (i * 2)
@@ -222,17 +211,14 @@ class PPPPSession:
                         if self.seq_manager.acknowledge(seq):
                             logger.debug(f"ACK received for Seq {seq}")
 
-        # Handle Data (0xF1 0xD0) -> Send ACK back
         elif outer_type == PacketType.DATA:
             inner = data[4:]
             if len(inner) >= 4:
                 i_magic, i_type, seq = struct.unpack('>BBH', inner[:4])
                 if i_magic == 0xD1:
-                    # Queue ACK to be sent back (Simple Type 00 ACK)
                     self._send_ack(seq)
 
     def _send_ack(self, seq_to_ack):
-        # Sends immediate ACK Type 00
         payload = struct.pack('>H', seq_to_ack)
         seq = self.seq_manager.next_control()
         inner = struct.pack('>BBH', 0xD1, InnerType.ACK_TYPE_00, seq) + payload
@@ -241,44 +227,34 @@ class PPPPSession:
 
     # --- PHASE 0: UDP WAKEUP ---
     def udp_stack_wakeup(self):
-        logger.info(">>> PHASE 0: UDP Stack Wakeup (Magic Packets)")
-        # Paket 1: F1 E0 00 00
+        # Sende aggressive Wakeup Pakete
         pkt1 = struct.pack('>BBH', 0xF1, PacketType.WAKEUP_1, 0x0000)
-        # Paket 2: F1 E1 00 00
         pkt2 = struct.pack('>BBH', 0xF1, PacketType.WAKEUP_2, 0x0000)
-
-        # Send burst
         for _ in range(4):
             self._send_raw(pkt1)
             time.sleep(0.02)
             self._send_raw(pkt2)
             time.sleep(0.02)
-        
-        time.sleep(0.5) # Allow stack to initialize
 
     # --- PHASE 1: DISCOVERY ---
-    def phase1_lbcs_discovery(self):
-        logger.info(">>> PHASE 1: LBCS Discovery (0x41)")
+    def phase1_lbcs_discovery(self, retries=3, timeout=1.0):
+        # Konfigurierbares Discovery für den Loop
         payload = b'LBCS' + b'\x00'*8 + b'CCCJJ' + b'\x00'*3
         packet = struct.pack('>BBH', 0xF1, PacketType.LBCS_REQ, len(payload)) + payload
 
-        for i in range(3):
+        for i in range(retries):
             self._send_raw(packet)
-            resp = self._recv(timeout=1.0)
+            resp = self._recv(timeout=timeout)
 
             if resp and len(resp) >= 28 and resp[1] == PacketType.LBCS_RESP:
                 logger.info(f"✅ LBCS Response received! Len={len(resp)}")
-                self.session_id = resp[24:28] # Extract Session ID
+                self.session_id = resp[24:28]
                 logger.info(f"Session ID Extracted: {self.session_id.hex()}")
                 return True
-            time.sleep(0.2)
-        logger.warning("⚠️ Phase 1: No response. Continuing anyway...")
         return False
 
     # --- PHASE 2: DYNAMIC CRYPTO ---
     def build_phase2_packet(self):
-        """Erstellt dynamisches Phase 2 Paket mit AES."""
-        # 1. JSON Payload
         payload_dict = {
             "utcTime": int(time.time()),
             "nonce": os.urandom(8).hex()
@@ -286,11 +262,9 @@ class PPPPSession:
         json_str = json.dumps(payload_dict, separators=(',', ':'))
         logger.debug(f"Phase 2 JSON: {json_str}")
 
-        # 2. Encrypt (AES-ECB + Pad)
         cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
         encrypted_payload = cipher.encrypt(pad(json_str.encode('utf-8'), AES.block_size))
 
-        # 3. Assemble
         full_content = PHASE2_STATIC_HEADER + encrypted_payload
         header = struct.pack('>BBH', 0xF1, PacketType.PRE_LOGIN, len(full_content))
         return header + full_content
@@ -306,7 +280,6 @@ class PPPPSession:
         for attempt in range(3):
             self._send_raw(packet)
             time.sleep(0.1)
-            # Wait for ACK (or Data response)
             start = time.time()
             while time.time() - start < 1.0:
                 resp = self._recv(timeout=0.1)
@@ -315,13 +288,11 @@ class PPPPSession:
                         logger.info("✅ Phase 2 ACK received")
                         return True
         logger.warning("⚠️ Phase 2: No specific ACK received")
-        return False # Often succeeds silently
+        return False 
 
     # --- PHASE 3 & 4: COMMANDS ---
     def send_artemis_command(self, cmd_type, payload_bytes, seq=None):
         payload_len = len(payload_bytes)
-        
-        # Artemis Header
         artemis_header = (
             b'ARTEMIS\x00' +
             struct.pack('<I', 2) +
@@ -329,17 +300,13 @@ class PPPPSession:
             struct.pack('<I', payload_len) +
             payload_bytes
         )
-        # Padding
         if len(artemis_header) % 4 != 0:
             artemis_header += b'\x00' * (4 - (len(artemis_header) % 4))
 
         if seq is None: seq = self.seq_manager.next_data()
 
-        # Inner D1 Header
         inner = struct.pack('>BBH', 0xD1, 0x00, seq)
         full_payload = inner + artemis_header
-        
-        # Outer F1 D0 Header
         outer = struct.pack('>BBH', 0xF1, PacketType.DATA, len(full_payload)) + full_payload
 
         logger.info(f"TX Cmd Type={cmd_type} (Seq={seq})")
@@ -358,40 +325,31 @@ class PPPPSession:
 
     def execute_artemis_sequence(self):
         logger.info(">>> PHASE 3 & 4: Artemis Login & Init")
-
-        # Login Token construction
         token_bytes = self.token.encode('ascii') + b'\x00'
         if self.session_id:
              logger.info(f"Appending Session ID: {self.session_id.hex()}")
              token_bytes += self.session_id
         
-        # CMD 1: Login
         self.send_artemis_command(1, token_bytes, seq=0)
         self._wait_for_ack(0)
 
-        # CMD 2
         self.send_artemis_command(2, CMD_2_PAYLOAD, seq=1)
         self._wait_for_ack(1)
 
-        # CMD 10001 (Double tap)
         for seq in [2, 3]:
             self.send_artemis_command(10001, CMD_10001_PAYLOAD, seq=seq)
             self._wait_for_ack(seq)
 
-        # CMD 3 (Jump to seq 5)
         self.seq_manager.set_data(5)
         self.send_artemis_command(3, CMD_3_PAYLOAD, seq=5)
         self._wait_for_ack(5)
 
-        # CMD 4
         self.send_artemis_command(4, CMD_4_PAYLOAD, seq=6)
         self._wait_for_ack(6)
 
-        # CMD 5
         self.send_artemis_command(5, CMD_5_PAYLOAD, seq=7)
         self._wait_for_ack(7)
 
-        # CMD 6
         self.send_artemis_command(6, CMD_6_PAYLOAD, seq=8)
         self._wait_for_ack(8)
         
@@ -400,14 +358,30 @@ class PPPPSession:
     def run_session(self):
         self.connect()
         try:
-            # 1. UDP Wakeup (Fix für "Kamera antwortet nicht")
-            self.udp_stack_wakeup()
+            # 1. ROBUSTER DISCOVERY LOOP (Bis zu 40s)
+            logger.info("Starte Wakeup/Discovery Loop (Max 40s)...")
+            start_time = time.time()
+            discovery_success = False
 
-            # 2. LBCS Discovery
-            if not self.phase1_lbcs_discovery():
-                logger.error("Discovery Failed")
-                # Continue anyway, IP might be correct
+            while time.time() - start_time < 40:
+                # Schritt A: Wakeup senden
+                self.udp_stack_wakeup()
+                
+                # Schritt B: Kurz Discovery probieren (nicht blockieren)
+                # Wir versuchen es 1x mit 2s Timeout
+                if self.phase1_lbcs_discovery(retries=1, timeout=2.0):
+                    discovery_success = True
+                    break
+                
+                logger.info("Kamera antwortet noch nicht, erneuter Versuch...")
+                # Kurze Pause für den Bootvorgang der Kamera
+                time.sleep(1.0)
 
+            if not discovery_success:
+                logger.error("❌ TIMEOUT: Kamera hat nach 40s nicht geantwortet.")
+                return
+
+            # Ab hier ist die Verbindung stabil
             # 3. Dynamic Encryption Handshake
             if not self.phase2_pre_login():
                 return False
@@ -419,7 +393,6 @@ class PPPPSession:
             last_heartbeat = time.time()
 
             while True:
-                # Retransmission logic
                 for seq, packet in self.seq_manager.check_retransmissions():
                     logger.warning(f"Retransmitting Seq {seq}")
                     self._send_raw(packet)
@@ -438,7 +411,7 @@ class PPPPSession:
 # --- MAIN ---
 
 def main():
-    parser = argparse.ArgumentParser(description="Artemis Client V2")
+    parser = argparse.ArgumentParser(description="Artemis Client V2 Robust")
     parser.add_argument("--ip", default=DEFAULT_CAMERA_IP, help="Camera IP")
     parser.add_argument("--token", default=TEST_BLE_TOKEN, help="BLE Token")
     parser.add_argument("--wifi", action="store_true", help="Connect WiFi first")
