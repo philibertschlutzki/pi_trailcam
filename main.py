@@ -15,16 +15,20 @@ from Crypto.Util.Padding import pad
 
 # --- CONFIG ---
 TARGET_IP = "192.168.43.1"
-# Wir probieren ALLE üblichen Verdächtigen gleichzeitig
-TARGET_PORTS = [3333, 40611, 32108] 
-FIXED_LOCAL_PORT = 35281 # Aus Android Log übernommen
+# Wir probieren Port 40611 (aus Log) und 3333 (Standard Discovery)
+TARGET_PORTS = [40611, 3333]
+FIXED_LOCAL_PORT = 35281
 
 DEFAULT_SSID = "KJK_E0FF"
 DEFAULT_PASS = "85087127"
 BLE_MAC = "C6:1E:0D:E0:32:E8"
 
-# LBCS Handshake (Magic: F1 41)
+# PAYLOADS
+# LBCS (Magic: F1 41)
 LBCS_PAYLOAD = bytes.fromhex("f14100144c42435300000000000000004343434a4a000000")
+# Wakeup (Magic: F1 E0 / F1 E1)
+WAKEUP_1 = bytes.fromhex("f1e00000")
+WAKEUP_2 = bytes.fromhex("f1e10000")
 
 # Crypto
 PHASE2_KEY = b"a01bc23ed45fF56A"
@@ -74,11 +78,9 @@ class Session:
     def __init__(self):
         self.sock = None
         self.local_ip = None
-        self.session_id = None
         self.active_port = None
 
     def setup_network(self):
-        # 1. IP finden
         for iface in netifaces.interfaces():
             addrs = netifaces.ifaddresses(iface)
             if netifaces.AF_INET in addrs:
@@ -91,53 +93,57 @@ class Session:
             logger.error("❌ Keine IP im 192.168.43.x Netz gefunden!")
             return False
 
-        # 2. Socket binden (Versuche Fixed Port, sonst Random)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         
         try:
             self.sock.bind((self.local_ip, FIXED_LOCAL_PORT))
-            logger.info(f"Socket gebunden an {self.local_ip}:{FIXED_LOCAL_PORT} (Android Clone)")
+            logger.info(f"Socket gebunden an {self.local_ip}:{FIXED_LOCAL_PORT} (Wie Android)")
         except:
             self.sock.bind((self.local_ip, 0))
             logger.info(f"Fixed Port belegt, nutze {self.sock.getsockname()[1]}")
         
-        self.sock.settimeout(0.5) # Kurzer Timeout für schnelles Polling
+        self.sock.settimeout(0.5)
         return True
 
     def discover(self):
         subnet_bc = self.local_ip.rsplit('.', 1)[0] + ".255"
-        targets = [(subnet_bc, p) for p in TARGET_PORTS] + \
-                  [(TARGET_IP, p) for p in TARGET_PORTS] + \
-                  [("255.255.255.255", p) for p in TARGET_PORTS]
+        
+        # Liste der Ziele: Broadcast Subnet, Broadcast Global, Unicast
+        ips = [subnet_bc, "255.255.255.255", TARGET_IP]
 
-        logger.info(f"Starte 'Spray & Pray' Discovery auf Ports {TARGET_PORTS}...")
+        logger.info(f"Starte Discovery auf Ports {TARGET_PORTS}...")
 
         for attempt in range(15):
-            # Feuer aus allen Rohren
-            for ip, port in targets:
-                try:
-                    self.sock.sendto(LBCS_PAYLOAD, (ip, port))
-                except: pass
+            for port in TARGET_PORTS:
+                for ip in ips:
+                    # Strategie: Einfach alles senden. Die Kamera pickt sich das richtige raus.
+                    # 1. LBCS Handshake (Das wichtigste Discovery Paket)
+                    try: self.sock.sendto(LBCS_PAYLOAD, (ip, port))
+                    except: pass
+                    
+                    # 2. Wakeup Sequence (Falls LBCS allein nicht reicht)
+                    try: 
+                        self.sock.sendto(WAKEUP_1, (ip, port))
+                        self.sock.sendto(WAKEUP_2, (ip, port))
+                    except: pass
+
+                # Hören
+                start = time.time()
+                while time.time() - start < 0.5:
+                    try:
+                        data, addr = self.sock.recvfrom(4096)
+                        if len(data) >= 4 and data[0] == 0xF1:
+                            logger.info(f"✅ ANTWORT von {addr[0]}:{addr[1]} | Len: {len(data)}")
+                            logger.info(f"   Hex: {data.hex()}")
+                            self.active_port = addr[1]
+                            return True
+                    except socket.timeout: pass
+                    except Exception as e: logger.error(e)
             
-            # Hören
-            start = time.time()
-            while time.time() - start < 1.0:
-                try:
-                    data, addr = self.sock.recvfrom(4096)
-                    # Prüfe Magic Byte 0xF1 und Typ 0x43
-                    if len(data) >= 4 and data[0] == 0xF1 and data[1] == PacketType.LBCS_RESP:
-                        logger.info(f"✅ ANTWORT von {addr[0]}:{addr[1]}!")
-                        self.active_port = addr[1]
-                        if len(data) >= 28:
-                            self.session_id = data[24:28]
-                            logger.info(f"🔑 Session ID: {self.session_id.hex()}")
-                        return True
-                except socket.timeout: pass
-                except Exception as e: logger.error(e)
-            
-            logger.info(f"Versuch {attempt+1}: Noch nichts...")
+            logger.info(f"Versuch {attempt+1}: Sende Pings...")
+            time.sleep(0.5)
         
         return False
 
@@ -152,7 +158,7 @@ class Session:
         pkt = struct.pack('>BBH', 0xF1, PacketType.PRE_LOGIN, len(PHASE2_STATIC_HEADER + encrypted)) + \
               PHASE2_STATIC_HEADER + encrypted
         
-        logger.info(f"Sende Login an Port {self.active_port}...")
+        logger.info(f"Sende Login an {TARGET_IP}:{self.active_port}...")
         for _ in range(3):
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
             try:
@@ -167,7 +173,7 @@ class Session:
         if self.setup_network():
             if self.discover():
                 self.login()
-                logger.info(">>> Verbindung steht. Script läuft endlos (Strg+C zum Beenden)")
+                logger.info(">>> Verbindung steht. Script läuft endlos...")
                 while True:
                     time.sleep(3)
                     self.sock.sendto(LBCS_PAYLOAD, (TARGET_IP, self.active_port))
@@ -183,7 +189,7 @@ if __name__ == "__main__":
 
     if args.ble:
         if asyncio.run(BLEWorker.wake_camera(BLE_MAC)):
-            time.sleep(15)
+            time.sleep(15) # Wichtig: Kamera braucht Zeit zum Starten des WLANs
     
     if args.wifi:
         if not WiFiWorker.connect(DEFAULT_SSID, DEFAULT_PASS):
