@@ -12,6 +12,7 @@ import threading
 from bleak import BleakScanner, BleakClient
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
+import binascii
 
 # --- CONFIG ---
 TARGET_IP = "192.168.43.1"
@@ -124,7 +125,7 @@ class Session:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind((local_ip, FIXED_LOCAL_PORT))
-        self.sock.settimeout(2.0) 
+        self.sock.settimeout(3.0) # Timeout auf 3s erhöht
         logger.info(f"Socket gebunden an {local_ip}:{FIXED_LOCAL_PORT}")
         return True
 
@@ -145,10 +146,11 @@ class Session:
         try:
             cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
             decrypted = unpad(cipher.decrypt(encrypted_data), AES.block_size)
-            # Remove Trash Bytes at the end if any (sometimes null bytes linger)
+            # Remove Trash Bytes at the end if any
             return json.loads(decrypted.decode('utf-8').rstrip('\x00'))
         except Exception as e:
-            logger.error(f"Decryption Error: {e}")
+            # Nur loggen, wenn es wirklich JSON sein sollte, um Spam zu vermeiden
+            # logger.debug(f"Decryption Error (might be not JSON): {e}")
             return None
 
     def build_rudp_packet(self, packet_type, payload):
@@ -209,42 +211,52 @@ class Session:
         return True
 
     def get_file_list(self):
-        # Konstruiere JSON basierend auf ArMediaListGetCommand.java
         req_json = {
             "cmdId": 768,           # EC_CMD_ID_GET_MEDIA_LIST
-            "itemCntPerPage": 10,   # Wir wollen erst mal 10
-            "pageNo": 0             # Seite 0
+            "itemCntPerPage": 10,
+            "pageNo": 0
         }
         logger.info(f"Frage Dateiliste ab: {req_json}")
         
         enc_payload = self.encrypt_json(req_json)
-        pkt, _ = self.build_cmd_packet(0xD0, enc_payload) # 0xD0 = Data
+        pkt, _ = self.build_cmd_packet(0xD0, enc_payload)
         self.send_raw(pkt)
 
         # Antwort empfangen
         start = time.time()
-        response_buffer = bytearray()
         
         while time.time() - start < 5.0:
             try:
                 data, _ = self.sock.recvfrom(4096)
-                if len(data) > 8 and data[0] == 0xF1:
-                    # Check for Artemis Header inside Payload
-                    # RUDP Header (8 bytes) + Artemis (8 bytes) + CmdID (4) + Len (4)
+                if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
                     payload = data[8:]
+                    
+                    # DEBUG: Hexdump der empfangenen Daten
+                    logger.info(f"Empfange {len(payload)} Bytes: {binascii.hexlify(payload[:30]).decode()}...")
+
+                    # STRATEGIE 1: Payload enthält "ARTEMIS" Header
                     if b'ARTEMIS' in payload:
-                        # Extrahiere den verschlüsselten Teil
-                        # ARTEMIS\0 (8) + Type (4) + Len (4) = 16 Bytes Header
                         if len(payload) > 16:
                             encrypted_part = payload[16:]
-                            return self.decrypt_payload(encrypted_part)
+                            res = self.decrypt_payload(encrypted_part)
+                            if res: return res
+
+                    # STRATEGIE 2: Payload ist direkt verschlüsseltes JSON (siehe Log Source 626)
+                    # Versuche direkt zu entschlüsseln
+                    res = self.decrypt_payload(payload)
+                    if res: 
+                        logger.info("✅ Entschlüsselung erfolgreich (Direkt)!")
+                        return res
+                    
             except socket.timeout: pass
+            except Exception as e:
+                logger.error(f"Fehler im Empfangsloop: {e}")
+                
         return None
 
     def download_file(self, file_type, media_dir, media_num):
         logger.info(f"Starte Download für Dir: {media_dir}, Num: {media_num}...")
         
-        # STRUKTUR aus ArMediaFileDownloadCommand.java 
         req_json = {
             "cmdId": 1285,          # EC_CMD_ID_START_FILE_DOWNLOAD
             "downloadReqs": [
@@ -261,24 +273,22 @@ class Session:
         pkt, _ = self.build_cmd_packet(0xD0, enc_payload)
         self.send_raw(pkt)
         
-        # Download Loop (Bulk Mode)
         received_chunks = {} 
         batch_seqs = []
         last_batch_time = time.time()
-        
         start_wait = time.time()
+        
+        total_chunks_expected = 0
         
         while True:
             try:
-                # Timeout etwas erhöhen für große Dateien
                 self.sock.settimeout(2.0)
                 data, _ = self.sock.recvfrom(4096)
                 
                 if len(data) > 8 and data[0] == 0xF1:
-                    # RUDP Data Packet
-                    if data[1] == 0xD0: 
-                        # Prüfen ob Bulk-Transfer (2-Byte Seq)
-                        # Byte 4 = 0xD1, Byte 5 = 0x00, Byte 6+7 = Seq
+                    if data[1] == 0xD0: # DATA Packet
+                        # Check for Bulk Header (Byte 4 is D1, but Byte 5 is 00)
+                        # Log Analysis: f1 d0 [len] [len] d1 00 [seq_h] [seq_l]
                         if data[4] == 0xD1:
                             seq_16 = (data[6] << 8) | data[7]
                             payload = data[8:]
@@ -287,22 +297,19 @@ class Session:
                                 received_chunks[seq_16] = payload
                                 batch_seqs.append(seq_16)
                             
-                            # Batch ACK senden
                             if len(batch_seqs) >= 20 or (time.time() - last_batch_time > 0.1 and len(batch_seqs) > 0):
                                 ack_pkt = self.build_batch_ack(batch_seqs)
                                 self.send_raw(ack_pkt)
                                 batch_seqs = []
                                 last_batch_time = time.time()
-                                sys.stdout.write(f"\rEmpfangen: {len(received_chunks)} Pakete")
+                                sys.stdout.write(f"\rChunks: {len(received_chunks)}")
                                 sys.stdout.flush()
             
             except socket.timeout:
-                # Wenn wir schon Daten haben und Timeout kommt -> Fertig
                 if len(received_chunks) > 0:
-                    logger.info("\nDownload abgeschlossen (Timeout).")
+                    logger.info("\nDownload Timeout (Fertig).")
                     break
                 else:
-                    # Noch keine Daten, evtl. noch warten
                     if time.time() - start_wait > 5.0:
                         logger.warning("\nKeine Daten empfangen.")
                         break
@@ -328,6 +335,14 @@ class Session:
                     logger.info(">>> Handshake...")
                     pkt, _ = self.build_rudp_packet(0xD0, ARTEMIS_HELLO_BODY)
                     self.send_raw(pkt)
+                    time.sleep(0.1)
+                    
+                    # Magic Packets (wichtig für State Machine der Kamera)
+                    pkt, _ = self.build_rudp_packet(0xD1, MAGIC_BODY_1)
+                    self.send_raw(pkt)
+                    time.sleep(0.05)
+                    pkt, _ = self.build_rudp_packet(0xD1, MAGIC_BODY_2)
+                    self.send_raw(pkt)
                     time.sleep(0.5)
                     
                     # 1. Dateiliste holen
@@ -338,11 +353,10 @@ class Session:
                         logger.info(f"Gefunden: {len(files)} Dateien.")
                         
                         if len(files) > 0:
-                            # Wir nehmen das letzte (neueste) Bild
-                            target_file = files[-1] 
+                            target_file = files[-1] # Neuestes Bild
                             logger.info(f"Wähle Datei: {target_file}")
                             
-                            m_type = target_file.get("fileType", 0) # oder mediaType? Im Log stand fileType
+                            m_type = target_file.get("fileType", 0) 
                             m_dir = target_file.get("mediaDirNum", 0)
                             m_num = target_file.get("mediaNum", 0)
                             
