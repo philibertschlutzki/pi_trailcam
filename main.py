@@ -39,7 +39,7 @@ CMD_4_PAYLOAD = CMD_2_PAYLOAD
 CMD_5_PAYLOAD = base64.b64decode("36Rw4/b3Mw4tDnOS/p8mXQ8FnmDnjxA4yMQ9iXTIZQOw=")
 CMD_6_PAYLOAD = base64.b64decode("90RH0Mg4PMffYI1fACycdPDFvKRV/22yeiZoDPKRFcyG0jH7mkZCE16ucxWcGAo3ZlwJ+GwTj5vj0L+gvGRmWg==")
 
-# Logging
+# Logging Setup
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -67,12 +67,11 @@ class InnerType:
 class BLEWorker:
     @staticmethod
     async def wake_camera(mac_address):
-        # Timeout massiv erhöht auf 45s, da Kamera nur alle 30s sendet
         logger.info(f"Suche BLE Gerät {mac_address} (Scan: 45s)...")
         try:
             device = await BleakScanner.find_device_by_address(mac_address, timeout=45.0)
             if not device:
-                logger.warning("❌ BLE Gerät nicht gefunden (Kamera im Deep Sleep oder außer Reichweite?)")
+                logger.warning("❌ BLE Gerät nicht gefunden.")
                 return False
 
             logger.info(f"Gerät gefunden! Verbinde...")
@@ -175,10 +174,14 @@ class PPPPSession:
         if self.sock:
             self.sock.close()
 
-    def _send_raw(self, data):
+    def _send_raw(self, data, target_ip=None):
         if not self.sock: raise ConnectionError("No socket")
+        
+        # Ziel-Adresse wählen: Entweder Broadcast oder spezifische IP
+        dest = target_ip if target_ip else self.ip
+        
         try:
-            self.sock.sendto(data, (self.ip, self.port))
+            self.sock.sendto(data, (dest, self.port))
         except Exception as e:
             logger.error(f"Send Error: {e}")
 
@@ -231,11 +234,15 @@ class PPPPSession:
     def udp_stack_wakeup(self):
         pkt1 = struct.pack('>BBH', 0xF1, PacketType.WAKEUP_1, 0x0000)
         pkt2 = struct.pack('>BBH', 0xF1, PacketType.WAKEUP_2, 0x0000)
-        for _ in range(4):
-            self._send_raw(pkt1)
-            time.sleep(0.02)
-            self._send_raw(pkt2)
-            time.sleep(0.02)
+        
+        # Sende an Broadcast UND Unicast, um sicherzugehen
+        for _ in range(2):
+            self._send_raw(pkt1, target_ip='255.255.255.255')
+            self._send_raw(pkt1, target_ip=self.ip)
+            time.sleep(0.01)
+            self._send_raw(pkt2, target_ip='255.255.255.255')
+            self._send_raw(pkt2, target_ip=self.ip)
+            time.sleep(0.01)
 
     # --- PHASE 1: DISCOVERY ---
     def phase1_lbcs_discovery(self, retries=3, timeout=1.0):
@@ -243,7 +250,10 @@ class PPPPSession:
         packet = struct.pack('>BBH', 0xF1, PacketType.LBCS_REQ, len(payload)) + payload
 
         for i in range(retries):
-            self._send_raw(packet)
+            # Auch hier: Broadcast zuerst!
+            self._send_raw(packet, target_ip='255.255.255.255')
+            self._send_raw(packet, target_ip=self.ip)
+            
             resp = self._recv(timeout=timeout)
 
             if resp and len(resp) >= 28 and resp[1] == PacketType.LBCS_RESP:
@@ -253,17 +263,29 @@ class PPPPSession:
                 return True
         return False
 
-    # --- PHASE 2: DYNAMIC CRYPTO ---
+    # --- PHASE 2: DYNAMIC CRYPTO (LOGGING UPDATE) ---
     def build_phase2_packet(self):
+        # 1. JSON Payload generieren
         payload_dict = {
             "utcTime": int(time.time()),
             "nonce": os.urandom(8).hex()
         }
+        # Separators wichtig für kompaktes JSON
         json_str = json.dumps(payload_dict, separators=(',', ':'))
-        logger.debug(f"Phase 2 JSON: {json_str}")
+        
+        # --- LOGGING DES ENTSCHLÜSSELTEN PAYLOADS ---
+        logger.info("-" * 60)
+        logger.info("🔓 [PHASE 2 DECODED] Payload Vorbereitung:")
+        logger.info(f"   ► Key (Hex):      {PHASE2_KEY.decode()}")
+        logger.info(f"   ► JSON Plaintext: {json_str}")
+        logger.info("-" * 60)
+        # ----------------------------------------------
 
+        # 2. Encrypt
         cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
         encrypted_payload = cipher.encrypt(pad(json_str.encode('utf-8'), AES.block_size))
+
+        logger.info(f"🔒 [PHASE 2 ENCODED] Verschlüsselte Bytes (Hex): {encrypted_payload.hex()[:32]}...")
 
         full_content = PHASE2_STATIC_HEADER + encrypted_payload
         header = struct.pack('>BBH', 0xF1, PacketType.PRE_LOGIN, len(full_content))
@@ -364,7 +386,7 @@ class PPPPSession:
 
             while time.time() - start_time < 40:
                 self.udp_stack_wakeup()
-                if self.phase1_lbcs_discovery(retries=1, timeout=2.0):
+                if self.phase1_lbcs_discovery(retries=1, timeout=1.5):
                     discovery_success = True
                     break
                 logger.info("Kamera antwortet noch nicht, erneuter Versuch...")
@@ -400,8 +422,6 @@ class PPPPSession:
 
 # --- MAIN ---
 
-# --- MAIN (KORRIGIERT) ---
-
 def main():
     parser = argparse.ArgumentParser(description="Artemis Client V2 Robust")
     parser.add_argument("--ip", default=DEFAULT_CAMERA_IP, help="Camera IP")
@@ -410,21 +430,19 @@ def main():
     parser.add_argument("--ble", action="store_true", help="BLE Wakeup first")
     args = parser.parse_args()
 
-    # SCHRITT 1: BLE WAKEUP (Zuerst!)
+    # SCHRITT 1: BLE WAKEUP
     if args.ble:
         print(f"[*] Starte BLE Wakeup für {DEFAULT_BLE_MAC}...")
         success = asyncio.run(BLEWorker.wake_camera(DEFAULT_BLE_MAC))
         if success:
             logger.info("✅ BLE Wakeup gesendet. Warte 15s auf WLAN-Start der Kamera...")
-            # Die Kamera braucht Zeit, um den Access Point hochzufahren
             time.sleep(15) 
         else:
-            logger.warning("⚠️ BLE fehlgeschlagen. Versuche trotzdem fortzufahren (vielleicht ist WLAN schon an?)")
+            logger.warning("⚠️ BLE fehlgeschlagen. Versuche trotzdem fortzufahren...")
 
-    # SCHRITT 2: WLAN VERBINDEN (Jetzt wo es an sein sollte)
+    # SCHRITT 2: WLAN VERBINDEN
     if args.wifi:
         print(f"[*] Versuche WLAN-Verbindung zu {DEFAULT_WIFI_SSID}...")
-        # Wir versuchen es in einem kleinen Loop, falls das WLAN noch bootet
         connected = False
         for _ in range(3):
             if WiFiWorker.connect_nmcli(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS):
