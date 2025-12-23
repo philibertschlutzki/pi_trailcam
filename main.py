@@ -25,7 +25,7 @@ BLE_MAC = "C6:1E:0D:E0:32:E8"
 # --- PAYLOADS ---
 LBCS_PAYLOAD = bytes.fromhex("f14100144c42435300000000000000004343434a4a000000")
 
-# Session Start
+# ARTEMIS Hello (Session Start)
 ARTEMIS_HELLO = bytes.fromhex(
     "f1d000c5d1000000415254454d495300"
     "0200000001000000ad0000004a385757"
@@ -42,8 +42,11 @@ ARTEMIS_HELLO = bytes.fromhex(
     "676f53414d4f633d00"
 )
 
-# Active Status Request (73 Bytes) - Zwingt Kamera zu antworten
-HEARTBEAT_DATA = bytes.fromhex(
+# Payload für 53-Byte Keep-Alive (aus traffic_port.log)
+PAYLOAD_53 = bytes.fromhex("4d7a6c423336582f49566f385a7a49357247396a31773d3d00")
+
+# Payload für 73-Byte Status-Request
+PAYLOAD_73 = bytes.fromhex(
     "792b444462714d4e4e6e56354c446a7533786c45"
     "6853576c39706549356557623267686d72337756"
     "7945493d00"
@@ -63,7 +66,7 @@ class BLEWorker:
         try:
             dev = await BleakScanner.find_device_by_address(mac, timeout=45.0)
             if not dev: 
-                logger.warning("BLE Gerät nicht gefunden.")
+                logger.warning("BLE Gerät nicht gefunden (vielleicht schon wach?).")
                 return False
             async with BleakClient(dev, timeout=15.0) as client:
                 await client.write_gatt_char("00000002-0000-1000-8000-00805f9b34fb", 
@@ -106,8 +109,8 @@ class Session:
         self.running = True
         
         # RUDP State
-        self.global_seq = 1 # Globaler Zähler für alles
-        self.hb_cnt = 1     # Zähler im Heartbeat-Payload
+        self.global_seq = 1 # Header-Sequenz
+        self.cmd_cnt = 1    # Interner Body-Counter
 
     def setup_network(self):
         try:
@@ -130,7 +133,7 @@ class Session:
             self.sock.bind((self.local_ip, 0))
             logger.info(f"Port belegt, nutze {self.sock.getsockname()[1]}")
         
-        self.sock.settimeout(0.5) # Schneller Timeout für snappier RUDP
+        self.sock.settimeout(0.5) 
         return True
 
     def next_seq(self):
@@ -139,27 +142,50 @@ class Session:
         if self.global_seq == 0: self.global_seq = 1
         return s
 
-    def build_heartbeat(self, seq_to_use):
-        self.hb_cnt = (self.hb_cnt + 1) % 255
+    def build_packet(self, seq_to_use, is_status_req):
+        # Erhöht internen Counter
+        self.cmd_cnt = (self.cmd_cnt + 1) % 255
         
         pkt = bytearray()
-        pkt.extend(bytes.fromhex("f1d00045d10000"))
-        pkt.append(seq_to_use) # WICHTIG: Nutz die übergebene Seq (für Retransmit)
         
+        # Header (Länge berechnen)
+        # 53 Byte Paket = Header Len 0x31 (49) + 4 = 53
+        # 73 Byte Paket = Header Len 0x45 (69) + 4 = 73
+        
+        if is_status_req:
+            # 73 Byte Paket (Status)
+            pkt.extend(bytes.fromhex("f1d00045d10000")) 
+        else:
+            # 53 Byte Paket (Keep-Alive)
+            pkt.extend(bytes.fromhex("f1d00031d10000"))
+            
+        pkt.append(seq_to_use) 
+        
+        # ARTEMIS Body
         pkt.extend(bytes.fromhex("415254454d495300")) 
         pkt.extend(bytes.fromhex("02000000"))         
-        pkt.extend(bytes.fromhex("02000000"))         
-        pkt.extend(bytes.fromhex("2d000000"))         
-        pkt.extend(HEARTBEAT_DATA)                    
+        
+        # Der magische Counter an Offset 20!
+        pkt.append(self.cmd_cnt)
+        
+        if is_status_req:
+            # Rest für 73-Byte Paket
+            pkt.extend(bytes.fromhex("0000002d000000")) # Padding + Len 45
+            pkt.extend(PAYLOAD_73)
+        else:
+            # Rest für 53-Byte Paket (Wichtig: "01" Byte nach Counter aus Log)
+            pkt.extend(bytes.fromhex("00010019000000")) # Padding + Len 25
+            pkt.extend(PAYLOAD_53)
+            
         return pkt
 
     def build_ack(self, rx_seq):
-        seq = self.next_seq() # ACKs verbrauchen auch Sequence Numbers
+        seq = self.next_seq()
         pkt = bytearray()
         pkt.extend(bytes.fromhex("f1d10008d10000"))
         pkt.append(seq)
         pkt.append(0x00)
-        pkt.append(rx_seq) # Wir bestätigen diese Nummer
+        pkt.append(rx_seq)
         pkt.append(0x00)
         pkt.append(rx_seq)
         return pkt
@@ -217,17 +243,19 @@ class Session:
                         self.sock.sendto(ARTEMIS_HELLO, (TARGET_IP, self.active_port))
                         time.sleep(0.1)
                         
-                        logger.info(">>> VERBINDUNG STABILISIERT (RUDP Mode)...")
+                        logger.info(">>> VERBINDUNG STABILISIERT (Dual RUDP Mode)...")
                         
                         last_send = 0
                         last_stats = time.time()
                         
                         # RUDP Variablen
-                        pending_heartbeat = None # Das Paket, das wir senden wollen
-                        pending_seq = 0          # Die Nummer dazu
-                        waiting_for_ack = False  # Warten wir?
+                        pending_packet = None
+                        pending_seq = 0
+                        waiting_for_ack = False
                         last_tx_time = 0
                         retransmits = 0
+                        
+                        toggle_type = False # Wechselt zwischen 53 und 73 bytes
                         
                         rx_count = 0
                         tx_count = 0
@@ -236,16 +264,17 @@ class Session:
                             now = time.time()
                             
                             # --- 1. SENDEN (Stop-and-Wait ARQ) ---
-                            # Wir senden nur neu, wenn wir NICHT warten oder wenn Timeout
-                            
                             if not waiting_for_ack:
-                                # Zeit für neuen Heartbeat? (Alle 1.5s)
-                                if now - last_send > 1.5:
+                                # Senden alle 1.0s (schneller Takt)
+                                if now - last_send > 1.0:
                                     pending_seq = self.next_seq()
-                                    pending_heartbeat = self.build_heartbeat(pending_seq)
+                                    
+                                    # Wechseln zwischen Keep-Alive (53) und Status (73)
+                                    pending_packet = self.build_packet(pending_seq, toggle_type)
+                                    toggle_type = not toggle_type
                                     
                                     try:
-                                        self.sock.sendto(pending_heartbeat, (TARGET_IP, self.active_port))
+                                        self.sock.sendto(pending_packet, (TARGET_IP, self.active_port))
                                         tx_count += 1
                                         last_send = now
                                         last_tx_time = now
@@ -254,19 +283,16 @@ class Session:
                                     except OSError: break
                             
                             else:
-                                # Wir warten auf ACK. Timeout Check (0.5s)
+                                # Warten auf ACK (Timeout 0.5s)
                                 if now - last_tx_time > 0.5:
                                     if retransmits < 5:
-                                        # RETRANSMISSION: Sende EXAKT DAS GLEICHE Paket nochmal
-                                        # logger.debug(f"⚠️ Retransmit Seq {pending_seq}")
                                         try:
-                                            self.sock.sendto(pending_heartbeat, (TARGET_IP, self.active_port))
+                                            self.sock.sendto(pending_packet, (TARGET_IP, self.active_port))
                                             last_tx_time = now
                                             retransmits += 1
                                         except OSError: break
                                     else:
-                                        # Give up
-                                        waiting_for_ack = False
+                                        waiting_for_ack = False # Give up
 
                             # --- 2. EMPFANGEN ---
                             try:
@@ -275,20 +301,18 @@ class Session:
                                 
                                 if d_len > 4 and data[0] == 0xF1:
                                     
-                                    # Fall A: DATEN von Kamera (0xD0) -> Wir MÜSSEN ACK senden
+                                    # DATEN von Kamera -> ACK senden
                                     if data[1] == 0xD0:
                                         rx_seq = data[7]
                                         ack_pkt = self.build_ack(rx_seq)
                                         self.sock.sendto(ack_pkt, (TARGET_IP, self.active_port))
                                         rx_count += 1
                                         
-                                    # Fall B: ACK von Kamera (0xD1) -> Check ob für unseren Heartbeat
+                                    # ACK von Kamera -> Pending löschen
                                     elif data[1] == 0xD1:
-                                        # Payload checken: Enthält er unsere pending_seq?
-                                        # Payload beginnt ab Byte 8
                                         if waiting_for_ack:
+                                            # Payload ab Byte 8 prüfen
                                             if pending_seq in data[8:]:
-                                                # Juhu! Bestätigt.
                                                 waiting_for_ack = False
                                                 rx_count += 1
                                     
@@ -299,7 +323,7 @@ class Session:
                             
                             # --- 3. STATUS ---
                             if now - last_stats > 5.0:
-                                logger.info(f"♻️  RUDP Status: TX: {tx_count} | RX: {rx_count} | Seq: {self.global_seq}")
+                                logger.info(f"♻️  Dual RUDP: TX: {tx_count} | RX: {rx_count} | Seq: {self.global_seq} | CmdCnt: {self.cmd_cnt}")
                                 rx_count = 0
                                 tx_count = 0
                                 last_stats = now
