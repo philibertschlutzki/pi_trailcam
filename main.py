@@ -22,41 +22,13 @@ DEFAULT_SSID = "KJK_E0FF"
 DEFAULT_PASS = "85087127"
 BLE_MAC = "C6:1E:0D:E0:32:E8"
 
-# --- PAYLOADS ---
-
-# LBCS (Magic: F1 41) - Discovery
+# --- KONSTANTEN ---
 LBCS_PAYLOAD = bytes.fromhex("f14100144c42435300000000000000004343434a4a000000")
 
-# Source 54: ARTEMIS Hello (Session Start)
-ARTEMIS_HELLO = bytes.fromhex(
-    "f1d000c5d1000000415254454d495300"
-    "0200000001000000ad0000004a385757"
-    "755144506d59534c66752f675841472b"
-    "557162427935354b5032694532355150"
-    "4e6f667a6e3034302b4e493967377a65"
-    "584c6b497058704330375358766f7372"
-    "577363316d386d786e7136684d694b77"
-    "6550624b4a5577765376715a62367330"
-    "736c3173667a68326d7452736c56324e"
-    "633674524b6f78472f516a2b70337947"
-    "6c314343354152624a4a4b4742615863"
-    "677137546e656b6e2b7974772b524c6c"
-    "676f53414d4f633d00"
-)
+# Base64 Payload aus deinem Log (MzlB...)
+HEARTBEAT_DATA = bytes.fromhex("4d7a6c423336582f49566f385a7a49357247396a31773d3d00")
 
-# Source 64: STATUS HEARTBEAT (Fragt Status ab, hält Verbindung offen)
-ARTEMIS_STATUS_HEARTBEAT = bytes.fromhex(
-    "f1d00045d1000001415254454d495300"
-    "02000000020000002d000000792b4444"
-    "62714d4e4e6e56354c446a7533786c45"
-    "6853576c39706549356557623267686d"
-    "723377567945493d00"
-)
-
-# Source 57: ACK PAYLOAD (Bestätigt Empfang von Daten)
-ACK_PAYLOAD = bytes.fromhex("f1d1000ed100000500000000000000000000")
-
-# Crypto Keys
+# Crypto
 PHASE2_KEY = b"a01bc23ed45fF56A"
 PHASE2_STATIC_HEADER = bytes.fromhex("0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5")
 
@@ -91,17 +63,14 @@ class WiFiWorker:
         except: pass
         
         logger.info("Verbinde WLAN...")
-        # Clean Start: Altes Profil löschen, scannen, neu verbinden
         subprocess.run(["sudo", "nmcli", "c", "delete", ssid], capture_output=True)
         subprocess.run(["sudo", "nmcli", "d", "wifi", "rescan"], capture_output=True)
         time.sleep(3)
         cmd = ["sudo", "nmcli", "d", "wifi", "connect", ssid, "password", password, "ifname", "wlan0"]
         res = subprocess.run(cmd, capture_output=True)
-        
         if res.returncode == 0:
             logger.info("WLAN verbunden.")
             return True
-        
         err_msg = res.stderr.decode('utf-8', errors='ignore').strip()
         logger.error(f"WLAN Fehler: {err_msg}")
         return False
@@ -112,6 +81,10 @@ class Session:
         self.local_ip = None
         self.active_port = None
         self.running = True
+        
+        # Zähler initialisieren (wie im Log gesehen ca. bei 0x16 gestartet, wir fangen bei 1 an)
+        self.seq_num = 1
+        self.hb_cnt = 1
 
     def setup_network(self):
         try:
@@ -137,29 +110,71 @@ class Session:
         self.sock.settimeout(1.0)
         return True
 
+    def get_next_seq(self):
+        self.seq_num = (self.seq_num + 1) % 255
+        if self.seq_num == 0: self.seq_num = 1 # 0 vermeiden falls nötig
+        return self.seq_num
+
+    def build_heartbeat(self):
+        # Wir bauen das 53-Byte Paket manuell nach Struktur aus Log
+        # Header: f1 d0 00 31 d1 00 00 [SEQ]
+        seq = self.get_next_seq()
+        
+        # Payload Counter
+        self.hb_cnt = (self.hb_cnt + 1) % 255
+        
+        # ARTEMIS Header
+        # 41 52 54 45 4d 49 53 00 
+        # 02 00 00 00 (Cmd?)
+        # [HB_CNT] 00 01 00 (Counter an Byte 20)
+        # 19 00 00 00 (Len Data?)
+        
+        pkt = bytearray()
+        pkt.extend(bytes.fromhex("f1d00031d10000"))
+        pkt.append(seq)
+        pkt.extend(bytes.fromhex("415254454d495300")) # ARTEMIS
+        pkt.extend(bytes.fromhex("02000000"))         # Type
+        pkt.append(self.hb_cnt)                       # Counter an Stelle 20
+        pkt.extend(bytes.fromhex("00010019000000"))   # Padding/Len
+        pkt.extend(HEARTBEAT_DATA)                    # "MzlB..."
+        
+        return pkt
+
+    def build_ack(self, rx_seq):
+        # Einfaches ACK Paket: f1 d1 ... [SEQ]
+        # Im Log: f1 d1 00 08 d1 00 00 02 00 [RX_SEQ] 00 [RX_SEQ]
+        # Wir versuchen ein simples ACK
+        my_seq = self.get_next_seq()
+        
+        pkt = bytearray()
+        pkt.extend(bytes.fromhex("f1d10008d10000"))
+        pkt.append(my_seq)
+        
+        # Payload: Einfach die empfangene Sequenz wiederholen
+        pkt.append(0x00)
+        pkt.append(rx_seq)
+        pkt.append(0x00)
+        pkt.append(rx_seq)
+        
+        return pkt
+
     def discover(self):
         logger.info(f"Starte Discovery auf Ports {TARGET_PORTS}...")
-        ips = ["255.255.255.255", TARGET_IP]
-
-        for attempt in range(5):
+        for attempt in range(3):
             for port in TARGET_PORTS:
-                for ip in ips:
-                    try: self.sock.sendto(LBCS_PAYLOAD, (ip, port))
-                    except: pass
-
+                try: self.sock.sendto(LBCS_PAYLOAD, (TARGET_IP, port))
+                except: pass
+            
             start = time.time()
             while time.time() - start < 1.0:
                 try:
                     data, addr = self.sock.recvfrom(4096)
-                    # Suche nach F1 42 (LBCS Response) oder F1 D0 (ACK/Data)
                     if len(data) >= 4 and data[0] == 0xF1:
                         if data[1] == 0x42 or data[1] == 0xD0:
                             logger.info(f"✅ ANTWORT von {addr[0]}:{addr[1]}")
                             self.active_port = addr[1]
                             return True
-                except socket.timeout: pass
-                except OSError: pass
-            time.sleep(0.5)
+                except: pass
         return False
 
     def login(self):
@@ -169,6 +184,12 @@ class Session:
         json_str = json.dumps(payload, separators=(',', ':'))
         cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
         encrypted = cipher.encrypt(pad(json_str.encode('utf-8'), AES.block_size))
+        
+        # Header bauen
+        seq = self.get_next_seq()
+        # Login ist f1 f9 ...
+        # Wir nutzen statischen Headerbau hierfür, da Login einmalig ist
+        # Aber seq anpassen wäre gut. Log zeigt f1 f9 00 54 ...
         
         pkt = struct.pack('>BBH', 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + encrypted)) + \
               PHASE2_STATIC_HEADER + encrypted
@@ -182,8 +203,8 @@ class Session:
                 logger.info(f"✅ Login Antwort erhalten ({len(data)} bytes).")
                 return True
         except:
-            logger.warning("Keine direkte Login-Antwort, versuche trotzdem Handshake...")
-            return True 
+            logger.warning("Keine Antwort, versuche trotzdem weiter...")
+            return True
         return True
 
     def run(self):
@@ -192,68 +213,51 @@ class Session:
                 if self.discover():
                     if self.login():
                         
-                        # --- ARTEMIS HANDSHAKE ---
-                        logger.info(">>> Sende ARTEMIS Hello...")
-                        self.sock.sendto(ARTEMIS_HELLO, (TARGET_IP, self.active_port))
-                        time.sleep(0.1)
-                        
-                        # Kleiner Kick zum Start
-                        self.sock.sendto(ACK_PAYLOAD, (TARGET_IP, self.active_port))
-                        
-                        logger.info(">>> VERBINDUNG STABIL. Starte Langzeit-Loop (leise)...")
+                        logger.info(">>> VERBINDUNG STABILISIERT. Sende 53-Byte Heartbeats...")
                         
                         last_send = time.time()
                         last_stats = time.time()
                         
-                        data_packets_count = 0
-                        status_packets_count = 0
+                        rx_count = 0
+                        tx_count = 0
                         
                         while self.running:
                             now = time.time()
                             
-                            # 1. Empfangen & REAGIEREN (ACK)
+                            # 1. Senden (Heartbeat alle 1.5s)
+                            if now - last_send > 1.5:
+                                try:
+                                    hb_pkt = self.build_heartbeat()
+                                    self.sock.sendto(hb_pkt, (TARGET_IP, self.active_port))
+                                    last_send = now
+                                    tx_count += 1
+                                except OSError as e:
+                                    logger.error(f"❌ Sendefehler: {e}")
+                                    break
+
+                            # 2. Empfangen & ACKen
                             try:
                                 data, addr = self.sock.recvfrom(4096)
+                                rx_count += 1
                                 d_len = len(data)
-                                d_hex = data.hex()
-
-                                if d_len > 4 and data[0] == 0xF1:
+                                
+                                # Wenn es ein Datenpaket ist (f1 d0 ...), müssen wir ACKen
+                                if d_len > 8 and data[0] == 0xF1 and data[1] == 0xD0:
+                                    rx_seq = data[7] # Sequenznummer extrahieren
+                                    ack_pkt = self.build_ack(rx_seq)
+                                    self.sock.sendto(ack_pkt, (TARGET_IP, self.active_port))
                                     
-                                    # Wenn Paket = DATEN oder COMMAND (0xD0) -> Bestätigen!
-                                    if data[1] == 0xD0:
-                                        self.sock.sendto(ACK_PAYLOAD, (TARGET_IP, self.active_port))
-                                        
-                                        # Statistik führen statt loggen
-                                        if d_len > 1000: # Das sind die großen Dateilisten
-                                            data_packets_count += 1
-                                        elif d_len == 157 or d_len == 40: # Status Updates
-                                            status_packets_count += 1
-                                        else:
-                                            # Nur unbekannte Größen loggen wir noch, um zu lernen
-                                            logger.debug(f"Unbekanntes Datenpaket: {d_len} bytes")
-
-                                    # Andere Pakete ignorieren wir im Log (ACKs, Pings etc)
-
                             except socket.timeout:
                                 pass
                             except OSError:
-                                logger.error("Netzwerkfehler beim Empfangen")
                                 break
                             
-                            # 2. Senden (Heartbeat alle 1.5 Sekunden)
-                            if now - last_send > 1.5:
-                                try:
-                                    self.sock.sendto(ARTEMIS_STATUS_HEARTBEAT, (TARGET_IP, self.active_port))
-                                    last_send = now
-                                except OSError as e:
-                                    logger.error(f"❌ Sendefehler: {e}")
-                                    break # Abbruch bei Sendefehler, damit wir es merken
-                            
-                            # 3. Status-Bericht alle 5 Sekunden
+                            # 3. Status Report (Alle 5s)
                             if now - last_stats > 5.0:
-                                logger.info(f"♻️ Verbindung aktiv. RX Stats (letzte 5s): {data_packets_count} Dateilisten, {status_packets_count} Status-Updates.")
-                                data_packets_count = 0
-                                status_packets_count = 0
+                                logger.info(f"♻️  Status: Verbunden | TX: {tx_count} | RX: {rx_count} | Seq: {self.seq_num}")
+                                # Reset counters for easy reading of "packets per 5s"
+                                rx_count = 0
+                                tx_count = 0
                                 last_stats = now
 
                 else:
