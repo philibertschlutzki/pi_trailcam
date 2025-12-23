@@ -400,29 +400,45 @@ class PPPPSession:
 
 # --- MAIN ---
 
+# --- MAIN (KORRIGIERT) ---
+
 def main():
     parser = argparse.ArgumentParser(description="Artemis Client V2 Robust")
     parser.add_argument("--ip", default=DEFAULT_CAMERA_IP, help="Camera IP")
     parser.add_argument("--token", default=TEST_BLE_TOKEN, help="BLE Token")
-    parser.add_argument("--wifi", action="store_true", help="Connect WiFi first")
+    parser.add_argument("--wifi", action="store_true", help="Connect WiFi automatically")
     parser.add_argument("--ble", action="store_true", help="BLE Wakeup first")
     args = parser.parse_args()
 
-    # 1. WIFI Connect (falls gewünscht)
-    if args.wifi:
-        if not WiFiWorker.connect_nmcli(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS):
-            return
-
-    # 2. BLE Wakeup (jetzt robuster!)
+    # SCHRITT 1: BLE WAKEUP (Zuerst!)
     if args.ble:
+        print(f"[*] Starte BLE Wakeup für {DEFAULT_BLE_MAC}...")
         success = asyncio.run(BLEWorker.wake_camera(DEFAULT_BLE_MAC))
         if success:
-            logger.info("Warte 10 Sekunden auf WLAN-Boot...")
-            time.sleep(10)
+            logger.info("✅ BLE Wakeup gesendet. Warte 15s auf WLAN-Start der Kamera...")
+            # Die Kamera braucht Zeit, um den Access Point hochzufahren
+            time.sleep(15) 
         else:
-            logger.warning("BLE fehlgeschlagen oder Timeout. Versuche UDP trotzdem...")
+            logger.warning("⚠️ BLE fehlgeschlagen. Versuche trotzdem fortzufahren (vielleicht ist WLAN schon an?)")
 
-    # 3. UDP Session
+    # SCHRITT 2: WLAN VERBINDEN (Jetzt wo es an sein sollte)
+    if args.wifi:
+        print(f"[*] Versuche WLAN-Verbindung zu {DEFAULT_WIFI_SSID}...")
+        # Wir versuchen es in einem kleinen Loop, falls das WLAN noch bootet
+        connected = False
+        for _ in range(3):
+            if WiFiWorker.connect_nmcli(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS):
+                connected = True
+                break
+            logger.info("WLAN noch nicht bereit, warte 5s...")
+            time.sleep(5)
+        
+        if not connected:
+            logger.error("❌ Konnte nicht mit Kamera-WLAN verbinden. Abbruch.")
+            return
+
+    # SCHRITT 3: UDP SESSION
+    logger.info(f"[*] Starte UDP-Session zu {args.ip}...")
     session = PPPPSession(args.ip, DEFAULT_CAMERA_PORT, args.token)
     session.run_session()
 
