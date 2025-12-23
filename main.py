@@ -22,7 +22,7 @@ DEFAULT_SSID = "KJK_E0FF"
 DEFAULT_PASS = "85087127"
 BLE_MAC = "C6:1E:0D:E0:32:E8"
 
-# --- RAW PAYLOAD BODIES ---
+# --- PAYLOADS ---
 LBCS_PAYLOAD = bytes.fromhex("f14100144c42435300000000000000004343434a4a000000")
 
 # ARTEMIS Hello Body
@@ -42,11 +42,11 @@ ARTEMIS_HELLO_BODY = bytes.fromhex(
     "2b726431446d453d00"
 )
 
-# KORREKTUR: Magic Packets sind nur Nullen als Payload!
-MAGIC_BODY_1 = bytes.fromhex("000000000000") # 6 Bytes Nullen
-MAGIC_BODY_2 = bytes.fromhex("0000")         # 2 Bytes Nullen
+# Magic Handshake Bodies (Null-Payloads)
+MAGIC_BODY_1 = bytes.fromhex("000000000000") 
+MAGIC_BODY_2 = bytes.fromhex("0000")         
 
-# Keep-Alive Parts
+# Heartbeat
 HEARTBEAT_BODY_START = bytes.fromhex("415254454d49530002000000") 
 HEARTBEAT_PAYLOAD_END = bytes.fromhex("000100190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00")
 
@@ -118,7 +118,6 @@ class WiFiWorker:
         subprocess.run(["sudo", "nmcli", "d", "wifi", "rescan"], capture_output=True)
         time.sleep(3)
         res = subprocess.run(["sudo", "nmcli", "d", "wifi", "connect", ssid, "password", password, "ifname", "wlan0"], capture_output=True)
-        
         SystemTweaks.disable_wifi_powersave()
         
         if res.returncode == 0:
@@ -158,7 +157,8 @@ class Session:
 
     def build_rudp_packet(self, packet_type, payload):
         seq = self.next_seq()
-        body_len = len(payload) + 4 # 4 Bytes Preamble (D1 00 00 Seq)
+        # Preamble D1 00 00 Seq (4 bytes) + Payload
+        body_len = len(payload) + 4 
         
         header = bytearray()
         header.append(0xF1)
@@ -166,8 +166,7 @@ class Session:
         header.append((body_len >> 8) & 0xFF)
         header.append(body_len & 0xFF)
         
-        # Preamble
-        header.append(0xD1)
+        header.append(0xD1) # Preamble Start
         header.append(0x00)
         header.append(0x00)
         header.append(seq)
@@ -183,7 +182,7 @@ class Session:
         return self.build_rudp_packet(0xD0, body) 
 
     def build_ack(self, rx_seq):
-        # ACK Payload: 00 [RxSeq] 00 [RxSeq]
+        # ACK payload: 00 [Seq] 00 [Seq]
         payload = bytearray([0x00, rx_seq, 0x00, rx_seq])
         return self.build_rudp_packet(0xD1, payload)[0]
 
@@ -227,83 +226,98 @@ class Session:
 
                 if self.discover_and_login():
                     
-                    logger.info(">>> Sende ARTEMIS Hello...")
+                    logger.info(">>> Sende Handshake...")
+                    # 1. Hello
                     pkt, seq = self.build_rudp_packet(0xD0, ARTEMIS_HELLO_BODY)
                     self.sock.sendto(pkt, (TARGET_IP, self.active_port))
                     time.sleep(0.05)
                     
-                    logger.info(">>> Sende Magic Handshake Pakete...")
-                    # 1. Magic Packet (6 Bytes Zero Payload)
+                    # 2. Magic 1
                     pkt, seq = self.build_rudp_packet(0xD1, MAGIC_BODY_1)
                     self.sock.sendto(pkt, (TARGET_IP, self.active_port))
                     time.sleep(0.02)
                     
-                    # 2. Magic Packet (2 Bytes Zero Payload)
+                    # 3. Magic 2
                     pkt, seq = self.build_rudp_packet(0xD1, MAGIC_BODY_2)
                     self.sock.sendto(pkt, (TARGET_IP, self.active_port))
                     
-                    logger.info(">>> VERBINDUNG STABILISIERT (Keep-Alive Mode)...")
+                    logger.info(">>> VERBINDUNG STABILISIERT (Strict Stop-and-Wait)...")
                     
                     last_send = 0
                     last_stats = time.time()
+                    
+                    # State Machine
+                    pending_packet = None
+                    pending_seq = 0
                     waiting_for_ack = False
-                    last_tx_time = 0
-                    retransmits = 0
+                    
+                    last_retry_time = 0
+                    
                     rx_count = 0
                     tx_count = 0
                     
                     while self.running:
                         now = time.time()
                         
-                        # A) SENDEN (Heartbeat)
+                        # --- A) EMPFANGEN ---
+                        # Wir lesen erst alle verfügbaren Pakete, um ACKs zu finden
+                        try:
+                            while True:
+                                data, _ = self.sock.recvfrom(4096)
+                                if len(data) > 4 and data[0] == 0xF1:
+                                    
+                                    # DATA (D0) -> Wir müssen ACKen
+                                    if data[1] == 0xD0:
+                                        rx_seq = data[7]
+                                        # ACK senden (ohne auf Antwort zu warten, "Fire and Forget")
+                                        ack_pkt = self.build_ack(rx_seq)
+                                        self.sock.sendto(ack_pkt, (TARGET_IP, self.active_port))
+                                        rx_count += 1
+                                    
+                                    # ACK (D1) -> Unser Paket wurde bestätigt!
+                                    elif data[1] == 0xD1:
+                                        if waiting_for_ack:
+                                            # Streng genommen müssten wir prüfen, ob das ACK zur pending_seq passt.
+                                            # Aber im Log sieht man: ACK Payload ist "00 Seq 00 Seq".
+                                            # Check Byte 5 (Payload Start) + 1 = Byte 6
+                                            # Preamble (4) + 00 + Seq = Byte 9 in packet?
+                                            # Vereinfachung: Wenn ACK kommt, gehen wir davon aus, es passt.
+                                            waiting_for_ack = False
+                                            rx_count += 1
+                        except socket.timeout:
+                            pass
+                        except OSError:
+                            break
+
+                        # --- B) SENDEN ---
                         if not waiting_for_ack:
+                            # Neues Paket senden (alle 1.5s)
                             if now - last_send > 1.5:
                                 pending_packet, pending_seq = self.build_heartbeat()
                                 try:
                                     self.sock.sendto(pending_packet, (TARGET_IP, self.active_port))
                                     tx_count += 1
                                     last_send = now
-                                    last_tx_time = now
                                     waiting_for_ack = True
-                                    retransmits = 0
-                                except OSError: 
-                                    waiting_for_ack = False
+                                    last_retry_time = now
+                                except OSError:
+                                    waiting_for_ack = False # Network Error, retry later
                         else:
-                            # Retransmit Logic
-                            if now - last_tx_time > 0.8:
-                                if retransmits < 3:
-                                    try: 
-                                        self.sock.sendto(pending_packet, (TARGET_IP, self.active_port))
-                                        last_tx_time = now
-                                        retransmits += 1
-                                    except: pass
-                                else:
-                                    logger.warning(f"Seq {pending_seq} verloren. Weiter.")
-                                    waiting_for_ack = False
-
-                        # B) EMPFANGEN
-                        try:
-                            data, _ = self.sock.recvfrom(4096)
-                            if len(data) > 4 and data[0] == 0xF1:
-                                # Data (D0) -> ACK senden
-                                if data[1] == 0xD0:
-                                    rx_seq = data[7]
-                                    self.build_ack(rx_seq) # Just build to increment seq? No send?
-                                    # KORREKTUR: Wir müssen das ACK senden!
-                                    self.sock.sendto(self.build_ack(rx_seq), (TARGET_IP, self.active_port))
-                                    rx_count += 1
-                                
-                                # ACK (D1) -> Confirm
-                                elif data[1] == 0xD1:
-                                    if waiting_for_ack:
-                                        waiting_for_ack = False
-                                        rx_count += 1
-                        except socket.timeout: pass
-                        except OSError: break
+                            # RETRANSMIT (STRICT!)
+                            # Wenn wir auf ACK warten und Timeout abgelaufen ist:
+                            if now - last_retry_time > 0.8:
+                                # logger.info(f"Retrying Seq {pending_seq}...")
+                                try:
+                                    self.sock.sendto(pending_packet, (TARGET_IP, self.active_port))
+                                    last_retry_time = now
+                                except OSError: pass
+                                # WICHTIG: Wir bleiben auf waiting_for_ack = True!
+                                # Wir machen KEIN next_seq(), wir geben NICHT auf.
                         
-                        # C) STATS
+                        # --- C) STATS ---
                         if now - last_stats > 10.0:
-                            logger.info(f"♻️  Heartbeat OK: TX: {tx_count} | RX: {rx_count} (Seq: {self.global_seq})")
+                            state = "WAIT" if waiting_for_ack else "IDLE"
+                            logger.info(f"♻️  Stats: TX: {tx_count} | RX: {rx_count} | Seq: {self.global_seq} | State: {state}")
                             rx_count = 0; tx_count = 0; last_stats = now
 
                 else: logger.error("❌ Discovery Failed.")
