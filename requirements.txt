@@ -1,9 +1,4 @@
-# Bluetooth Low Energy support
 bleak==0.20.1
-
-# Network packet manipulation and sniffing
-# Required for UDP sniffer MITM mode (ARP spoofing)
 scapy>=2.5.0
-
-# AES Encryption/Decryption for Artemis Protocol
 pycryptodome>=3.19.0
+netifaces>=0.11.0
