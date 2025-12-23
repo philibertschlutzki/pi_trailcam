@@ -11,7 +11,7 @@ import os
 import threading
 from bleak import BleakScanner, BleakClient
 from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad
+from Crypto.Util.Padding import pad, unpad
 
 # --- CONFIG ---
 TARGET_IP = "192.168.43.1"
@@ -21,6 +21,10 @@ FIXED_LOCAL_PORT = 35281
 DEFAULT_SSID = "KJK_E0FF"
 DEFAULT_PASS = "85087127"
 BLE_MAC = "C6:1E:0D:E0:32:E8"
+
+# --- CRYPTO CONSTANTS ---
+PHASE2_KEY = b"a01bc23ed45fF56A"
+PHASE2_STATIC_HEADER = bytes.fromhex("0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5")
 
 # --- PAYLOADS ---
 LBCS_PAYLOAD = bytes.fromhex("f14100144c42435300000000000000004343434a4a000000")
@@ -42,36 +46,14 @@ ARTEMIS_HELLO_BODY = bytes.fromhex(
     "2b726431446d453d00"
 )
 
-# GET PICTURE COMMAND (from Log Source 56)
-# Command ID: 0x02, Payload starts with J8WW...
-CMD_GET_PICTURE = bytes.fromhex(
-    "415254454d495300"
-    "020000001b000000ad0000004a385757"
-    "755144506d59534c66752f675841472b"
-    "557162427935354b5032694532355150"
-    "4e6f667a6e3034302b4e493967377a65"
-    "584c6b497058704330375358766f7372"
-    "577363316d386d786e7136684d694b77"
-    "6550624b4a5577765376715a62367330"
-    "736c3173667a685678794f3770656c79"
-    "49396365707a38624c7274534c515a6a"
-    "756d4334476136785550533059707a76"
-    "4b426d2b2f38646f595a4b4e39375268"
-    "30706b465859553d00"
-)
-
 # Magic Handshake Bodies (Null-Payloads)
 MAGIC_BODY_1 = bytes.fromhex("000000000000") 
 MAGIC_BODY_2 = bytes.fromhex("0000")         
 
-# Crypto
-PHASE2_KEY = b"a01bc23ed45fF56A"
-PHASE2_STATIC_HEADER = bytes.fromhex("0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5")
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger("CamClient")
 
-# --- HELPER CLASSES (Unchanged) ---
+# --- HELPER CLASSES ---
 class SystemTweaks:
     @staticmethod
     def disable_wifi_powersave():
@@ -123,7 +105,7 @@ class WiFiWorker:
         SystemTweaks.disable_wifi_powersave()
         return res.returncode == 0
 
-# --- SESSION ---
+# --- PROTOCOL HANDLER ---
 
 class Session:
     def __init__(self):
@@ -142,7 +124,7 @@ class Session:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind((local_ip, FIXED_LOCAL_PORT))
-        self.sock.settimeout(1.0) 
+        self.sock.settimeout(2.0) 
         logger.info(f"Socket gebunden an {local_ip}:{FIXED_LOCAL_PORT}")
         return True
 
@@ -151,31 +133,55 @@ class Session:
         if self.global_seq == 0: self.global_seq = 1
         return self.global_seq
 
+    def encrypt_json(self, json_obj):
+        # JSON String erstellen
+        json_str = json.dumps(json_obj, separators=(',', ':'))
+        # AES ECB Encrypt mit Padding
+        cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
+        encrypted = cipher.encrypt(pad(json_str.encode('utf-8'), AES.block_size))
+        return encrypted
+
+    def decrypt_payload(self, encrypted_data):
+        try:
+            cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
+            decrypted = unpad(cipher.decrypt(encrypted_data), AES.block_size)
+            # Remove Trash Bytes at the end if any (sometimes null bytes linger)
+            return json.loads(decrypted.decode('utf-8').rstrip('\x00'))
+        except Exception as e:
+            logger.error(f"Decryption Error: {e}")
+            return None
+
     def build_rudp_packet(self, packet_type, payload):
         seq = self.next_seq()
         body_len = len(payload) + 4 
+        # RUDP Header: F1 [Type] [LenH] [LenL] D1 00 00 [Seq]
         header = bytearray([0xF1, packet_type, (body_len >> 8) & 0xFF, body_len & 0xFF, 
                             0xD1, 0x00, 0x00, seq])
         return header + payload, seq
 
+    def build_cmd_packet(self, cmd_type, encrypted_payload):
+        # Artemis Command Wrapper
+        # Header: ARTEMIS\0 [CmdType 4 Bytes] [Len 4 Bytes] [Payload]
+        # CmdType: 2 = Request
+        wrapper_header = b'ARTEMIS\x00' + struct.pack('<II', 2, len(encrypted_payload))
+        full_body = wrapper_header + encrypted_payload
+        return self.build_rudp_packet(0xD0, full_body)
+
     def build_batch_ack(self, seq_list):
-        # Constructs the special "Bulk/Batch ACK" found in the log
-        # Header: F1 D1 [LEN] [LEN] D1 04 [COUNT_H] [COUNT_L] [SEQ1_H] [SEQ1_L] ...
-        
         count = len(seq_list)
         payload = bytearray()
         payload.append((count >> 8) & 0xFF)
         payload.append(count & 0xFF)
-        
         for s in seq_list:
             payload.append((s >> 8) & 0xFF)
             payload.append(s & 0xFF)
-            
         body_len = len(payload) + 4
-        # Note: Subtype is 0x04 here!
         header = bytearray([0xF1, 0xD1, (body_len >> 8) & 0xFF, body_len & 0xFF, 
-                            0xD1, 0x04, 0x00, 0x00]) # Seq bytes seem unused/0 in header for batch ack
+                            0xD1, 0x04, 0x00, 0x00])
         return header + payload
+
+    def send_raw(self, data):
+        self.sock.sendto(data, (TARGET_IP, self.active_port))
 
     def discover_and_login(self):
         logger.info("Starte Discovery...")
@@ -196,80 +202,120 @@ class Session:
 
         logger.info("Sende Login (Crypto)...")
         payload = { "utcTime": int(time.time()), "nonce": os.urandom(8).hex() }
-        enc = AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(pad(json.dumps(payload, separators=(',', ':')).encode(), AES.block_size))
+        enc = self.encrypt_json(payload)
         pkt = struct.pack('>BBH', 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)) + PHASE2_STATIC_HEADER + enc
-        self.sock.sendto(pkt, (TARGET_IP, self.active_port))
+        self.send_raw(pkt)
         time.sleep(0.2)
         return True
 
-    def simple_send(self, payload, packet_type=0xD0):
-        pkt, seq = self.build_rudp_packet(packet_type, payload)
-        self.sock.sendto(pkt, (TARGET_IP, self.active_port))
-        return seq
+    def get_file_list(self):
+        # Konstruiere JSON basierend auf ArMediaListGetCommand.java
+        req_json = {
+            "cmdId": 768,           # EC_CMD_ID_GET_MEDIA_LIST
+            "itemCntPerPage": 10,   # Wir wollen erst mal 10
+            "pageNo": 0             # Seite 0
+        }
+        logger.info(f"Frage Dateiliste ab: {req_json}")
+        
+        enc_payload = self.encrypt_json(req_json)
+        pkt, _ = self.build_cmd_packet(0xD0, enc_payload) # 0xD0 = Data
+        self.send_raw(pkt)
 
-    def download_loop(self):
-        logger.info(">>> Starte Download Loop (Bulk Mode)...")
+        # Antwort empfangen
+        start = time.time()
+        response_buffer = bytearray()
         
-        # Sequenznummern sind hier 16-Bit (2 Bytes)!
-        received_chunks = {} # seq -> data
-        batch_seqs = []
-        last_batch_time = time.time()
-        
-        total_bytes = 0
-        
-        while True:
+        while time.time() - start < 5.0:
             try:
                 data, _ = self.sock.recvfrom(4096)
                 if len(data) > 8 and data[0] == 0xF1:
-                    
-                    # Normal STOP-AND-WAIT Packet (Handshake/Control)
-                    if data[1] == 0xD0 and data[5] == 0x00:
-                        # Behandle wie bisher (ACK senden)
-                        rx_seq = data[7]
-                        ack_payload = bytearray([0x00, rx_seq, 0x00, rx_seq])
-                        pkt, _ = self.build_rudp_packet(0xD1, ack_payload) # nutzt build_rudp_packet intern
-                        # Hack: wir müssen das Paket manuell bauen, da build_rudp_packet seq erhöht
-                        # Einfachheitshalber: Sende Standard ACK
-                        ack_header = bytearray([0xF1, 0xD1, 0x00, 0x08, 0xD1, 0x00, 0x00, rx_seq])
-                        self.sock.sendto(ack_header + ack_payload, (TARGET_IP, self.active_port))
-                        
-                        # Prüfen ob Download fertig? (Log source 536/545)
-                        if b"ARTEMIS" in data:
-                            logger.info("Empfange Steuerdaten (ARTEMIS) im Download-Loop.")
-                    
-                    # BULK DATA PACKET
-                    # Format: F1 D0 [LEN] [LEN] D1 00 [SEQ_H] [SEQ_L] [DATA...]
-                    elif data[1] == 0xD0: 
-                        # Extract 16-bit Sequence
-                        seq_16 = (data[6] << 8) | data[7]
-                        payload = data[8:]
-                        
-                        if seq_16 not in received_chunks:
-                            received_chunks[seq_16] = payload
-                            batch_seqs.append(seq_16)
-                            total_bytes += len(payload)
-                        
-                        # Sende Batch ACK wenn wir genug gesammelt haben oder Zeit vergangen ist
-                        if len(batch_seqs) >= 20 or (time.time() - last_batch_time > 0.1 and len(batch_seqs) > 0):
-                            ack_pkt = self.build_batch_ack(batch_seqs)
-                            self.sock.sendto(ack_pkt, (TARGET_IP, self.active_port))
-                            logger.info(f"Sende Batch ACK für {len(batch_seqs)} Pakete. Total: {total_bytes} bytes")
-                            batch_seqs = []
-                            last_batch_time = time.time()
+                    # Check for Artemis Header inside Payload
+                    # RUDP Header (8 bytes) + Artemis (8 bytes) + CmdID (4) + Len (4)
+                    payload = data[8:]
+                    if b'ARTEMIS' in payload:
+                        # Extrahiere den verschlüsselten Teil
+                        # ARTEMIS\0 (8) + Type (4) + Len (4) = 16 Bytes Header
+                        if len(payload) > 16:
+                            encrypted_part = payload[16:]
+                            return self.decrypt_payload(encrypted_part)
+            except socket.timeout: pass
+        return None
 
-            except socket.timeout:
-                logger.warning("Keine Daten mehr (Timeout). Download wahrscheinlich fertig.")
-                break
-            except KeyboardInterrupt:
-                break
+    def download_file(self, file_type, media_dir, media_num):
+        logger.info(f"Starte Download für Dir: {media_dir}, Num: {media_num}...")
         
-        # Save File
-        logger.info(f"Speichere Bild aus {len(received_chunks)} Chunks...")
-        with open("downloaded_image.jpg", "wb") as f:
-            for seq in sorted(received_chunks.keys()):
-                f.write(received_chunks[seq])
-        logger.info("✅ Datei 'downloaded_image.jpg' gespeichert.")
-
+        # STRUKTUR aus ArMediaFileDownloadCommand.java 
+        req_json = {
+            "cmdId": 1285,          # EC_CMD_ID_START_FILE_DOWNLOAD
+            "downloadReqs": [
+                {
+                    "fileType": file_type,
+                    "dirNum": media_dir,
+                    "mediaNum": media_num
+                }
+            ]
+        }
+        
+        logger.info(f"Sende Request: {req_json}")
+        enc_payload = self.encrypt_json(req_json)
+        pkt, _ = self.build_cmd_packet(0xD0, enc_payload)
+        self.send_raw(pkt)
+        
+        # Download Loop (Bulk Mode)
+        received_chunks = {} 
+        batch_seqs = []
+        last_batch_time = time.time()
+        
+        start_wait = time.time()
+        
+        while True:
+            try:
+                # Timeout etwas erhöhen für große Dateien
+                self.sock.settimeout(2.0)
+                data, _ = self.sock.recvfrom(4096)
+                
+                if len(data) > 8 and data[0] == 0xF1:
+                    # RUDP Data Packet
+                    if data[1] == 0xD0: 
+                        # Prüfen ob Bulk-Transfer (2-Byte Seq)
+                        # Byte 4 = 0xD1, Byte 5 = 0x00, Byte 6+7 = Seq
+                        if data[4] == 0xD1:
+                            seq_16 = (data[6] << 8) | data[7]
+                            payload = data[8:]
+                            
+                            if seq_16 not in received_chunks:
+                                received_chunks[seq_16] = payload
+                                batch_seqs.append(seq_16)
+                            
+                            # Batch ACK senden
+                            if len(batch_seqs) >= 20 or (time.time() - last_batch_time > 0.1 and len(batch_seqs) > 0):
+                                ack_pkt = self.build_batch_ack(batch_seqs)
+                                self.send_raw(ack_pkt)
+                                batch_seqs = []
+                                last_batch_time = time.time()
+                                sys.stdout.write(f"\rEmpfangen: {len(received_chunks)} Pakete")
+                                sys.stdout.flush()
+            
+            except socket.timeout:
+                # Wenn wir schon Daten haben und Timeout kommt -> Fertig
+                if len(received_chunks) > 0:
+                    logger.info("\nDownload abgeschlossen (Timeout).")
+                    break
+                else:
+                    # Noch keine Daten, evtl. noch warten
+                    if time.time() - start_wait > 5.0:
+                        logger.warning("\nKeine Daten empfangen.")
+                        break
+            except KeyboardInterrupt: break
+            
+        if received_chunks:
+            filename = f"download_{media_dir}_{media_num}.jpg"
+            with open(filename, "wb") as f:
+                for seq in sorted(received_chunks.keys()):
+                    f.write(received_chunks[seq])
+            logger.info(f"✅ Datei {filename} gespeichert!")
+        else:
+            logger.warning("Kein Download erfolgt.")
 
     def run(self):
         ping_thread = None
@@ -280,24 +326,37 @@ class Session:
 
                 if self.discover_and_login():
                     logger.info(">>> Handshake...")
-                    # 1. Hello
-                    self.simple_send(ARTEMIS_HELLO_BODY)
-                    time.sleep(0.1)
-                    # 2. Magic Packets
-                    self.simple_send(MAGIC_BODY_1, 0xD1)
-                    time.sleep(0.05)
-                    self.simple_send(MAGIC_BODY_2, 0xD1)
-                    time.sleep(1.0) # Warten auf Stabilisierung
+                    pkt, _ = self.build_rudp_packet(0xD0, ARTEMIS_HELLO_BODY)
+                    self.send_raw(pkt)
+                    time.sleep(0.5)
                     
-                    logger.info(">>> Sende 'Get Picture' Kommando...")
-                    self.simple_send(CMD_GET_PICTURE)
+                    # 1. Dateiliste holen
+                    file_list_resp = self.get_file_list()
                     
-                    # Wechsel in den Download Modus
-                    self.download_loop()
+                    if file_list_resp and "mediaFiles" in file_list_resp:
+                        files = file_list_resp["mediaFiles"]
+                        logger.info(f"Gefunden: {len(files)} Dateien.")
+                        
+                        if len(files) > 0:
+                            # Wir nehmen das letzte (neueste) Bild
+                            target_file = files[-1] 
+                            logger.info(f"Wähle Datei: {target_file}")
+                            
+                            m_type = target_file.get("fileType", 0) # oder mediaType? Im Log stand fileType
+                            m_dir = target_file.get("mediaDirNum", 0)
+                            m_num = target_file.get("mediaNum", 0)
+                            
+                            # 2. Download starten
+                            self.download_file(m_type, m_dir, m_num)
+                        else:
+                            logger.warning("Keine Dateien auf der Kamera.")
+                    else:
+                        logger.error("Konnte Dateiliste nicht abrufen oder entschlüsseln.")
+                        logger.error(f"Raw Response: {file_list_resp}")
 
                 else: logger.error("❌ Discovery Failed.")
         except KeyboardInterrupt:
-            logger.info("Abbruch durch Benutzer.")
+            logger.info("Abbruch.")
         finally:
             self.running = False
             if ping_thread: ping_thread.stop()
@@ -310,7 +369,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if os.geteuid() != 0:
-        logger.warning("⚠️  Bitte als root starten für WLAN/Ping!")
+        logger.warning("⚠️  Bitte als root starten!")
 
     if args.ble:
         asyncio.run(BLEWorker.wake_camera(BLE_MAC))
