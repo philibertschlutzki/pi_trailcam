@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Wildkamera Thumbnail Downloader v2.17
+Wildkamera Thumbnail Downloader v3.0 - "Mimicry Edition"
 
-CHANGELOG v2.17 (2025-12-24):
-- FINALER SEQUENCE FIX: Reset auf Seq=1 nach Handshake
-  * Analyse des UDP-Logs ("Golden Trace") zeigte: 
-    Hello(0) -> Magic1(3) -> Magic2(1) -> Nächstes Paket ist WIEDER Seq(1)!
-  * Das Script sendete bisher Seq(2), was die Kamera ignorierte.
-  * FIX: global_seq wird nach Magic2 auf 0 gesetzt (damit next_seq() = 1 ist).
-- Strict-Wait für den ersten Heartbeat nach Handshake eingefügt, um Sync zu garantieren.
+CHANGELOG v3.0:
+- Architektur-Rewrite: Orientiert sich strikt an den Android-App Logs.
+- Sequenz-Management: Repliziert das 0->3->1->2 Muster des Handshakes.
+- Background Heartbeat: Sendet alle 2s Heartbeats (Cmd 2/525), wie die App.
+- Logging: Schreibt 'app_debug.log' für detaillierte Analyse.
 """
+
 import socket
 import struct
 import time
@@ -61,32 +60,22 @@ HEARTBEAT_PAYLOAD_END = bytes.fromhex("000100190000004d7a6c423336582f49566f385a7
 PHASE2_KEY = b"a01bc23ed45fF56A"
 PHASE2_STATIC_HEADER = bytes.fromhex("0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5")
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+# --- LOGGING SETUP ---
 logger = logging.getLogger("CamClient")
+logger.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
-# --- UTILITY FUNCTIONS ---
-def analyze_packet(data):
-    if len(data) < 8 or data[0] != 0xF1:
-        return f"NON-RUDP ({len(data)} bytes)"
-    
-    pkt_type = data[1]
-    seq = data[7] if len(data) > 7 else 0
-    type_names = {
-        0x41: "DISCOVERY_RESP", 0x42: "DATA_FRAGMENT", 0x43: "KEEPALIVE",
-        0xD0: "DATA", 0xD1: "CONTROL/ACK", 0xE0: "ERROR", 0xF0: "DISCONNECT", 0xF9: "PRE_LOGIN"
-    }
-    type_str = type_names.get(pkt_type, f"TYPE_{pkt_type:02X}")
-    
-    if pkt_type == 0xD0 and len(data) >= 11 and data[8:11] == b'ACK':
-         return f"{type_str}(Seq={seq}) -> CAM_HEARTBEAT_ACK (IGNORE)"
+# Console Handler
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+ch.setFormatter(formatter)
+logger.addHandler(ch)
 
-    if pkt_type == 0xD0 and len(data) > 15 and data[8:15] == b'ARTEMIS':
-        try:
-            cmd = struct.unpack('<I', data[16:20])[0]
-            return f"{type_str}(Seq={seq}) -> ARTEMIS(Cmd={cmd})"
-        except: return f"{type_str}(Seq={seq}) -> ARTEMIS"
-    
-    return f"{type_str}(Seq={seq})"
+# File Handler (App Log Mimicry)
+fh = logging.FileHandler('app_debug.log', mode='w')
+fh.setLevel(logging.DEBUG)
+fh.setFormatter(formatter)
+logger.addHandler(fh)
 
 # --- WORKERS ---
 class SystemTweaks:
@@ -143,33 +132,37 @@ class WiFiWorker:
 
 # --- SESSION ---
 class Session:
-    def __init__(self, debug=False):
+    def __init__(self):
         self.sock = None
         self.active_port = None
         self.running = True
-        self.global_seq = -1
+        self.global_seq = -1 # Startwert für next_seq() -> 0
         self.app_seq = 0
-        self.debug = debug
-        self.tx_count = 0
-        self.rx_count = 0
         self.token = None
-        self.thumbnail_recv_active = False
-        self.thumbnail_buffer = bytearray()
-        self.thumbnail_lock = threading.Lock()
-        self.thumbnail_count = 0
         self.heartbeat_cnt = 0
+        self.heartbeat_active = False
+        
+        # Locks & Queues
+        self.seq_lock = threading.Lock()
+        self.sock_lock = threading.Lock()
 
-    def log_tx(self, data, desc=""):
-        self.tx_count += 1
-        if self.debug:
-            logger.debug(f"📤 TX [{self.tx_count}] {analyze_packet(data)} ({len(data)} bytes)")
-            if desc: logger.debug(f"   └─ {desc}")
+    def analyze_packet(self, data):
+        if len(data) < 8 or data[0] != 0xF1: return f"NON-RUDP ({len(data)} bytes)"
+        pkt_type = data[1]
+        seq = data[7] if len(data) > 7 else 0
+        type_names = {0x41:"DISC_RESP", 0x42:"DATA_FRAG", 0x43:"KEEPALIVE", 0xD0:"DATA", 0xD1:"ACK/CTRL", 0xE0:"ERR", 0xF0:"DISC", 0xF9:"PRE_LOGIN"}
+        t_str = type_names.get(pkt_type, f"TYPE_{pkt_type:02X}")
+        if pkt_type == 0xD0 and len(data) > 15 and data[8:15] == b'ARTEMIS':
+            try:
+                cmd = struct.unpack('<I', data[16:20])[0]
+                return f"{t_str}(Seq={seq}) -> ARTEMIS(Cmd={cmd})"
+            except: pass
+        return f"{t_str}(Seq={seq})"
 
-    def log_rx(self, data, addr, desc=""):
-        self.rx_count += 1
-        if self.debug:
-            logger.debug(f"📥 RX [{self.rx_count}] {analyze_packet(data)} ({len(data)} bytes) from {addr[0]}:{addr[1]}")
-            if desc: logger.debug(f"   └─ {desc}")
+    def log_packet(self, direction, data, desc=""):
+        msg = f"{direction} {self.analyze_packet(data)} ({len(data)}b)"
+        if desc: msg += f" - {desc}"
+        logger.debug(msg)
 
     def setup_network(self):
         try:
@@ -186,20 +179,18 @@ class Session:
         logger.info(f"Socket gebunden an {local_ip}:{FIXED_LOCAL_PORT}")
         return True
 
-    def next_seq(self):
-        self.global_seq = (self.global_seq + 1) % 255
-        return self.global_seq
+    def get_seq(self, force=None):
+        with self.seq_lock:
+            if force is not None:
+                self.global_seq = force
+                return force
+            self.global_seq = (self.global_seq + 1) % 255
+            return self.global_seq
 
-    def build_rudp_packet(self, packet_type, payload, force_seq=None):
-        if force_seq is not None:
-            seq = force_seq
-            self.global_seq = seq
-        else:
-            seq = self.next_seq()
-            
+    def build_rudp_packet(self, packet_type, payload, seq):
         body_len = len(payload) + 4
         header = bytearray([0xF1, packet_type, (body_len >> 8) & 0xFF, body_len & 0xFF, 0xD1, 0x00, 0x00, seq])
-        return header + payload, seq
+        return header + payload
 
     def build_ack(self, rx_seq):
         payload = bytearray([0x00, rx_seq, 0x00, rx_seq])
@@ -207,86 +198,26 @@ class Session:
         header = bytearray([0xF1, 0xD1, (body_len >> 8) & 0xFF, body_len & 0xFF, 0xD1, 0x00, 0x00, 0x00])
         return header + payload
 
-    def send_reliable_packet(self, pkt_type, payload, desc="", max_retries=5, allow_fail=False, force_seq=None):
-        pkt, seq = self.build_rudp_packet(pkt_type, payload, force_seq=force_seq)
-        
-        for attempt in range(max_retries):
-            self.sock.sendto(pkt, (TARGET_IP, self.active_port))
-            self.log_tx(pkt, f"{desc} (Seq={seq}, Try={attempt+1})")
-            
-            start = time.time()
-            while time.time() - start < 0.8: 
-                try:
-                    data, addr = self.sock.recvfrom(65535)
-                    if len(data) >= 11 and data[8:11] == b'ACK': continue
+    def send_raw(self, data):
+        with self.sock_lock:
+            self.sock.sendto(data, (TARGET_IP, self.active_port))
 
-                    if len(data) > 7 and data[0] == 0xF1:
-                        if data[1] == 0xD1: # ACK
-                             self.log_rx(data, addr, f"ACK für {desc}")
-                             return True
-                        if data[1] == 0xD0: # Implizites ACK durch Daten
-                             return True
-                except socket.timeout: pass
-        
-        if allow_fail:
-            logger.warning(f"⚠️ {desc} nicht bestätigt, fahre trotzdem fort...")
-            return True
-        
-        logger.error(f"❌ {desc} fehlgeschlagen nach {max_retries} Versuchen")
-        return False
-
-    def discover_and_login(self):
-        logger.info("Starte Discovery...")
-        for p in TARGET_PORTS: self.sock.sendto(LBCS_PAYLOAD, (TARGET_IP, p))
-
-        start = time.time()
-        while time.time() - start < 1.5:
+    def heartbeat_loop(self):
+        """Sendet Heartbeats im Hintergrund, wie die App"""
+        logger.info("💓 Heartbeat Thread gestartet")
+        while self.heartbeat_active and self.running:
             try:
-                data, addr = self.sock.recvfrom(1024)
-                if len(data) > 4 and data[0] == 0xF1:
-                    self.active_port = addr[1]
-                    logger.info(f"✅ ANTWORT von {addr[0]}:{addr[1]}")
-                    break
-            except: pass
-
-        if not self.active_port: return False
-
-        logger.info(f"Sende Pre-Login...")
-        payload = { "utcTime": int(time.time()), "nonce": os.urandom(8).hex() }
-        enc = AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(pad(json.dumps(payload, separators=(',', ':')).encode(), AES.block_size))
-        pkt = struct.pack('>BBH', 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)) + PHASE2_STATIC_HEADER + enc
-        
-        self.sock.sendto(pkt, (TARGET_IP, self.active_port))
-        self.log_tx(pkt, "Phase2 Pre-Login")
-        
-        start = time.time()
-        while time.time() - start < 2.0:
-            try:
-                data, addr = self.sock.recvfrom(1024)
-                if len(data) > 4 and data[0] == 0xF1:
-                    self.log_rx(data, addr, "Pre-Login Response")
-                    return True
-            except: pass
-        return True
-
-    def send_heartbeat(self, force_seq=None, wait_ack=False):
-        """Senden eines Heartbeats, optional mit ACK Wait um Sync sicherzustellen"""
-        self.heartbeat_cnt = (self.heartbeat_cnt + 1) % 255
-        body = bytearray(HEARTBEAT_BODY_START) + bytearray([self.heartbeat_cnt]) + bytearray(HEARTBEAT_PAYLOAD_END)
-        pkt, seq = self.build_rudp_packet(0xD0, body, force_seq=force_seq)
-        self.sock.sendto(pkt, (TARGET_IP, self.active_port))
-        self.log_tx(pkt, f"💓 HEARTBEAT (Cmd=2, Cnt={self.heartbeat_cnt}, RUDP_Seq={seq})")
-        
-        if wait_ack:
-            start = time.time()
-            while time.time() - start < 0.5:
-                try:
-                    data, addr = self.sock.recvfrom(1024)
-                    if len(data) > 7 and data[1] == 0xD1:
-                        self.log_rx(data, addr, f"ACK für Heartbeat Seq={seq}")
-                        return True
-                except: pass
-        return False
+                self.heartbeat_cnt = (self.heartbeat_cnt + 1) % 255
+                body = bytearray(HEARTBEAT_BODY_START) + bytearray([self.heartbeat_cnt]) + bytearray(HEARTBEAT_PAYLOAD_END)
+                # Normales Seq-Inkrement für Heartbeats
+                seq = self.get_seq()
+                pkt = self.build_rudp_packet(0xD0, body, seq)
+                self.send_raw(pkt)
+                self.log_packet("📤", pkt, f"Heartbeat Cnt={self.heartbeat_cnt}")
+                time.sleep(2.0) # App sendet ca. alle 2s
+            except Exception as e:
+                logger.error(f"Heartbeat Fehler: {e}")
+                break
 
     def encrypt_json(self, obj):
         return AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(pad(json.dumps(obj, separators=(',', ':')).encode('utf-8'), AES.block_size))
@@ -301,175 +232,163 @@ class Session:
             return json.loads(decrypted.decode('utf-8'))
         except: return None
 
-    def send_artemis_command(self, cmd_id, payload_dict):
+    def send_command(self, cmd_id, payload_dict):
         self.app_seq += 1
         if self.token and cmd_id not in [0, 2]: payload_dict["token"] = str(self.token)
+        
         b64_body = base64.b64encode(self.encrypt_json(payload_dict))
         if len(b64_body) % 4 != 0: b64_body += b'=' * (4 - len(b64_body) % 4)
         b64_body += b'\x00'
+        
         art_hdr = b'ARTEMIS\x00' + struct.pack('<III', cmd_id, self.app_seq, len(b64_body))
-        pkt, seq = self.build_rudp_packet(0xD0, art_hdr + b64_body)
+        
+        # Sende-Logik mit Retries
+        seq = self.get_seq()
+        pkt = self.build_rudp_packet(0xD0, art_hdr + b64_body, seq)
 
-        for attempt in range(5):
-            self.sock.sendto(pkt, (TARGET_IP, self.active_port))
-            self.log_tx(pkt, f"CMD {cmd_id} (Seq={seq}, Try={attempt+1})")
+        for i in range(5):
+            self.send_raw(pkt)
+            self.log_packet("📤", pkt, f"CMD {cmd_id} Try={i+1}")
+            
+            # Kurz warten auf Antwort
             start = time.time()
             while time.time() - start < 1.0:
                 try:
                     data, addr = self.sock.recvfrom(65535)
-                    if len(data) >= 11 and data[8:11] == b'ACK': continue
-                    if len(data) > 7 and data[0] == 0xF1 and data[1] == 0xD1 and data[7] == seq: return seq
-                except socket.timeout: break
-        return None
+                    self.log_packet("📥", data)
+                    
+                    if len(data) > 7 and data[0] == 0xF1:
+                        if data[1] == 0xD1 and data[7] == seq: return True # ACK
+                        if data[1] == 0xD0: # Data Response ist auch ein ACK
+                            # Wenn es eine Antwort ist, geben wir sie zurück? 
+                            # Hier einfach True, Verarbeitung im Main Loop
+                            return True
+                except socket.timeout: pass
+        return False
 
-    def wait_for_response(self, timeout=10.0):
+    def wait_for_data(self, timeout=5.0):
         start = time.time()
-        last_hb = time.time()
-        logger.info(f"⏳ Warte auf Response (max {timeout}s)...")
         while time.time() - start < timeout:
-            # Active Heartbeat während wir warten
-            if time.time() - last_hb > 1.5:
-                self.send_heartbeat()
-                last_hb = time.time()
             try:
                 data, addr = self.sock.recvfrom(65535)
-                self.log_rx(data, addr)
-                if data[0] != 0xF1: continue
-                if data[1] == 0xD0 and len(data) >= 11 and data[8:11] == b'ACK': continue
-                if data[1] == 0xD0:
-                    ack = self.build_ack(data[7])
-                    self.sock.sendto(ack, (TARGET_IP, self.active_port))
-                    if b'ARTEMIS' in data: return self.decrypt_payload(data)
-            except socket.timeout: continue
+                self.log_packet("📥", data)
+                
+                if len(data) > 7 and data[0] == 0xF1:
+                    # Bestätige alles
+                    if data[1] in [0xD0, 0x42]:
+                        ack = self.build_ack(data[7])
+                        self.send_raw(ack)
+                        self.log_packet("📤", ack, f"ACK für {data[7]}")
+
+                    if data[1] == 0xD0 and b'ARTEMIS' in data:
+                        return self.decrypt_payload(data)
+            except socket.timeout: pass
         return None
 
-    def thumbnail_recv_thread(self):
-        logger.info("🧵 Thumbnail Thread gestartet")
-        while self.thumbnail_recv_active:
-            try:
-                data, addr = self.sock.recvfrom(65535)
-                if not data: break
-                if len(data) > 8 and data[0] == 0xF1:
-                    pkt_type = data[1]
-                    seq = data[7]
-                    if pkt_type == 0xD0 and len(data) >= 11 and data[8:11] == b'ACK': continue
-                    if pkt_type == 0x42:
-                        with self.thumbnail_lock: self.thumbnail_buffer.extend(data[8:])
-                        self.sock.sendto(self.build_ack(seq), (TARGET_IP, self.active_port))
-                    elif pkt_type == 0xD0 and b'ARTEMIS' in data:
-                        self.sock.sendto(self.build_ack(seq), (TARGET_IP, self.active_port))
-                        logger.info("🏁 Transfer fertig")
-                        self.parse_thumbnail_buffer()
-                        break
-            except socket.timeout: continue
-
-    def parse_thumbnail_buffer(self):
-        with self.thumbnail_lock:
-            buf = bytes(self.thumbnail_buffer)
-            self.thumbnail_buffer.clear()
-        idx = 0
-        while True:
-            s = buf.find(b'\xff\xd8', idx)
-            if s == -1: break
-            e = buf.find(b'\xff\xd9', s)
-            if e == -1: break
-            self.save_thumbnail(buf[s:e+2])
-            idx = e+2
-
-    def save_thumbnail(self, data):
-        self.thumbnail_count += 1
-        fn = f"thumbnails/thumb_{self.thumbnail_count:04d}.jpg"
-        os.makedirs("thumbnails", exist_ok=True)
-        with open(fn, 'wb') as f: f.write(data)
-        logger.info(f"✅ {fn} ({len(data)} bytes)")
-
-    def download_thumbnails_batch(self, media_files, batch_size=45):
-        if not media_files: return
-        total = len(media_files)
-        logger.info(f"📥 Batch-Download: {total} Dateien")
-        for batch_idx in range(0, total, batch_size):
-            batch = media_files[batch_idx:batch_idx+batch_size]
-            token = random.randint(100000000, 999999999)
-            reqs = [{"fileType": i.get("fileType", 0), "dirNum": i.get("dirNum", 100), "mediaNum": i.get("mediaNum")} for i in batch]
-            req = {"cmdId": 772, "thumbnailReqs": reqs, "token": token}
-            self.thumbnail_recv_active = True
-            self.thumbnail_buffer.clear()
-            t = threading.Thread(target=self.thumbnail_recv_thread, daemon=True)
-            t.start()
-            if self.send_artemis_command(772, req):
-                resp = self.wait_for_response(timeout=5.0)
-                if resp and resp.get("result") == 0: t.join(timeout=30.0)
-            self.thumbnail_recv_active = False
-            time.sleep(0.5)
+    def discover(self):
+        logger.info("Starte Discovery...")
+        for p in TARGET_PORTS: self.sock.sendto(LBCS_PAYLOAD, (TARGET_IP, p))
+        
+        try:
+            data, addr = self.sock.recvfrom(1024)
+            if len(data) > 4 and data[0] == 0xF1:
+                self.active_port = addr[1]
+                logger.info(f"✅ Kamera gefunden auf Port {self.active_port}")
+                return True
+        except: pass
+        return False
 
     def run(self):
-        try:
-            if not self.setup_network(): return
-            NetworkPinger(TARGET_IP).start()
-            if not self.discover_and_login(): return
+        if not self.setup_network(): return
+        NetworkPinger(TARGET_IP).start()
+        
+        if not self.discover():
+            logger.error("❌ Kamera nicht gefunden")
+            return
 
-            # --- HANDSHAKE: 0 -> 3 -> 1 ---
-            logger.info(">>> Handshake Phase 1 (Hello) [Seq=0]...")
-            if not self.send_reliable_packet(0xD0, ARTEMIS_HELLO_BODY, "Hello", force_seq=0): return
-            
-            logger.info(">>> Handshake Phase 2 (Magic1) [Seq=3]...")
-            self.send_reliable_packet(0xD1, MAGIC_BODY_1, "Magic1", force_seq=3, allow_fail=True)
-            
-            logger.info(">>> Handshake Phase 3 (Magic2) [Seq=1]...")
-            self.send_reliable_packet(0xD1, MAGIC_BODY_2, "Magic2", force_seq=1, allow_fail=True)
-            
-            logger.info("✅ Handshake abgeschlossen. Sende Heartbeat (Seq 1) zur Stabilisierung...")
-            
-            # CRITICAL SEQ RESET:
-            # Nach Magic2 (Seq=1), wird der nächste Counter auf 2 gehen.
-            # Aber das UDP Log zeigt, dass das nächste Paket wieder Seq=1 ist (Line 73 nach Line 56).
-            # Wir setzen global_seq auf 0, damit next_seq() eine 1 liefert.
-            self.global_seq = 0
-            
-            # Ein zuverlässiger Heartbeat mit Seq=1, um sicherzugehen, dass wir im Sync sind
-            if not self.send_heartbeat(wait_ack=True):
-                logger.warning("⚠️ Erster Heartbeat nicht bestätigt, versuche Login trotzdem...")
+        # --- PRE-LOGIN ---
+        logger.info(">>> Sende Pre-Login...")
+        payload = { "utcTime": int(time.time()), "nonce": os.urandom(8).hex() }
+        enc = AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(pad(json.dumps(payload, separators=(',', ':')).encode(), AES.block_size))
+        pkt = struct.pack('>BBH', 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)) + PHASE2_STATIC_HEADER + enc
+        self.send_raw(pkt)
+        time.sleep(0.5) # Kurze Pause wie im Log
 
-            logger.info(">>> Sende Login (Cmd=0)...")
-            login_data = {"usrName":"admin","password":"admin","needVideo":0,"needAudio":0,"utcTime":int(time.time()),"supportHeartBeat":True}
-            if self.send_artemis_command(0, login_data):
-                resp = self.wait_for_response()
-                if resp and "token" in resp:
-                    self.token = resp["token"]
-                    logger.info(f"🎉 LOGIN ERFOLGREICH! Token: {self.token}")
-                else:
-                    logger.error(f"❌ Login fehlgeschlagen: {resp}")
-                    return
+        # --- HANDSHAKE (MIMICRY) ---
+        logger.info(">>> Start Handshake (0 -> 3 -> 1)...")
+        
+        # 1. Hello (Seq 0)
+        seq = self.get_seq(force=0)
+        pkt = self.build_rudp_packet(0xD0, ARTEMIS_HELLO_BODY, seq)
+        self.send_raw(pkt)
+        self.log_packet("📤", pkt, "Handshake: Hello")
+        time.sleep(0.1)
+
+        # 2. Magic 1 (Seq 3)
+        seq = self.get_seq(force=3)
+        pkt = self.build_rudp_packet(0xD1, MAGIC_BODY_1, seq)
+        self.send_raw(pkt)
+        self.log_packet("📤", pkt, "Handshake: Magic 1")
+        time.sleep(0.1)
+
+        # 3. Magic 2 (Seq 1)
+        seq = self.get_seq(force=1)
+        pkt = self.build_rudp_packet(0xD1, MAGIC_BODY_2, seq)
+        self.send_raw(pkt)
+        self.log_packet("📤", pkt, "Handshake: Magic 2")
+        time.sleep(0.1)
+
+        logger.info("✅ Handshake gesendet. Starte Heartbeats...")
+        
+        # --- START HEARTBEATS (Seq geht ab hier automatisch weiter: 2, 3...) ---
+        self.heartbeat_active = True
+        hb_thread = threading.Thread(target=self.heartbeat_loop)
+        hb_thread.start()
+        
+        # Warte kurz, damit 1-2 Heartbeats rausgehen (wie im Log)
+        time.sleep(1.5)
+
+        # --- LOGIN ---
+        logger.info(">>> Sende Login...")
+        login_data = {"usrName":"admin","password":"admin","needVideo":0,"needAudio":0,"utcTime":int(time.time()),"supportHeartBeat":True}
+        if self.send_command(0, login_data):
+            resp = self.wait_for_data()
+            if resp and "token" in resp:
+                self.token = resp["token"]
+                logger.info(f"🎉 LOGIN ERFOLGREICH! Token: {self.token}")
+                
+                # --- GET INFO ---
+                logger.info(">>> Hole Geräte-Info...")
+                self.send_command(512, {"cmdId":512}) # GetDevInfo
+                self.wait_for_data()
+
+                # --- GET FILES ---
+                logger.info(">>> Hole Dateiliste...")
+                self.send_command(768, {"cmdId":768, "itemCntPerPage":45, "pageNo":0})
+                files_resp = self.wait_for_data()
+                if files_resp and "mediaFiles" in files_resp:
+                    logger.info(f"✅ {len(files_resp['mediaFiles'])} Dateien gefunden.")
             else:
-                logger.error("❌ Login-Command nicht bestätigt.")
-                return
+                logger.error("❌ Kein Token im Login-Response")
+        else:
+            logger.error("❌ Login-Command nicht bestätigt")
 
-            logger.info("📂 Hole Dateiliste...")
-            if self.send_artemis_command(768, {"cmdId": 768, "itemCntPerPage": 45, "pageNo": 0}):
-                resp = self.wait_for_response()
-                if resp and "mediaFiles" in resp:
-                    logger.info(f"✅ {len(resp['mediaFiles'])} Dateien gefunden.")
-                    self.download_thumbnails_batch(resp['mediaFiles'])
-            
-        except KeyboardInterrupt: logger.info("Abbruch.")
-        finally:
-            self.running = False
-            if self.sock: self.sock.close()
+        self.heartbeat_active = False
+        self.running = False
+        hb_thread.join()
+        self.sock.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--wifi", action="store_true")
     parser.add_argument("--ble", action="store_true")
-    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--wifi", action="store_true")
     args = parser.parse_args()
-
-    if args.debug: logging.getLogger().setLevel(logging.DEBUG)
-    if os.geteuid() != 0: logger.warning("⚠️ Root für WLAN/Ping benötigt!")
 
     if args.ble:
         asyncio.run(BLEWorker.wake_camera(BLE_MAC))
         time.sleep(20)
+    
     if args.wifi:
-        if not WiFiWorker.connect(DEFAULT_SSID, DEFAULT_PASS): sys.exit(1)
+        WiFiWorker.connect(DEFAULT_SSID, DEFAULT_PASS)
 
-    Session(debug=args.debug).run()
+    Session().run()
