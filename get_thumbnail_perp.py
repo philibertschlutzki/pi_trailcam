@@ -78,8 +78,11 @@ def analyze_packet(data):
     type_names = {
         0x41: "DISCOVERY_RESP",
         0x42: "DATA_FRAGMENT",
+        0x43: "KEEPALIVE",
         0xD0: "DATA",
         0xD1: "CONTROL/ACK",
+        0xE0: "ERROR",
+        0xF0: "DISCONNECT",
         0xF9: "PRE_LOGIN"
     }
     
@@ -301,6 +304,10 @@ class Session:
 
         enc_data = self.encrypt_json(payload_dict)
         b64_body = base64.b64encode(enc_data) + b'\x00'
+        
+        # FIX 4: Debug-Output für Payload-Vergleich
+        if self.debug:
+            logger.debug(f"🔐 Encrypted Login Payload: {b64_body[:60]}")
 
         art_hdr = b'ARTEMIS\x00' + struct.pack('<IIHH', cmd_id, cmd_id, len(b64_body), 0)
         full_payload = art_hdr + b64_body
@@ -312,9 +319,9 @@ class Session:
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
             self.log_tx(pkt, f"ARTEMIS Cmd={cmd_id}, Seq={seq}, Attempt={attempt+1}")
 
-            # Warte auf ACK (Typ 0xD1)
+            # FIX 3: Erhöhe Timeout von 0.8s auf 1.5s
             start = time.time()
-            while time.time() - start < 0.8:
+            while time.time() - start < 1.5:
                 try:
                     data, addr = self.sock.recvfrom(65535)
                     self.log_rx(data, addr)
@@ -340,7 +347,16 @@ class Session:
                 data, addr = self.sock.recvfrom(65535)
                 self.log_rx(data, addr)
 
-                if len(data) < 8 or data[0] != 0xF1:
+                # FIX 2: Explizite Error-Detection für 0xE0/0xF0
+                if data[0] != 0xF1:
+                    continue
+                if data[1] == 0xE0:
+                    logger.error(f"❌ Kamera Error 0xE0: {data.hex()}")
+                    return None
+                if data[1] == 0xF0:
+                    logger.error(f"❌ Kamera Disconnect 0xF0: {data.hex()}")
+                    return None
+                if len(data) < 8:
                     continue
 
                 # D0-Pakete mit ARTEMIS = JSON-Response
@@ -515,6 +531,25 @@ class Session:
             pkt, seq = self.build_rudp_packet(0xD1, MAGIC_BODY_2)
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
             self.log_tx(pkt, f"Handshake Phase 3: Magic2, Seq={seq}")
+
+            # FIX 1: Warte auf Session-Keepalive (0x43)
+            logger.info(">>> Warte auf Session-Keepalive...")
+            keepalive_count = 0
+            for _ in range(50):
+                try:
+                    data, addr = self.sock.recvfrom(1024)
+                    self.log_rx(data, addr, "Keepalive Check")
+                    if len(data) > 1 and data[0] == 0xF1 and data[1] == 0x43:
+                        keepalive_count += 1
+                        if keepalive_count >= 3:
+                            logger.info(f"✅ Session stabil ({keepalive_count} Keepalives empfangen)")
+                            break
+                except socket.timeout:
+                    pass
+                time.sleep(0.1)
+            
+            if keepalive_count == 0:
+                logger.warning("⚠️ Keine Keepalives empfangen, versuche trotzdem Login...")
 
             logger.info(">>> Session etabliert. Starte Datenabruf...")
             time.sleep(0.5)
