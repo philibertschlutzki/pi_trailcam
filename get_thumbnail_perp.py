@@ -399,51 +399,61 @@ class Session:
         return False
 
     def wait_for_data(self, timeout=8.0):
-        """Wait for data packet and return decrypted JSON"""
-        start = time.time()
-        
-        while time.time() - start < timeout:
-            try:
-                data, addr = self.sock.recvfrom(4096)
-                self.log_packet("📥 [RX]", data, addr)
+    """Wait for data packet and return decrypted JSON"""
+    start = time.time()
+    
+    while time.time() - start < timeout:
+        try:
+            data, addr = self.sock.recvfrom(4096)
+            self.log_packet("📥 [RX]", data, addr)
+            
+            if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
+                payload = data[8:]
                 
-                if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
-                    # Send ACK immediately
-                    rx_seq = data[7]
-                    self.send_ack(rx_seq)
+                # ❗ CRITICAL: Do NOT ACK "TEXT ACK" packets!
+                # These are protocol noise, not real data
+                if payload.startswith(b'ACK'): 
+                    continue  # Just ignore, no ACK!
+                
+                # Only ACK real data packets
+                rx_seq = data[7]
+                self.send_ack(rx_seq)
 
-                    # Extract payload
-                    payload = data[8:]
-                    
-                    # Skip text ACKs
-                    if payload.startswith(b'ACK'): 
-                        continue
-                    
-                    # Try to decrypt ARTEMIS payload
-                    if b'ARTEMIS' in payload and len(payload) > 20:
-                        b64_data = payload[20:].rstrip(b'\x00')
-                        try:
-                            res = self.decrypt_bytes(base64.b64decode(b64_data))
-                            if res: 
-                                return res
-                        except: 
-                            pass
-                    
-                    # Try direct base64 decode
+                # Try to decrypt ARTEMIS payload
+                if b'ARTEMIS' in payload and len(payload) > 20:
+                    b64_data = payload[20:].rstrip(b'\x00')
                     try:
-                        res = self.decrypt_bytes(base64.b64decode(payload.rstrip(b'\x00')))
+                        res = self.decrypt_bytes(base64.b64decode(b64_data))
                         if res: 
                             return res
                     except: 
                         pass
-            except socket.timeout: 
-                pass
-            except Exception as e:
-                if self.debug:
-                    logger.debug(f"Wait error: {e}")
-        
-        return None
-
+                
+                # Try direct base64 decode
+                try:
+                    res = self.decrypt_bytes(base64.b64decode(payload.rstrip(b'\x00')))
+                    if res: 
+                        return res
+                except: 
+                    pass
+            
+            # Handle error packets
+            if len(data) == 4:
+                if data == b'\xf1\xe0\x00\x00':
+                    logger.error("❌ Kamera meldet: Session/Auth Fehler")
+                    return None
+                elif data == b'\xf1\xf0\x00\x00':
+                    logger.error("❌ Kamera meldet: Fatal State Error")
+                    return None
+                    
+        except socket.timeout: 
+            pass
+        except Exception as e:
+            if self.debug:
+                logger.debug(f"Wait error: {e}")
+    
+    return None
+  
     def receive_thumbnail(self, timeout=5.0):
         """
         Receive a single thumbnail via RUDP.
