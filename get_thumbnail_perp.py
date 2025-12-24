@@ -316,9 +316,8 @@ class Session:
         enc_data = self.encrypt_json(payload_dict)
         b64_body = base64.b64encode(enc_data) + b'\x00'
         
-        # FIX 4: Debug-Output für Payload-Vergleich
         if self.debug:
-            logger.debug(f"🔐 Encrypted Login Payload: {b64_body[:60]}")
+            logger.debug(f"🔐 Encrypted Payload: {b64_body[:60]}")
 
         art_hdr = b'ARTEMIS\x00' + struct.pack('<IIHH', cmd_id, cmd_id, len(b64_body), 0)
         full_payload = art_hdr + b64_body
@@ -330,7 +329,6 @@ class Session:
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
             self.log_tx(pkt, f"ARTEMIS Cmd={cmd_id}, Seq={seq}, Attempt={attempt+1}")
 
-            # FIX 3: Erhöhe Timeout von 0.8s auf 1.5s
             start = time.time()
             while time.time() - start < 1.5:
                 try:
@@ -338,7 +336,6 @@ class Session:
                     self.log_rx(data, addr)
                     
                     if len(data) > 7 and data[0] == 0xF1 and data[1] == 0xD1:
-                        # ACK erhalten
                         if self.debug:
                             logger.debug(f"✅ ACK für Seq={seq} empfangen")
                         return seq
@@ -358,7 +355,6 @@ class Session:
                 data, addr = self.sock.recvfrom(65535)
                 self.log_rx(data, addr)
 
-                # FIX 2: Explizite Error-Detection für 0xE0/0xF0
                 if data[0] != 0xF1:
                     continue
                 if data[1] == 0xE0:
@@ -370,20 +366,16 @@ class Session:
                 if len(data) < 8:
                     continue
 
-                # D0-Pakete mit ARTEMIS = JSON-Response
                 if data[1] == 0xD0 and b'ARTEMIS' in data:
-                    # ACK senden
                     ack = self.build_ack(data[7])
                     self.sock.sendto(ack, (TARGET_IP, self.active_port))
                     self.log_tx(ack, f"ACK für ARTEMIS-Response Seq={data[7]}")
 
-                    # JSON dekodieren
                     resp = self.decrypt_payload(data)
                     if resp:
                         logger.info(f"✅ ARTEMIS-Response erhalten: {list(resp.keys())}")
                         return resp
 
-                # Andere D0-Pakete ACKen, aber ignorieren
                 elif data[1] == 0xD0:
                     ack = self.build_ack(data[7])
                     self.sock.sendto(ack, (TARGET_IP, self.active_port))
@@ -416,7 +408,6 @@ class Session:
                 pkt_type = data[1]
                 seq = data[7]
 
-                # Typ 0x42 = Binärdaten-Fragment
                 if pkt_type == 0x42:
                     payload = data[8:]
                     fragments.append((seq, payload))
@@ -425,12 +416,10 @@ class Session:
                     if self.debug and len(fragments) % 10 == 0:
                         logger.debug(f"🧩 {len(fragments)} Fragmente gesammelt...")
 
-                    # ACK senden
                     ack = self.build_ack(seq)
                     self.sock.sendto(ack, (TARGET_IP, self.active_port))
                     self.log_tx(ack, f"ACK Fragment Seq={seq}")
 
-                # Typ 0xD0 mit ARTEMIS = Ende der Übertragung
                 elif pkt_type == 0xD0 and b'ARTEMIS' in data:
                     ack = self.build_ack(seq)
                     self.sock.sendto(ack, (TARGET_IP, self.active_port))
@@ -438,13 +427,11 @@ class Session:
                     logger.info(f"🏁 End-Marker empfangen, {len(fragments)} Fragmente total.")
                     break
 
-                # Andere Pakete ACKen
                 elif pkt_type == 0xD0:
                     ack = self.build_ack(seq)
                     self.sock.sendto(ack, (TARGET_IP, self.active_port))
                     self.log_tx(ack, f"ACK D0 Seq={seq}")
 
-                # Timeout bei Inaktivität
                 if time.time() - last_activity > 3.0 and fragments:
                     logger.info(f"⏱️ 3s Inaktivität, {len(fragments)} Fragmente gesammelt.")
                     break
@@ -459,7 +446,6 @@ class Session:
             logger.warning("❌ Keine Fragmente empfangen.")
             return None
 
-        # Sortiere nach Sequenznummer
         fragments.sort(key=lambda x: x[0])
         total_size = sum(len(f[1]) for f in fragments)
         logger.info(f"✅ {len(fragments)} Fragmente reassembliert ({total_size} bytes total).")
@@ -487,16 +473,13 @@ class Session:
                 }]
             }
 
-            # Sende Kommando
             if not self.send_artemis_command(772, req):
                 logger.warning(f"⚠️ Anfrage für {media_num} fehlgeschlagen.")
                 continue
 
-            # Reassemble Fragmente
             thumbnail_data = self.reassemble_fragments(timeout=20.0)
 
             if thumbnail_data and len(thumbnail_data) > 100:
-                # JPEG-Check
                 if thumbnail_data.startswith(b'\xff\xd8\xff'):
                     filename = f"{output_dir}/thumb_{media_num:04d}.jpg"
                     with open(filename, 'wb') as f:
@@ -543,27 +526,59 @@ class Session:
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
             self.log_tx(pkt, f"Handshake Phase 3: Magic2, Seq={seq}")
 
-            # FIX 1: Warte auf Session-Keepalive (0x43)
-            logger.info(">>> Warte auf Session-Keepalive...")
+            # FIX: Warte auf Handshake-Completion UND verarbeite ACKs
+            logger.info(">>> Warte auf Handshake-Completion...")
             keepalive_count = 0
+            ack_count = 0
+
             for _ in range(50):
                 try:
                     data, addr = self.sock.recvfrom(1024)
-                    self.log_rx(data, addr, "Keepalive Check")
-                    if len(data) > 1 and data[0] == 0xF1 and data[1] == 0x43:
+                    self.log_rx(data, addr, "Handshake-Wait")
+                    
+                    if len(data) < 2 or data[0] != 0xF1:
+                        continue
+                    
+                    pkt_type = data[1]
+                    
+                    # Typ 0x43 = Keepalive (optional)
+                    if pkt_type == 0x43:
                         keepalive_count += 1
                         if keepalive_count >= 3:
-                            logger.info(f"✅ Session stabil ({keepalive_count} Keepalives empfangen)")
+                            logger.info(f"✅ Session stabil ({keepalive_count} Keepalives)")
                             break
+                    
+                    # Typ 0xD0/0xD1 = Handshake-ACKs → MÜSSEN beantwortet werden!
+                    elif pkt_type in [0xD0, 0xD1] and len(data) > 7:
+                        seq = data[7]
+                        ack = self.build_ack(seq)
+                        self.sock.sendto(ack, (TARGET_IP, self.active_port))
+                        self.log_tx(ack, f"ACK für Handshake-Response Seq={seq}")
+                        ack_count += 1
+                        
+                        # Nach 2 ACKs ist Handshake komplett
+                        if ack_count >= 2:
+                            logger.info(f"✅ Handshake abgeschlossen ({ack_count} ACKs gesendet)")
+                            time.sleep(0.2)
+                            break
+                    
+                    # 0xE0/0xF0 = Sofortiger Abbruch
+                    elif pkt_type == 0xE0:
+                        logger.error("❌ Kamera Error 0xE0 während Handshake")
+                        return
+                    elif pkt_type == 0xF0:
+                        logger.error("❌ Kamera Disconnect 0xF0 während Handshake")
+                        return
+                        
                 except socket.timeout:
                     pass
                 time.sleep(0.1)
-            
-            if keepalive_count == 0:
-                logger.warning("⚠️ Keine Keepalives empfangen, versuche trotzdem Login...")
+
+            if ack_count == 0:
+                logger.warning("⚠️ Keine Handshake-ACKs empfangen!")
 
             logger.info(">>> Session etabliert. Starte Datenabruf...")
-            time.sleep(0.5)
+            time.sleep(0.3)
 
             # APP LOGIN (Command 2)
             login_data = {
@@ -596,7 +611,6 @@ class Session:
                     media_files = file_resp['mediaFiles']
                     logger.info(f"✅ {len(media_files)} Dateien gefunden.")
 
-                    # Thumbnails herunterladen
                     self.download_thumbnails(media_files)
                 else:
                     logger.error("❌ Keine Dateiliste erhalten.")
