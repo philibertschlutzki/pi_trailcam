@@ -3,7 +3,13 @@
 Wildkamera Thumbnail Downloader
 Nutzt Stop-and-Wait ARQ mit 3-Phasen-Handshake wie main.py
 
-CHANGELOG v2.7 (2025-12-24):
+CHANGELOG v2.8 (2025-12-24):
+- TEST: Command-2-als-Login (Handshake = Login)
+  * Token wird direkt aus Handshake-Response extrahiert
+  * Separater Command-0-Login entfernt
+  * Wartet auf verschlüsselte ARTEMIS-Response nach Cmd=2
+
+v2.7 (2025-12-24):
 - KRITISCHER FIX: Login mit utcTime-Feld (behebt 0xE0 Error)
   * Login-Payload jetzt identisch mit Android-App
   * cmdId=0 mit usrName, password, needVideo=0, needAudio=0
@@ -319,6 +325,11 @@ class Session:
         try:
             if len(data) < 28: return None
             b64_part = data[28:].split(b'\x00')[0]
+            
+            # KRITISCH: Padding korrigieren falls nötig
+            if len(b64_part) % 4 != 0:
+                b64_part += b'=' * (4 - len(b64_part) % 4)
+            
             raw_enc = base64.b64decode(b64_part)
             cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
             decrypted = unpad(cipher.decrypt(raw_enc), AES.block_size)
@@ -337,8 +348,8 @@ class Session:
         """Sendet ARTEMIS-Kommando mit korrektem Padding (Android-App-konform)"""
         self.app_seq += 1
         
-        # Token nur bei cmdId != 0 anhängen
-        if self.token and cmd_id != 0:
+        # Token nur bei cmdId != 0 UND != 2 anhängen
+        if self.token and cmd_id not in [0, 2]:
             payload_dict["token"] = str(self.token)
         
         # JSON verschlüsseln
@@ -355,7 +366,7 @@ class Session:
         
         if self.debug:
             logger.debug(f"🔐 Encrypted Payload: {b64_body[:60]}")
-            if self.token and cmd_id != 0:
+            if self.token and cmd_id not in [0, 2]:
                 logger.debug(f"🔑 Token in JSON: {str(self.token)[:20]}...")
         
         # ARTEMIS-Header aufbauen
@@ -598,6 +609,9 @@ class Session:
                 return
 
             logger.info(">>> Sende Handshake...")
+            if self.debug:
+                logger.debug(f"📦 ARTEMIS Hello Body (hex): {ARTEMIS_HELLO_BODY.hex()}")
+            
             pkt, seq = self.build_rudp_packet(0xD0, ARTEMIS_HELLO_BODY)
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
             self.log_tx(pkt, f"Handshake Phase 1: Hello, Seq={seq}")
@@ -612,7 +626,8 @@ class Session:
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
             self.log_tx(pkt, f"Handshake Phase 3: Magic2, Seq={seq}")
 
-            logger.info(">>> Warte auf Handshake-Completion...")
+            # ★★★ NEU: Warte auf Handshake-Completion UND Token ★★★
+            logger.info(">>> Warte auf Handshake-Completion UND Token...")
             keepalive_count = 0
             ack_count = 0
 
@@ -625,6 +640,23 @@ class Session:
                         continue
                     
                     pkt_type = data[1]
+                    
+                    # ★★★ NEU: Prüfe auf ARTEMIS-Response mit Token ★★★
+                    if pkt_type == 0xD0 and b'ARTEMIS' in data:
+                        ack = self.build_ack(data[7])
+                        self.sock.sendto(ack, (TARGET_IP, self.active_port))
+                        self.log_tx(ack, f"ACK für Handshake ARTEMIS Seq={data[7]}")
+                        
+                        # Versuche Token zu extrahieren
+                        resp = self.decrypt_payload(data)
+                        if resp:
+                            if "token" in resp:
+                                self.token = resp["token"]
+                                logger.info(f"✅ TOKEN aus Handshake extrahiert: {str(self.token)[:20]}...")
+                                logger.info(f"📋 Handshake-Response: {list(resp.keys())}")
+                                break
+                            else:
+                                logger.info(f"📋 Handshake-Response (kein Token): {list(resp.keys())}")
                     
                     if pkt_type == 0x43:
                         keepalive_count += 1
@@ -639,7 +671,7 @@ class Session:
                         self.log_tx(ack, f"ACK für Handshake-Response Seq={seq}")
                         ack_count += 1
                         
-                        if ack_count >= 2:
+                        if ack_count >= 2 and not self.token:
                             logger.info(f"✅ Handshake abgeschlossen ({ack_count} ACKs gesendet)")
                             time.sleep(0.2)
                             break
@@ -655,65 +687,63 @@ class Session:
                     pass
                 time.sleep(0.1)
 
-            if ack_count == 0:
-                logger.warning("⚠️ Keine Handshake-ACKs empfangen!")
-
-            logger.info(">>> Session etabliert. Starte Login...")
-            time.sleep(0.3)
-
-            # ★★★ ANDROID-APP-KONFORMER LOGIN MIT utcTime ★★★
-            logger.info("🔑 Sende Login (Command 0)...")
-            login_data = {
-                "usrName": "admin",
-                "password": "admin",
-                "needVideo": 0,
-                "needAudio": 0,
-                "utcTime": int(time.time()),  # KRITISCH: Replay-Schutz!
-                "supportHeartBeat": True
-            }
-
-            if self.send_artemis_command(0, login_data):
-                login_resp = self.wait_for_artemis_response(timeout=5.0)
+            # ★★★ NEU: Prüfe ob Token nach Handshake vorhanden ★★★
+            if self.token:
+                logger.info("🎯 Handshake-Token verfügbar, überspringe separaten Login...")
+                time.sleep(0.3)
+            else:
+                logger.warning("⚠️ Kein Token nach Handshake, versuche separaten Login...")
                 
-                if login_resp:
-                    # Prüfe auf Error
-                    if login_resp.get("errorCode") != 0:
-                        logger.error(f"❌ Login fehlgeschlagen: errorCode={login_resp.get('errorCode')}")
+                # Fallback: Separater Login wenn nötig
+                logger.info("🔑 Sende Login (Command 0)...")
+                login_data = {
+                    "usrName": "admin",
+                    "password": "admin",
+                    "needVideo": 0,
+                    "needAudio": 0,
+                    "utcTime": int(time.time()),
+                    "supportHeartBeat": True
+                }
+
+                if self.send_artemis_command(0, login_data):
+                    login_resp = self.wait_for_artemis_response(timeout=5.0)
+                    
+                    if not login_resp or login_resp.get("errorCode") != 0:
+                        logger.error(f"❌ Login fehlgeschlagen: {login_resp}")
                         return
                     
-                    if self.token:
-                        logger.info(f"✅ Login erfolgreich! Token: {str(self.token)[:20]}...")
-                    else:
-                        logger.warning("⚠️ Kein Token erhalten, fahre trotzdem fort.")
-                    
-                    time.sleep(0.3)
-                    logger.info("📂 Fordere Dateiliste an (Command 768)...")
-                    
-                    file_req = {
-                        "cmdId": 768,
-                        "itemCntPerPage": 45,
-                        "pageNo": 0
-                    }
-                    
-                    if self.send_artemis_command(768, file_req):
-                        file_resp = self.wait_for_artemis_response(timeout=10.0)
-                        
-                        if file_resp and "mediaFiles" in file_resp:
-                            media_files = file_resp['mediaFiles']
-                            logger.info(f"✅ {len(media_files)} Dateien gefunden.")
-                            
-                            # ★★★ ANDROID-APP-KONFORMER BATCH-DOWNLOAD ★★★
-                            self.download_thumbnails_batch(media_files, batch_size=45)
-                        else:
-                            logger.error("❌ Keine Dateiliste erhalten.")
-                            if self.debug and file_resp:
-                                logger.debug(f"Response war: {file_resp}")
-                    else:
-                        logger.error("❌ Dateilisten-Anfrage fehlgeschlagen.")
+                    if not self.token:
+                        logger.error("❌ Kein Token nach Login erhalten!")
+                        return
                 else:
-                    logger.error("❌ Kein Login-Response erhalten!")
+                    logger.error("❌ Login-Command nicht bestätigt!")
+                    return
+
+            # Ab hier: Token ist verfügbar (aus Handshake oder Login)
+            logger.info("📂 Fordere Dateiliste an (Command 768)...")
+            time.sleep(0.3)
+            
+            file_req = {
+                "cmdId": 768,
+                "itemCntPerPage": 45,
+                "pageNo": 0
+            }
+            
+            if self.send_artemis_command(768, file_req):
+                file_resp = self.wait_for_artemis_response(timeout=10.0)
+                
+                if file_resp and "mediaFiles" in file_resp:
+                    media_files = file_resp['mediaFiles']
+                    logger.info(f"✅ {len(media_files)} Dateien gefunden.")
+                    
+                    # ★★★ ANDROID-APP-KONFORMER BATCH-DOWNLOAD ★★★
+                    self.download_thumbnails_batch(media_files, batch_size=45)
+                else:
+                    logger.error("❌ Keine Dateiliste erhalten.")
+                    if self.debug and file_resp:
+                        logger.debug(f"Response war: {file_resp}")
             else:
-                logger.error("❌ Login-Command nicht bestätigt!")
+                logger.error("❌ Dateilisten-Anfrage fehlgeschlagen.")
 
         except KeyboardInterrupt:
             logger.info("⏹️ Abbruch durch Benutzer.")
