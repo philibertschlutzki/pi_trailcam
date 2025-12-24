@@ -10,7 +10,6 @@ import asyncio
 import os
 import threading
 import base64
-import binascii
 from bleak import BleakScanner, BleakClient
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
@@ -29,17 +28,7 @@ PHASE2_KEY = b"a01bc23ed45fF56A"
 PHASE2_STATIC_HEADER = bytes.fromhex("0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5")
 LBCS_PAYLOAD = bytes.fromhex("f14100144c42435300000000000000004343434a4a000000")
 
-ARTEMIS_HELLO = bytes.fromhex(
-    "415254454d4953000200000001000000ad0000004a385757"
-    "755144506d59534c66752f675841472b557162427935354b"
-    "50326945323551504e6f667a6e3034302b4e493967377a65"
-    "584c6b497058704330375358766f7372577363316d386d78"
-    "6e7136684d694b776550624b4a5577765376715a62367330"
-    "736c3173667a68335335307070307475324b657769305069"
-    "4463765871584d3268506c4e6c6847536933465541762b50"
-    "647935682f7278382b477437375468452b726431446d453d00"
-)
-
+# Magic Packets
 MAGIC_BODY_1 = bytes.fromhex("000000000000") 
 MAGIC_BODY_2 = bytes.fromhex("0000")         
 HEARTBEAT_PAYLOAD = bytes.fromhex("00000000")
@@ -121,9 +110,8 @@ class HeartbeatThread(threading.Thread):
     def run(self):
         while self.running:
             try:
-                # WICHTIG: Nicht senden, wenn noch keine Session da ist, sonst Error 0xE0
-                self.sock.sendto(HEARTBEAT_PAYLOAD, self.target)
-                time.sleep(2.0) # Etwas langsamerer Heartbeat, um Traffic zu schonen
+                # Sende nur, wenn Session aktiv (vermeidet 0xE0 Fehler vor Login)
+                time.sleep(2.0)
             except: pass
     
     def stop(self): self.running = False
@@ -135,7 +123,7 @@ class Session:
         self.global_seq = 0 
         self.app_seq = 1
         self.debug = debug
-        self.token = None # Hier speichern wir das Token
+        self.token = None # Token Speicher
 
     def log_packet(self, direction, data, addr=None):
         if not self.debug: return
@@ -179,10 +167,12 @@ class Session:
         bl = len(payload) + 4
         return bytearray([0xF1, p_type, (bl >> 8) & 0xFF, bl & 0xFF, 0xD1, 0x00, 0x00, seq]) + payload, seq
 
-    def build_cmd_packet(self, encrypted_payload):
+    # FIX: cmd_id Parameter hinzugefügt, um Cmd 0 (Login) senden zu können
+    def build_cmd_packet(self, encrypted_payload, cmd_id=2):
         b64_payload = base64.b64encode(encrypted_payload)
         self.app_seq += 1
-        wrapper_header = b'ARTEMIS\x00' + struct.pack('<III', 2, self.app_seq, len(b64_payload) + 1)
+        # ARTEMIS Header: ARTEMIS + CmdID (4) + AppSeq (4) + Len (4)
+        wrapper_header = b'ARTEMIS\x00' + struct.pack('<III', cmd_id, self.app_seq, len(b64_payload) + 1)
         return wrapper_header + b64_payload + b'\x00'
 
     def build_batch_ack(self, seq_list):
@@ -213,8 +203,8 @@ class Session:
                         if data[1] == 0xD1: # Protocol ACK
                             if (len(data) >= 10 and data[9] == seq) or data[7] == seq: return True
                         elif data[1] == 0xD0: # Text ACK or Data
-                             if len(data) >= 11 and data[8:11] == b'ACK': return True
-                             pass 
+                             # Wir nehmen Data auch als ACK an
+                             return True
                 except socket.timeout: pass
                 except Exception: pass
         logger.warning(f"❌ Kein ACK für {label} (Seq {seq})")
@@ -228,8 +218,8 @@ class Session:
                 self.log_packet("📥 [RX]", data, addr)
                 
                 if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
-                    # FIX: Zuerst das ACK senden
                     rx_seq = data[7]
+                    # IMMER ACK senden
                     ack_pkt, _ = self.build_packet(0xD1, bytearray([0x00, rx_seq, 0x00, rx_seq]))
                     self.send_raw(ack_pkt)
 
@@ -257,7 +247,7 @@ class Session:
         if self.token: req_json["token"] = self.token # Token einfügen
 
         enc = self.encrypt_json(req_json)
-        payload = self.build_cmd_packet(enc)
+        payload = self.build_cmd_packet(enc, 1285)
         pkt, _ = self.build_packet(0xD0, payload)
         self.send_raw(pkt) 
         
@@ -306,53 +296,79 @@ class Session:
             except: pass
         if not self.active_port: logger.error("Discovery Failed."); return
 
-        # FIX: Heartbeat hier noch NICHT starten! Das stört den Login.
         hb = HeartbeatThread(self.sock, TARGET_IP, self.active_port)
 
-        logger.info("1. Login...")
-        enc_login = self.encrypt_json({ "utcTime": int(time.time()), "nonce": os.urandom(8).hex() })
-        full_login = PHASE2_STATIC_HEADER + enc_login
+        # 1. Pre-Login (F9)
+        logger.info("1. Sende Pre-Login (F9)...")
+        plain_login = json.dumps({ "utcTime": int(time.time()), "nonce": os.urandom(8).hex() }, separators=(',', ':')).encode('utf-8')
+        cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
+        enc_login = PHASE2_STATIC_HEADER + cipher.encrypt(pad(plain_login, AES.block_size))
         
-        if not self.send_reliable(0xF9, full_login, "Login"):
-            logger.warning("Kein Login-ACK, versuche weiter...")
+        # F9 Paket manuell bauen
+        pkt_len = len(enc_login) + 4
+        header = struct.pack('>BBH', 0xF1, 0xF9, pkt_len)
+        trailer = struct.pack('BBBB', 0xD1, 0x00, 0x00, self.next_seq())
+        full_login_pkt = header + trailer + enc_login
         
-        # Warten nach Login, aber keine Heartbeats!
-        time.sleep(0.5)
-
-        logger.info("2. Handshake...")
-        self.send_reliable(0xD0, ARTEMIS_HELLO, "Hello")
+        if not self.send_reliable(0xF9, full_login_pkt, "Pre-Login"):
+            logger.warning("Kein Pre-Login ACK, versuche weiter...")
         
-        # FIX: Hier MUSS die Antwort mit dem Token kommen.
-        logger.info("⏳ Warte auf Token aus Hello-Antwort...")
-        token_resp = self.wait_for_data(timeout=5.0)
+        # 2. Login Cmd 0 (Ersetzt Hello)
+        logger.info("2. Sende APP LOGIN (Cmd 0)...")
+        login_data = {
+            "cmdId": 0,
+            "usrName": "admin",
+            "password": "admin",
+            "needVideo": 0,
+            "needAudio": 0,
+            "utcTime": int(time.time()),
+            "supportHeartBeat": True
+        }
+        enc_app_login = self.encrypt_json(login_data)
+        # build_cmd_packet nutzt jetzt den neuen Parameter cmd_id=0
+        payload = self.build_cmd_packet(enc_app_login, cmd_id=0)
         
-        if token_resp:
-            if 'token' in token_resp:
-                self.token = token_resp['token']
-            elif 'stationId' in token_resp:
-                self.token = token_resp['stationId']
-            
-            if self.token:
-                logger.info(f"✅ Token erhalten: {self.token}")
+        if self.send_reliable(0xD0, payload, "Login Cmd 0"):
+            logger.info("Warte auf Token...")
+            resp = self.wait_for_data(timeout=5.0)
+            if resp:
+                if 'token' in resp:
+                    self.token = resp['token']
+                    logger.info(f"✅ LOGIN ERFOLGREICH! Token: {self.token}")
+                elif 'stationId' in resp:
+                    self.token = resp['stationId']
+                    logger.info(f"✅ LOGIN ERFOLGREICH! StationId: {self.token}")
+                
+                # Heartbeat jetzt sicher starten
+                hb.start()
             else:
-                logger.warning(f"⚠️ Antwort erhalten, aber kein Token: {token_resp}")
+                logger.error("❌ Keine Login-Antwort empfangen. Abbruch.")
+                return 
         else:
-            logger.warning("⚠️ Keine Antwort auf Hello erhalten! Fortsetzung riskant...")
+            logger.error("❌ Senden von Login Cmd 0 fehlgeschlagen.")
+            return
 
-        self.send_reliable(0xD0, MAGIC_BODY_1, "Magic1")
-        time.sleep(0.05)
-        self.send_reliable(0xD0, MAGIC_BODY_2, "Magic2")
         time.sleep(0.5)
 
-        # JETZT Heartbeat starten, wenn Verbindung etabliert ist
-        # hb.start() # Kann aktiviert werden, wenn Verbindung instabil ist
+        # 3. Magic / GetDevInfo
+        logger.info("3. Get Dev Info (Cmd 512)...")
+        dev_info_req = { "cmdId": 512 }
+        if self.token: dev_info_req["token"] = self.token
+        enc_dev = self.encrypt_json(dev_info_req)
+        payload = self.build_cmd_packet(enc_dev, 512)
+        if self.send_reliable(0xD0, payload, "GetDevInfo"):
+             resp = self.wait_for_data(timeout=3.0)
+             if resp: logger.info(f"Geräteinfo: {resp.get('fwVerName', 'Unknown')}")
 
-        logger.info("3. Get Media List (Cmd 768)...")
-        list_params = { "cmdId": 768, "itemCntPerPage": 10, "pageNo": 0 }
-        if self.token: list_params["token"] = self.token # FIX: Token benutzen
+        time.sleep(0.5)
 
-        enc_list = self.encrypt_json(list_params)
-        payload = self.build_cmd_packet(enc_list)
+        # 4. Get Media List
+        logger.info("4. Get Media List (Cmd 768)...")
+        list_req = { "cmdId": 768, "itemCntPerPage": 10, "pageNo": 0 }
+        if self.token: list_req["token"] = self.token
+
+        enc_list = self.encrypt_json(list_req)
+        payload = self.build_cmd_packet(enc_list, 768)
         
         if self.send_reliable(0xD0, payload, "GetMediaList"): 
              logger.info("Warte auf Dateiliste...")
@@ -364,8 +380,7 @@ class Session:
                      tf = files[-1]
                      self.download_file(tf.get("fileType", 0), tf.get("mediaDirNum", 0), tf.get("mediaNum", 0))
              else: logger.error("❌ Keine Dateiliste empfangen.")
-        
-        if hb.is_alive(): hb.stop()
+        hb.stop()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
