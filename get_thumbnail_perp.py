@@ -9,6 +9,7 @@ Features:
 - Interactive file selection for full downloads
 - Robust error handling with retry logic
 - Detailed logging and progress indicators
+- Smart heartbeat (only sends when idle)
 
 Usage:
   sudo ./get_thumbnails.py                    # Basic usage
@@ -199,20 +200,29 @@ class BLEWorker:
             logger.error(f"❌ BLE Fehler: {e}")
             return False
 
-class HeartbeatThread(threading.Thread):
-    """Background thread for keepalive packets"""
+class SmartHeartbeatThread(threading.Thread):
+    """Background thread for keepalive packets - only sends when idle"""
     
-    def __init__(self, sock, target_ip, target_port):
+    def __init__(self, session):
         super().__init__()
-        self.sock = sock
-        self.target = (target_ip, target_port)
+        self.session = session
         self.running = True
         self.daemon = True
 
     def run(self):
         while self.running:
             try:
-                self.sock.sendto(HEARTBEAT_PAYLOAD, self.target)
+                # Only send heartbeat if no activity for 2+ seconds
+                idle_time = time.time() - self.session.last_activity
+                
+                if idle_time > 2.0:
+                    self.session.sock.sendto(
+                        HEARTBEAT_PAYLOAD, 
+                        (TARGET_IP, self.session.active_port)
+                    )
+                    if self.session.debug:
+                        logger.debug("💓 Heartbeat gesendet")
+                
                 time.sleep(1.0)
             except: 
                 pass
@@ -252,6 +262,7 @@ class Session:
         self.debug = debug
         self.batch_size = batch_size
         self.heartbeat_thread = None
+        self.last_activity = time.time()  # Track last network activity
 
     def log_packet(self, direction, data, addr=None):
         """Log packet for debugging"""
@@ -355,6 +366,7 @@ class Session:
         """Send raw packet to camera"""
         self.log_packet("📤 [TX]", pkt)
         self.sock.sendto(pkt, (TARGET_IP, self.active_port))
+        self.last_activity = time.time()  # Mark activity
 
     def send_ack(self, seq):
         """Send single sequence ACK"""
@@ -363,6 +375,8 @@ class Session:
 
     def send_reliable(self, p_type, payload, label="Packet", retries=5):
         """Send packet with retry until ACK received"""
+        self.last_activity = time.time()  # Mark activity
+        
         pkt, seq = self.build_packet(p_type, payload)
         
         if isinstance(payload, bytes) and len(payload) > 8 and payload[0] == 0xF1:
@@ -379,6 +393,7 @@ class Session:
                 try:
                     data, addr = self.sock.recvfrom(4096)
                     self.log_packet("📥 [RX]", data, addr)
+                    self.last_activity = time.time()  # Mark activity
                     
                     if len(data) > 8 and data[0] == 0xF1:
                         # Protocol ACK
@@ -400,12 +415,14 @@ class Session:
 
     def wait_for_data(self, timeout=8.0):
         """Wait for data packet and return decrypted JSON"""
+        self.last_activity = time.time()  # Mark activity
         start = time.time()
         
         while time.time() - start < timeout:
             try:
                 data, addr = self.sock.recvfrom(4096)
                 self.log_packet("📥 [RX]", data, addr)
+                self.last_activity = time.time()  # Mark activity
                 
                 # Check for error packets first
                 if len(data) == 4:
@@ -458,6 +475,7 @@ class Session:
         Receive a single thumbnail via RUDP.
         Returns raw JPEG bytes or None if timeout.
         """
+        self.last_activity = time.time()  # Mark activity
         received_chunks = {}
         batch_seqs = []
         last_batch_time = time.time()
@@ -467,6 +485,7 @@ class Session:
             try:
                 self.sock.settimeout(1.0)
                 data, addr = self.sock.recvfrom(4096)
+                self.last_activity = time.time()  # Mark activity
                 
                 # Only log every 10th packet to reduce noise
                 if self.debug and len(received_chunks) % 10 == 0:
@@ -602,6 +621,7 @@ class Session:
             try:
                 self.sock.settimeout(3.0)
                 data, addr = self.sock.recvfrom(4096)
+                self.last_activity = time.time()  # Mark activity
                 
                 if self.debug and len(received_chunks) % 50 == 0:
                     self.log_packet("📥 [RX]", data, addr)
@@ -720,11 +740,9 @@ class Session:
         self.send_reliable(0xD0, MAGIC_BODY_2, "Magic2")
         time.sleep(0.5)
         
-        # 5. NOW start heartbeat (after handshake complete!)
-        logger.info("Starte Heartbeat...")
-        self.heartbeat_thread = HeartbeatThread(
-            self.sock, TARGET_IP, self.active_port
-        )
+        # 5. NOW start SMART heartbeat (after handshake complete!)
+        logger.info("Starte Smart Heartbeat...")
+        self.heartbeat_thread = SmartHeartbeatThread(self)
         self.heartbeat_thread.start()
 
         # 6. Get media list
