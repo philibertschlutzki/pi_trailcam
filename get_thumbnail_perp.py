@@ -167,7 +167,6 @@ class Session:
         bl = len(payload) + 4
         return bytearray([0xF1, p_type, (bl >> 8) & 0xFF, bl & 0xFF, 0xD1, 0x00, 0x00, seq]) + payload, seq
 
-    # FIX: cmd_id Parameter hinzugefügt, um Cmd 0 (Login) senden zu können
     def build_cmd_packet(self, encrypted_payload, cmd_id=2):
         b64_payload = base64.b64encode(encrypted_payload)
         self.app_seq += 1
@@ -313,7 +312,10 @@ class Session:
         if not self.send_reliable(0xF9, full_login_pkt, "Pre-Login"):
             logger.warning("Kein Pre-Login ACK, versuche weiter...")
         
-        # 2. Login Cmd 0 (Ersetzt Hello)
+        # ---------------------------------------------------------
+        # STEP 2: APP LOGIN (Cmd 0) - FIX APPLIED
+        # Do NOT use build_cmd_packet here. Send Raw Base64 Encrypted JSON.
+        # ---------------------------------------------------------
         logger.info("2. Sende APP LOGIN (Cmd 0)...")
         login_data = {
             "cmdId": 0,
@@ -325,8 +327,10 @@ class Session:
             "supportHeartBeat": True
         }
         enc_app_login = self.encrypt_json(login_data)
-        # build_cmd_packet nutzt jetzt den neuen Parameter cmd_id=0
-        payload = self.build_cmd_packet(enc_app_login, cmd_id=0)
+        
+        # FIX: The protocol expects [RUDP Header] [Base64 Encrypted JSON] for Cmd 0
+        # NO "ARTEMIS" header wrapper for the initial login!
+        payload = base64.b64encode(enc_app_login) + b'\x00'
         
         if self.send_reliable(0xD0, payload, "Login Cmd 0"):
             logger.info("Warte auf Token...")
@@ -355,7 +359,9 @@ class Session:
         dev_info_req = { "cmdId": 512 }
         if self.token: dev_info_req["token"] = self.token
         enc_dev = self.encrypt_json(dev_info_req)
+        # Use standard build_cmd_packet (adds ARTEMIS header) for established session
         payload = self.build_cmd_packet(enc_dev, 512)
+        
         if self.send_reliable(0xD0, payload, "GetDevInfo"):
              resp = self.wait_for_data(timeout=3.0)
              if resp: logger.info(f"Geräteinfo: {resp.get('fwVerName', 'Unknown')}")
