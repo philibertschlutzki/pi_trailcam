@@ -3,7 +3,13 @@
 Wildkamera Thumbnail Downloader
 Nutzt Stop-and-Wait ARQ mit 3-Phasen-Handshake wie main.py
 
-CHANGELOG v2.4 (2025-12-24):
+CHANGELOG v2.5 (2025-12-24):
+- KRITISCHER FIX: Login-Command korrigiert (cmdId 0 statt 2)
+- needVideo/needAudio Pflichtfelder hinzugefügt
+- app_seq startet jetzt bei 1 (Android-App-konform)
+- Vollständige Protocol-Compliance mit TrailCam Go App
+
+v2.4 (2025-12-24):
 - KRITISCHER FIX: AES-Verschlüsselung korrigiert - PKCS#7 Padding statt Null-Padding
 - encrypt_json() verwendet jetzt pad() aus Crypto.Util.Padding
 - decrypt_payload() verwendet unpad() für korrekte Entschlüsselung
@@ -178,7 +184,7 @@ class Session:
         self.active_port = None
         self.running = True
         self.global_seq = 0
-        self.app_seq = 0  # ARTEMIS App-Sequenznummer (startet bei 1)
+        self.app_seq = 0  # ARTEMIS App-Sequenznummer (wird vor erstem Command auf 1 gesetzt)
         self.debug = debug
         self.tx_count = 0
         self.rx_count = 0
@@ -334,8 +340,11 @@ class Session:
         Token wird im JSON mitgeschickt (nach erfolgreichem Login):
         {"cmdId": 768, "token": "...", ...}
         """
+        # App-Sequenznummer hochzählen (startet bei 1)
+        self.app_seq += 1
+        
         # Token NUR bei authentifizierten Commands (nach Login) ins JSON einfügen
-        if self.token and cmd_id != 2:
+        if self.token and cmd_id != 0:
             # WICHTIG: Token als String, nicht als Integer!
             payload_dict["token"] = str(self.token)
         
@@ -344,11 +353,8 @@ class Session:
         
         if self.debug:
             logger.debug(f"🔐 Encrypted Payload: {b64_body[:60]}")
-            if self.token and cmd_id != 2:
+            if self.token and cmd_id != 0:
                 logger.debug(f"🔑 Token in JSON: {str(self.token)[:20]}...")
-
-        # App-Sequenznummer hochzählen
-        self.app_seq += 1
         
         # ARTEMIS-Header: cmd_id + app_seq + length
         art_hdr = b'ARTEMIS\x00' + struct.pack('<III', cmd_id, self.app_seq, len(b64_body))
@@ -620,20 +626,22 @@ class Session:
             if ack_count == 0:
                 logger.warning("⚠️ Keine Handshake-ACKs empfangen!")
 
-            logger.info(">>> Session etabliert. Starte User-Login...")
+            logger.info(">>> Session etabliert. Starte Login...")
             time.sleep(0.3)
 
-            # KRITISCH: Command 2 (User-Login) VOR Datenabruf
-            logger.info("🔑 Sende User-Login (Command 2)...")
+            # ★★★ KRITISCH: Command 0 (Login) mit allen Pflichtfeldern ★★★
+            logger.info("🔑 Sende Login (Command 0)...")
             login_data = {
-                "cmdId": 2,
+                "cmdId": 0,
                 "usrName": "admin",
                 "password": "admin",
+                "needVideo": 0,
+                "needAudio": 0,
                 "utcTime": int(time.time()),
                 "supportHeartBeat": True
             }
 
-            if self.send_artemis_command(2, login_data):
+            if self.send_artemis_command(0, login_data):
                 login_resp = self.wait_for_artemis_response(timeout=5.0)
                 
                 if login_resp:
