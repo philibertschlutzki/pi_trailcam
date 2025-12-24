@@ -120,7 +120,6 @@ class HeartbeatThread(threading.Thread):
     def run(self):
         while self.running:
             try:
-                # Sende 4 Null-Bytes als Keep-Alive
                 self.sock.sendto(HEARTBEAT_PAYLOAD, self.target)
                 time.sleep(1.0)
             except: pass
@@ -141,7 +140,7 @@ class Session:
         if len(data) > 2 and data[1] == 0x42: return 
         desc = analyze_packet(data)
         logger.debug(f"{direction} {desc} ({len(data)}b)")
-        if "ARTEMIS" in desc or "Login" in desc or "UNKNOWN" in desc:
+        if "ARTEMIS" in desc or "Login" in desc or "ERROR" in desc or "FATAL" in desc:
              logger.debug("\n" + hex_dump_str(data))
 
     def setup_network(self):
@@ -162,7 +161,6 @@ class Session:
         return self.global_seq
 
     def encrypt_json(self, json_obj):
-        # FIX: Kompaktes JSON ohne Leerzeichen (WICHTIG!)
         json_str = json.dumps(json_obj, separators=(',', ':'))
         cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
         return cipher.encrypt(pad(json_str.encode('utf-8'), AES.block_size))
@@ -210,19 +208,19 @@ class Session:
         for attempt in range(5): 
             self.send_raw(pkt)
             start_wait = time.time()
-            while time.time() - start_wait < 0.4:
+            while time.time() - start_wait < 0.5:
                 try:
                     data, addr = self.sock.recvfrom(4096)
                     self.log_packet("📥 [RX]", data, addr)
 
                     if len(data) > 8 and data[0] == 0xF1:
                         if data[1] == 0xD0: 
-                            self.send_ack(data[7]) # Bestätige Daten sofort
+                            self.send_ack(data[7])
 
-                        if data[1] == 0xD1: # Protocol ACK
+                        if data[1] == 0xD1:
                             if (len(data) >= 10 and data[9] == seq) or data[7] == seq: return True
                         
-                        elif data[1] == 0xD0: # Text ACK or Data
+                        elif data[1] == 0xD0:
                              if len(data) >= 11 and data[8:11] == b'ACK': return True
                              self.incoming_queue.append(data)
                              return True 
@@ -244,7 +242,7 @@ class Session:
                 except socket.timeout: continue
             
             if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
-                self.send_ack(data[7]) # Bestätigen!
+                self.send_ack(data[7])
 
                 payload = data[8:]
                 if payload.startswith(b'ACK'): continue
@@ -253,11 +251,15 @@ class Session:
                     b64_data = payload[20:].rstrip(b'\x00')
                     try:
                         res = self.decrypt_bytes(base64.b64decode(b64_data))
-                        if res: return res
+                        if res: 
+                            if self.debug: logger.debug(f"Decrypted: {res}")
+                            return res
                     except: pass
                 try:
                     res = self.decrypt_bytes(base64.b64decode(payload.rstrip(b'\x00')))
-                    if res: return res
+                    if res: 
+                        if self.debug: logger.debug(f"Decrypted: {res}")
+                        return res
                 except: pass
         return None
 
@@ -280,7 +282,7 @@ class Session:
                 if self.debug and len(received_chunks) % 20 == 0: self.log_packet("📥 [RX]", data, addr)
 
                 if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
-                    if data[4] == 0xD1: # Bulk
+                    if data[4] == 0xD1:
                         seq_16 = (data[6] << 8) | data[7]
                         if seq_16 not in received_chunks:
                             received_chunks[seq_16] = data[8:]
@@ -323,28 +325,42 @@ class Session:
         if not self.send_reliable(0xF9, full_login, "Login"):
             logger.warning("Kein Login-ACK, versuche weiter...")
         
-        # WICHTIG: Heartbeat erst starten, wenn Login durch ist
-        # Aber im "Golden Log" sendet die App auch keine Heartbeats während des Handshakes
-        # hb.start() 
-        time.sleep(0.5)
+        time.sleep(1.0)
 
         logger.info("2. Handshake...")
         self.send_reliable(0xD0, ARTEMIS_HELLO, "Hello")
+        time.sleep(0.1)
         self.send_reliable(0xD0, MAGIC_BODY_1, "Magic1")
-        time.sleep(0.05)
+        time.sleep(0.1)
         self.send_reliable(0xD0, MAGIC_BODY_2, "Magic2")
-        time.sleep(0.5)
+        time.sleep(1.5)
 
-        # HIER KEIN GetDevInfo! Direkt MediaList
-        logger.info("3. Get Media List (Cmd 768)...")
-        enc_list = self.encrypt_json({ "cmdId": 768, "itemCntPerPage": 10, "pageNo": 0 })
+        # NEU: GetDevInfo (Command 1) - KRITISCH!
+        logger.info("3. GetDevInfo (Cmd 1)...")
+        enc_devinfo = self.encrypt_json({ "cmdId": 1 })
+        devinfo_payload = self.build_cmd_packet(enc_devinfo, 1)
         
-        # Command 768!
+        if self.send_reliable(0xD0, devinfo_payload, "GetDevInfo"):
+            logger.info("Warte auf DevInfo-Response...")
+            dev_resp = self.wait_for_data(timeout=5.0)
+            if dev_resp:
+                logger.info(f"✅ DevInfo erhalten: {list(dev_resp.keys())}")
+                if self.debug: logger.debug(f"DevInfo-Details: {dev_resp}")
+            else:
+                logger.warning("⚠️  Keine DevInfo-Antwort - setze fort...")
+        else:
+            logger.error("❌ GetDevInfo Send Failed")
+            return
+        
+        time.sleep(1.0)
+
+        # MediaList nur nach erfolgreichem DevInfo
+        logger.info("4. Get Media List (Cmd 768)...")
+        enc_list = self.encrypt_json({ "cmdId": 768, "itemCntPerPage": 10, "pageNo": 0 })
         payload = self.build_cmd_packet(enc_list, 768)
         
         if self.send_reliable(0xD0, payload, "GetMediaList"): 
              logger.info("Warte auf Dateiliste...")
-             # Jetzt Heartbeat starten, da wir idle sind und warten
              hb.start()
              resp = self.wait_for_data(timeout=10.0)
              hb.stop()
@@ -355,7 +371,9 @@ class Session:
                  if len(files) > 0:
                      tf = files[-1]
                      self.download_file(tf.get("fileType", 0), tf.get("mediaDirNum", 0), tf.get("mediaNum", 0))
-             else: logger.error("❌ Keine Dateiliste empfangen.")
+             else: 
+                 logger.error("❌ Keine Dateiliste empfangen.")
+                 if self.debug and resp: logger.debug(f"Unerwartete Response: {resp}")
         else:
             logger.error("❌ Send GetMediaList Failed")
         
