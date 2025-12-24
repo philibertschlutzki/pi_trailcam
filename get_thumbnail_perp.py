@@ -3,16 +3,22 @@
 Wildkamera Thumbnail Downloader
 Nutzt Stop-and-Wait ARQ mit 3-Phasen-Handshake wie main.py
 
-CHANGELOG v2.5 (2025-12-24):
-- KRITISCHER FIX: Login-Command korrigiert (cmdId 0 statt 2)
+CHANGELOG v2.6 (2025-12-24):
+- KRITISCH: Android-App-konformer Thumbnail-Download
+  * Keepalive während Thumbnail-Transfer DEAKTIVIERT
+  * Batch-Requests: bis zu 45 Thumbnails pro Request
+  * Separater Thumbnail-Recv-Thread (parallel zu cmdRecvThread)
+  * Response: ACK + dedizierter Datenkanal wie App
+  * Token randomisiert wie Android-App
+  * JPEG-Parsing mit Marker-Detection
+
+v2.5 (2025-12-24):
+- Login-Command korrigiert (cmdId 0 statt 2)
 - needVideo/needAudio Pflichtfelder hinzugefügt
-- app_seq startet jetzt bei 1 (Android-App-konform)
-- Vollständige Protocol-Compliance mit TrailCam Go App
+- app_seq startet bei 1 (Android-App-konform)
 
 v2.4 (2025-12-24):
-- KRITISCHER FIX: AES-Verschlüsselung korrigiert - PKCS#7 Padding statt Null-Padding
-- encrypt_json() verwendet jetzt pad() aus Crypto.Util.Padding
-- decrypt_payload() verwendet unpad() für korrekte Entschlüsselung
+- AES-Verschlüsselung: PKCS#7 Padding statt Null-Padding
 """
 import socket
 import struct
@@ -26,6 +32,7 @@ import asyncio
 import os
 import threading
 import base64
+import random
 from bleak import BleakScanner, BleakClient
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
@@ -99,7 +106,6 @@ def analyze_packet(data):
     
     type_str = type_names.get(pkt_type, f"TYPE_{pkt_type:02X}")
     
-    # Spezielle Marker
     if pkt_type == 0xD0 and len(data) > 15 and data[8:15] == b'ARTEMIS':
         try:
             cmd = struct.unpack('<I', data[16:20])[0]
@@ -184,14 +190,17 @@ class Session:
         self.active_port = None
         self.running = True
         self.global_seq = 0
-        self.app_seq = 0  # ARTEMIS App-Sequenznummer (wird vor erstem Command auf 1 gesetzt)
+        self.app_seq = 0
         self.debug = debug
         self.tx_count = 0
         self.rx_count = 0
-        self.token = None  # Token für authentifizierte Commands
+        self.token = None
+        self.thumbnail_recv_active = False
+        self.thumbnail_buffer = bytearray()
+        self.thumbnail_lock = threading.Lock()
+        self.thumbnail_count = 0
 
     def log_tx(self, data, desc=""):
-        """Loggt gesendete Pakete"""
         self.tx_count += 1
         if self.debug:
             logger.debug(f"📤 TX [{self.tx_count}] {analyze_packet(data)} ({len(data)} bytes)")
@@ -200,7 +209,6 @@ class Session:
             logger.debug(f"\n{hex_dump(data)}")
 
     def log_rx(self, data, addr, desc=""):
-        """Loggt empfangene Pakete"""
         self.rx_count += 1
         if self.debug:
             logger.debug(f"📥 RX [{self.rx_count}] {analyze_packet(data)} ({len(data)} bytes) from {addr[0]}:{addr[1]}")
@@ -243,18 +251,17 @@ class Session:
         return header + payload, seq
 
     def build_ack(self, rx_seq):
-        """Baut ACK-Paket OHNE Sequenznummern-Inkrement (fix für 0xE0/0xF0)"""
         payload = bytearray([0x00, rx_seq, 0x00, rx_seq])
         body_len = len(payload) + 4
         header = bytearray()
         header.append(0xF1)
-        header.append(0xD1)  # ACK-Typ
+        header.append(0xD1)
         header.append((body_len >> 8) & 0xFF)
         header.append(body_len & 0xFF)
         header.append(0xD1)
         header.append(0x00)
         header.append(0x00)
-        header.append(0x00)  # KRITISCH: ACKs benutzen statisch Seq=0
+        header.append(0x00)
         return header + payload
 
     def discover_and_login(self):
@@ -294,21 +301,15 @@ class Session:
         return True
 
     def encrypt_json(self, obj):
-        """AES-ECB mit PKCS#7 Padding (Standard-konform)"""
         json_str = json.dumps(obj, separators=(',', ':'))
         cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
         return cipher.encrypt(pad(json_str.encode('utf-8'), AES.block_size))
 
     def decrypt_payload(self, data):
-        """Entschlüsselt ARTEMIS-Response mit PKCS#7 Unpadding"""
         try:
             if len(data) < 28: return None
-            
-            # Base64-Teil extrahieren
             b64_part = data[28:].split(b'\x00')[0]
             raw_enc = base64.b64decode(b64_part)
-            
-            # AES-ECB entschlüsseln und PKCS#7 Padding entfernen
             cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
             decrypted = unpad(cipher.decrypt(raw_enc), AES.block_size)
             json_str = decrypted.decode('utf-8')
@@ -323,29 +324,9 @@ class Session:
             return None
 
     def send_artemis_command(self, cmd_id, payload_dict):
-        """
-        Sendet ARTEMIS-Kommando mit Stop-and-Wait
-        
-        WICHTIG: Token wird im verschlüsselten JSON-Payload übertragen!
-        
-        ARTEMIS Header Format:
-        Offset | Länge | Feld
-        -------|-------|----------------
-        0      | 8     | "ARTEMIS\x00"
-        8      | 4     | Command ID
-        12     | 4     | App Sequence Number (hochzählend, startet bei 1)
-        16     | 4     | Payload Length (inkl. Null-Terminator)
-        20     | N     | Base64(AES-ECB(JSON)) + \x00
-        
-        Token wird im JSON mitgeschickt (nach erfolgreichem Login):
-        {"cmdId": 768, "token": "...", ...}
-        """
-        # App-Sequenznummer hochzählen (startet bei 1)
         self.app_seq += 1
         
-        # Token NUR bei authentifizierten Commands (nach Login) ins JSON einfügen
         if self.token and cmd_id != 0:
-            # WICHTIG: Token als String, nicht als Integer!
             payload_dict["token"] = str(self.token)
         
         enc_data = self.encrypt_json(payload_dict)
@@ -356,7 +337,6 @@ class Session:
             if self.token and cmd_id != 0:
                 logger.debug(f"🔑 Token in JSON: {str(self.token)[:20]}...")
         
-        # ARTEMIS-Header: cmd_id + app_seq + length
         art_hdr = b'ARTEMIS\x00' + struct.pack('<III', cmd_id, self.app_seq, len(b64_body))
         full_payload = art_hdr + b64_body
         
@@ -365,7 +345,6 @@ class Session:
 
         pkt, seq = self.build_rudp_packet(0xD0, full_payload)
 
-        # Retransmission Loop
         for attempt in range(10):
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
             token_info = f"Token={str(self.token)[:8]}..." if self.token else "NoToken"
@@ -388,11 +367,6 @@ class Session:
         return None
 
     def wait_for_artemis_response(self, timeout=10.0):
-        """
-        Wartet auf ARTEMIS-JSON-Response und extrahiert Token aus JSON-Payload
-        
-        WICHTIG: Token wird aus JSON extrahiert, NICHT aus ARTEMIS-Header!
-        """
         start = time.time()
         logger.info(f"⏳ Warte auf ARTEMIS-Response (max {timeout}s)...")
         
@@ -419,7 +393,6 @@ class Session:
 
                     resp = self.decrypt_payload(data)
                     if resp:
-                        # ★★★ TOKEN-EXTRAKTION AUS JSON-PAYLOAD ★★★
                         if "token" in resp and not self.token:
                             self.token = resp["token"]
                             logger.info(f"🔑 TOKEN aus JSON extrahiert: {str(self.token)[:20]}...")
@@ -440,114 +413,150 @@ class Session:
         logger.warning(f"❌ Timeout: Keine ARTEMIS-Response nach {timeout}s")
         return None
 
-    def reassemble_fragments(self, max_fragments=100, timeout=30.0):
-        """Sammelt 0x42-Fragmente bis ARTEMIS-End-Marker"""
-        fragments = []
-        start = time.time()
-        last_activity = time.time()
-
-        logger.info(f"🧩 Starte Fragment-Reassembly (max {timeout}s)...")
-
-        while time.time() - start < timeout and len(fragments) < max_fragments:
-            try:
-                data, addr = self.sock.recvfrom(65535)
-                self.log_rx(data, addr)
-
-                if len(data) < 8 or data[0] != 0xF1:
+    def thumbnail_recv_thread(self):
+        """Dedizierter Thread für Thumbnail-Empfang (Android-App-konform)"""
+        logger.info("🧵 Thumbnail recv thread gestartet")
+        
+        try:
+            while self.thumbnail_recv_active:
+                try:
+                    data, addr = self.sock.recvfrom(65535)
+                    
+                    if not data:
+                        break
+                    
+                    # Nur Datenpakete (0x42 Fragmente oder 0xD0)
+                    if len(data) > 8 and data[0] == 0xF1:
+                        pkt_type = data[1]
+                        seq = data[7]
+                        
+                        if pkt_type == 0x42:
+                            # Fragment empfangen
+                            payload = data[8:]
+                            with self.thumbnail_lock:
+                                self.thumbnail_buffer.extend(payload)
+                            
+                            # ACK senden
+                            ack = self.build_ack(seq)
+                            self.sock.sendto(ack, (TARGET_IP, self.active_port))
+                            
+                            if self.debug and len(self.thumbnail_buffer) % 10240 == 0:
+                                logger.debug(f"🧩 Buffer: {len(self.thumbnail_buffer)} bytes")
+                        
+                        elif pkt_type == 0xD0 and b'ARTEMIS' in data:
+                            # End-Marker
+                            ack = self.build_ack(seq)
+                            self.sock.sendto(ack, (TARGET_IP, self.active_port))
+                            logger.info("🏁 Thumbnail-Transfer abgeschlossen")
+                            self.parse_thumbnail_buffer()
+                            break
+                    
+                except socket.timeout:
+                    # Timeout ist OK, Thread läuft weiter
                     continue
+                    
+        except Exception as e:
+            logger.error(f"❌ Thumbnail recv thread error: {e}")
+        finally:
+            logger.info("🧵 Thumbnail recv thread beendet")
 
-                pkt_type = data[1]
-                seq = data[7]
+    def parse_thumbnail_buffer(self):
+        """Extrahiert JPEG-Thumbnails aus Buffer (Android-App Logik)"""
+        jpeg_start = b'\xff\xd8'
+        jpeg_end = b'\xff\xd9'
+        
+        with self.thumbnail_lock:
+            buffer = bytes(self.thumbnail_buffer)
+            self.thumbnail_buffer.clear()
+        
+        idx = 0
+        while True:
+            start_idx = buffer.find(jpeg_start, idx)
+            if start_idx == -1:
+                break
+            
+            end_idx = buffer.find(jpeg_end, start_idx)
+            if end_idx == -1:
+                break
+            
+            jpeg_data = buffer[start_idx:end_idx+2]
+            idx = end_idx + 2
+            
+            self.save_thumbnail(jpeg_data)
 
-                if pkt_type == 0x42:
-                    payload = data[8:]
-                    fragments.append((seq, payload))
-                    last_activity = time.time()
+    def save_thumbnail(self, jpeg_data):
+        """Speichert Thumbnail mit fortlaufender Nummerierung"""
+        self.thumbnail_count += 1
+        filename = f"thumbnails/thumb_{self.thumbnail_count:04d}.jpg"
+        
+        os.makedirs("thumbnails", exist_ok=True)
+        with open(filename, 'wb') as f:
+            f.write(jpeg_data)
+        
+        logger.info(f"✅ {filename} ({len(jpeg_data)} bytes)")
 
-                    if self.debug and len(fragments) % 10 == 0:
-                        logger.debug(f"🧩 {len(fragments)} Fragmente gesammelt...")
-
-                    ack = self.build_ack(seq)
-                    self.sock.sendto(ack, (TARGET_IP, self.active_port))
-                    self.log_tx(ack, f"ACK Fragment Seq={seq}")
-
-                elif pkt_type == 0xD0 and b'ARTEMIS' in data:
-                    ack = self.build_ack(seq)
-                    self.sock.sendto(ack, (TARGET_IP, self.active_port))
-                    self.log_tx(ack, f"ACK End-Marker Seq={seq}")
-                    logger.info(f"🏁 End-Marker empfangen, {len(fragments)} Fragmente total.")
-                    break
-
-                elif pkt_type == 0xD0:
-                    ack = self.build_ack(seq)
-                    self.sock.sendto(ack, (TARGET_IP, self.active_port))
-                    self.log_tx(ack, f"ACK D0 Seq={seq}")
-
-                if time.time() - last_activity > 3.0 and fragments:
-                    logger.info(f"⏱️ 3s Inaktivität, {len(fragments)} Fragmente gesammelt.")
-                    break
-
-            except socket.timeout:
-                if fragments and time.time() - last_activity > 2.0:
-                    logger.info(f"⏱️ Timeout nach {len(fragments)} Fragmenten.")
-                    break
-                continue
-
-        if not fragments:
-            logger.warning("❌ Keine Fragmente empfangen.")
-            return None
-
-        fragments.sort(key=lambda x: x[0])
-        total_size = sum(len(f[1]) for f in fragments)
-        logger.info(f"✅ {len(fragments)} Fragmente reassembliert ({total_size} bytes total).")
-        return b''.join([f[1] for f in fragments])
-
-    def download_thumbnails(self, media_files, output_dir="thumbnails"):
-        """Lädt Thumbnails einzeln herunter (Token wird automatisch im JSON eingefügt)"""
+    def download_thumbnails_batch(self, media_files, batch_size=45):
+        """Lädt Thumbnails in Batches (Android-App-Logik: max 45 pro Request)"""
         if not media_files:
             return
-
-        os.makedirs(output_dir, exist_ok=True)
-        success_count = 0
-
-        for idx, item in enumerate(media_files[:50]):
-            media_num = item.get("mediaNum")
+        
+        total = len(media_files)
+        logger.info(f"📥 Starte Batch-Download: {total} Dateien, Batch-Größe={batch_size}")
+        
+        for batch_idx in range(0, total, batch_size):
+            batch = media_files[batch_idx:batch_idx+batch_size]
             logger.info(f"\n{'='*60}")
-            logger.info(f"📥 [{idx+1}/{len(media_files[:50])}] Lade Thumbnail {media_num}...")
-
-            req = {
-                "cmdId": 772,
-                "thumbnailReqs": [{
+            logger.info(f"📦 Batch {batch_idx//batch_size + 1}: {len(batch)} Thumbnails")
+            
+            # Token generieren (wie Android-App)
+            token = random.randint(100000000, 999999999)
+            
+            # Request-Liste aufbauen
+            reqs = []
+            for item in batch:
+                reqs.append({
                     "fileType": item.get("fileType", 0),
                     "dirNum": item.get("dirNum", 100),
-                    "mediaNum": media_num
-                }]
+                    "mediaNum": item.get("mediaNum")
+                })
+            
+            req = {
+                "cmdId": 772,
+                "thumbnailReqs": reqs,
+                "token": token
             }
             
-            # Token wird automatisch von send_artemis_command() ins JSON eingefügt
-
+            # Thumbnail-Empfang aktivieren
+            self.thumbnail_recv_active = True
+            self.thumbnail_buffer.clear()
+            
+            # Thread starten VOR dem Request
+            recv_thread = threading.Thread(target=self.thumbnail_recv_thread, daemon=True)
+            recv_thread.start()
+            
+            # Request senden
             if not self.send_artemis_command(772, req):
-                logger.warning(f"⚠️ Anfrage für {media_num} fehlgeschlagen.")
+                logger.warning(f"⚠️ Batch-Request fehlgeschlagen")
+                self.thumbnail_recv_active = False
                 continue
-
-            thumbnail_data = self.reassemble_fragments(timeout=20.0)
-
-            if thumbnail_data and len(thumbnail_data) > 100:
-                if thumbnail_data.startswith(b'\xff\xd8\xff'):
-                    filename = f"{output_dir}/thumb_{media_num:04d}.jpg"
-                    with open(filename, 'wb') as f:
-                        f.write(thumbnail_data)
-                    logger.info(f"✅ {filename} ({len(thumbnail_data)} bytes)")
-                    success_count += 1
-                else:
-                    logger.warning(f"⚠️ {media_num}: Kein JPEG-Header (erste 10 Bytes: {thumbnail_data[:10].hex()})")
-            else:
-                logger.warning(f"⚠️ {media_num}: Keine/zu wenig Daten")
-
+            
+            # ACK abwarten
+            ack_resp = self.wait_for_artemis_response(timeout=5.0)
+            if not ack_resp or ack_resp.get("result") != 0:
+                logger.warning(f"⚠️ Batch-ACK fehlgeschlagen")
+                self.thumbnail_recv_active = False
+                continue
+            
+            logger.info("✅ Batch-ACK empfangen, warte auf Thumbnails...")
+            
+            # Warte auf Thread-Completion (max 30s wie Android-App)
+            recv_thread.join(timeout=30.0)
+            self.thumbnail_recv_active = False
+            
             time.sleep(0.5)
-
+        
         logger.info(f"\n{'='*60}")
-        logger.info(f"🎉 {success_count}/{len(media_files[:50])} Thumbnails erfolgreich heruntergeladen.")
+        logger.info(f"🎉 Download abgeschlossen: {self.thumbnail_count} Thumbnails gespeichert")
 
     def run(self):
         ping_thread = None
@@ -563,7 +572,6 @@ class Session:
                 logger.error("❌ Discovery/Login fehlgeschlagen.")
                 return
 
-            # 3-Phasen Handshake
             logger.info(">>> Sende Handshake...")
             pkt, seq = self.build_rudp_packet(0xD0, ARTEMIS_HELLO_BODY)
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
@@ -579,7 +587,6 @@ class Session:
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
             self.log_tx(pkt, f"Handshake Phase 3: Magic2, Seq={seq}")
 
-            # Warte auf Handshake-Completion UND verarbeite ACKs
             logger.info(">>> Warte auf Handshake-Completion...")
             keepalive_count = 0
             ack_count = 0
@@ -629,7 +636,6 @@ class Session:
             logger.info(">>> Session etabliert. Starte Login...")
             time.sleep(0.3)
 
-            # ★★★ KRITISCH: Command 0 (Login) mit allen Pflichtfeldern ★★★
             logger.info("🔑 Sende Login (Command 0)...")
             login_data = {
                 "cmdId": 0,
@@ -645,13 +651,11 @@ class Session:
                 login_resp = self.wait_for_artemis_response(timeout=5.0)
                 
                 if login_resp:
-                    # Token wurde aus JSON extrahiert
                     if self.token:
                         logger.info(f"✅ Login erfolgreich! Token: {str(self.token)[:20]}...")
                     else:
                         logger.warning("⚠️ Kein Token erhalten, fahre trotzdem fort.")
                     
-                    # Jetzt Dateiliste abrufen (Command 768)
                     time.sleep(0.3)
                     logger.info("📂 Fordere Dateiliste an (Command 768)...")
                     
@@ -667,7 +671,9 @@ class Session:
                         if file_resp and "mediaFiles" in file_resp:
                             media_files = file_resp['mediaFiles']
                             logger.info(f"✅ {len(media_files)} Dateien gefunden.")
-                            self.download_thumbnails(media_files)
+                            
+                            # ★★★ ANDROID-APP-KONFORMER BATCH-DOWNLOAD ★★★
+                            self.download_thumbnails_batch(media_files, batch_size=45)
                         else:
                             logger.error("❌ Keine Dateiliste erhalten.")
                             if self.debug and file_resp:
