@@ -3,10 +3,10 @@
 Wildkamera Thumbnail Downloader
 Nutzt Stop-and-Wait ARQ mit 3-Phasen-Handshake wie main.py
 
-CHANGELOG v2.2 (2025-12-24):
-- KRITISCHE KORREKTUR: Token wird im JSON-Payload übertragen, nicht im ARTEMIS-Header
-- Token-Extraktion aus JSON-Response implementiert
-- ARTEMIS-Header Format: doppeltes cmd_id (Protocol-Design)
+CHANGELOG v2.3 (2025-12-24):
+- KRITISCHER FIX: ARTEMIS-Header Format korrigiert
+- Header: ARTEMIS + cmd_id + app_seq + length (NICHT doppeltes cmd_id!)
+- App-Sequenznummer implementiert (hochzählend, startet bei 1)
 """
 import socket
 import struct
@@ -178,6 +178,7 @@ class Session:
         self.active_port = None
         self.running = True
         self.global_seq = 0
+        self.app_seq = 0  # ARTEMIS App-Sequenznummer (startet bei 1)
         self.debug = debug
         self.tx_count = 0
         self.rx_count = 0
@@ -317,17 +318,16 @@ class Session:
         """
         Sendet ARTEMIS-Kommando mit Stop-and-Wait
         
-        WICHTIG: Token wird im verschlüsselten JSON-Payload übertragen, NICHT im Header!
+        WICHTIG: Token wird im verschlüsselten JSON-Payload übertragen!
         
-        ARTEMIS Header Format:
+        ARTEMIS Header Format (KORRIGIERT):
         Offset | Länge | Feld
         -------|-------|----------------
         0      | 8     | "ARTEMIS\x00"
-        8      | 4     | Command ID (1. Instanz)
-        12     | 4     | Command ID (2. Instanz - Protocol Design)
-        16     | 2     | Payload Length
-        18     | 2     | Reserved (0x0000)
-        20     | N     | Base64(AES-ECB(JSON))
+        8      | 4     | Command ID
+        12     | 4     | App Sequence Number (hochzählend, startet bei 1)
+        16     | 4     | Payload Length (inkl. Null-Terminator)
+        20     | N     | Base64(AES-ECB(JSON)) + \x00
         
         Token wird im JSON mitgeschickt (nach erfolgreichem Login):
         {"cmdId": 768, "token": "...", ...}
@@ -345,12 +345,15 @@ class Session:
             if self.token and cmd_id != 2:
                 logger.debug(f"🔑 Token in JSON: {str(self.token)[:20]}...")
 
-        # ARTEMIS-Header (doppeltes cmd_id ist Protocol-Feature!)
-        art_hdr = b'ARTEMIS\x00' + struct.pack('<IIHH', cmd_id, cmd_id, len(b64_body), 0)
+        # App-Sequenznummer hochzählen
+        self.app_seq += 1
+        
+        # ARTEMIS-Header: cmd_id + app_seq + length
+        art_hdr = b'ARTEMIS\x00' + struct.pack('<III', cmd_id, self.app_seq, len(b64_body))
         full_payload = art_hdr + b64_body
         
         if self.debug:
-            logger.debug(f"📦 ARTEMIS Header: cmd_id={cmd_id} (doppelt), payload_len={len(b64_body)}")
+            logger.debug(f"📦 ARTEMIS Header: cmd_id={cmd_id}, app_seq={self.app_seq}, payload_len={len(b64_body)}")
 
         pkt, seq = self.build_rudp_packet(0xD0, full_payload)
 
@@ -358,7 +361,7 @@ class Session:
         for attempt in range(10):
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
             token_info = f"Token={str(self.token)[:8]}..." if self.token else "NoToken"
-            self.log_tx(pkt, f"ARTEMIS Cmd={cmd_id}, {token_info}, Seq={seq}, Attempt={attempt+1}")
+            self.log_tx(pkt, f"ARTEMIS Cmd={cmd_id}, AppSeq={self.app_seq}, {token_info}, Seq={seq}, Attempt={attempt+1}")
 
             start = time.time()
             while time.time() - start < 1.5:
