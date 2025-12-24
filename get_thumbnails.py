@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Wildkamera Thumbnail Downloader v3.3 - "Response Filter" Edition
+Wildkamera Thumbnail Downloader v3.4 - "Robust & Logged"
 
-CHANGELOG v3.3:
-- FIX: Decrypt Error ("Incorrect padding") behoben.
-  * Das Script hat eingehende Cmd=9 Pakete (Keepalive) fälschlicherweise als Login-Antwort interpretiert.
-  * wait_for_packet() filtert nun auf die erwartete Cmd-ID im Artemis-Header.
-- OPTIMIERUNG: Robustere Behandlung von "versprengten" Paketen.
+CHANGELOG v3.4:
+- LOGGING FIX: FileHandler wird nun bei jedem Eintrag geflushed (fsync).
+  * Verhindert leere Logfiles bei Script-Abstürzen.
+- PROTOKOLL FIX: Asynchrone Packet-Filterung.
+  * wait_for_cmd() ignoriert eingehende Events (wie Cmd 9), während es auf 
+    eine spezifische Antwort (z.B. Cmd 0) wartet.
+  * Verhindert "Incorrect padding" Fehler durch Entschlüsselung falscher Pakete.
 """
 
 import socket
@@ -55,18 +57,20 @@ HEARTBEAT_PAYLOAD_END = bytes.fromhex("000100190000004d7a6c423336582f49566f385a7
 PHASE2_KEY = b"a01bc23ed45fF56A"
 PHASE2_STATIC_HEADER = bytes.fromhex("0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5")
 
-# --- LOGGING ---
-class UnbufferedStream:
-    def __init__(self, stream): self.stream = stream
-    def write(self, data): self.stream.write(data); self.stream.flush()
-    def __getattr__(self, attr): return getattr(self.stream, attr)
+# --- LOGGING (UNBUFFERED FIX) ---
+class FlushFileHandler(logging.FileHandler):
+    """FileHandler der sofort auf die Platte schreibt (fsync)"""
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+        os.fsync(self.stream.fileno()) 
 
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("app_debug.log", mode='w', encoding='utf-8'),
-        logging.StreamHandler(UnbufferedStream(sys.stdout))
+        FlushFileHandler("app_debug.log", mode='w', encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger("CamClient")
@@ -113,13 +117,10 @@ class Session:
             except: pass
         return info
 
-    def get_artemis_cmd_id(self, data):
-        """Extrahiert die Command ID aus einem Artemis Paket"""
+    def get_cmd_id(self, data):
+        """Extrahiert Artemis CmdID ohne Entschlüsselung"""
         if len(data) > 20 and b'ARTEMIS' in data:
             try:
-                # Header: F1 D0 ... ARTEMIS\x00 (8 bytes) + CmdID (4 bytes)
-                # Artemis Magic Startet bei Index 8
-                # Cmd ID ist bei Index 16 (8+8)
                 return struct.unpack('<I', data[16:20])[0]
             except: pass
         return None
@@ -175,7 +176,7 @@ class Session:
 
     def wait_for_packet(self, timeout=1.0, expected_seq=None, wait_for_cmd=None):
         """
-        Zentrale Empfangs-Schleife mit SMART ACK Logic und CMD-Filter.
+        Intelligente Warteschleife: Filtert nach spezifischen Commands.
         """
         start = time.time()
         while time.time() - start < timeout:
@@ -187,32 +188,34 @@ class Session:
                 
                 pkt_type = data[1]
                 rx_seq = data[7] if len(data) > 7 else 0
-                logger.debug(f"📥 {self.analyze_packet(data)}")
+                
+                # Nur loggen wenn es kein Keepalive-Spam ist
+                if pkt_type != 0x43:
+                    logger.debug(f"📥 {self.analyze_packet(data)}")
 
+                # 1. Bestätigung senden (Pflicht für alle DATA Pakete)
                 if pkt_type in [0xD0, 0x42]:
                     if not (len(data) >= 11 and data[8:11] == b'ACK'):
                         self.send_ack(rx_seq)
-                        
-                        # Prüfen ob wir auf spezifisches Kommando warten (z.B. Login Response Cmd=0)
-                        if wait_for_cmd is not None:
-                            recv_cmd = self.get_artemis_cmd_id(data)
-                            if recv_cmd == wait_for_cmd:
-                                return data
-                            else:
-                                if recv_cmd is not None:
-                                    logger.debug(f"⚠️ Ignoriere Cmd {recv_cmd} (warte auf {wait_for_cmd})")
-                                continue # Weitersuchen
+                
+                # 2. Prüfen auf spezifisches Command (z.B. Login Response Cmd=0)
+                if wait_for_cmd is not None:
+                    if pkt_type == 0xD0 and b'ARTEMIS' in data:
+                        recv_cmd = self.get_cmd_id(data)
+                        if recv_cmd == wait_for_cmd:
+                            return data
+                        else:
+                            # Das ist der entscheidende Fix: Wir ignorieren das falsche Cmd
+                            logger.debug(f"⚠️ Ignoriere Cmd {recv_cmd} (warte auf {wait_for_cmd})")
+                            continue 
 
-                        # Generische Daten-Warte-Logik
-                        if wait_for_cmd is None and expected_seq is None:
-                             if b'ARTEMIS' in data: return data
-
-                        if expected_seq is not None: return True
-
-                if expected_seq is not None and pkt_type == 0xD1:
-                    if rx_seq == expected_seq: return True
-                    if rx_seq == (expected_seq + 1) % 255: return True 
-                    if rx_seq == 0: return True 
+                # 3. Prüfen auf Sequenz-ACK (für Handshake)
+                if expected_seq is not None:
+                    if pkt_type == 0xD1:
+                        if rx_seq == expected_seq or rx_seq == (expected_seq + 1) % 255 or rx_seq == 0:
+                            return True
+                    # Implizites ACK durch Daten
+                    if pkt_type == 0xD0: return True
 
             except socket.timeout: pass
         return None
@@ -229,7 +232,7 @@ class Session:
             decrypted = unpad(AES.new(PHASE2_KEY, AES.MODE_ECB).decrypt(raw), AES.block_size)
             return json.loads(decrypted.decode('utf-8'))
         except Exception as e:
-            logger.error(f"Decrypt Error: {e}")
+            logger.error(f"Decrypt Error: {e} | Data: {data[:50].hex()}...")
             return None
 
     def run(self):
@@ -237,6 +240,7 @@ class Session:
         
         logger.info(">>> Discovery...")
         for p in TARGET_PORTS: self.sock.sendto(LBCS_PAYLOAD, (TARGET_IP, p))
+        
         start = time.time()
         while time.time() - start < 2.0:
             try:
@@ -253,7 +257,8 @@ class Session:
         enc = AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(pad(json.dumps(payload, separators=(',', ':')).encode(), AES.block_size))
         pkt = struct.pack('>BBH', 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)) + PHASE2_STATIC_HEADER + enc
         self.send_raw(pkt, "Pre-Login")
-        self.wait_for_packet(timeout=2.0)
+        # Hier akzeptieren wir alles als Antwort
+        self.wait_for_packet(timeout=2.0, expected_seq=None)
 
         logger.info(">>> Handshake Step 1: Hello (Seq 0)")
         pkt, _ = self.build_packet(0xD0, ARTEMIS_HELLO_BODY, force_seq=0)
@@ -287,14 +292,29 @@ class Session:
         pkt, seq = self.build_packet(0xD0, art_hdr + b64_body)
         self.send_raw(pkt, "Login")
         
-        # FIX: Warten explizit auf Cmd 0 (Login Response)
-        resp_pkt = self.wait_for_packet(timeout=5.0, wait_for_cmd=0)
+        # FIX: Filtere nach CmdID=0 (Login Response)
+        logger.info("⏳ Warte auf Login-Response (Cmd 0)...")
+        resp_pkt = self.wait_for_packet(timeout=8.0, wait_for_cmd=0)
         
         if resp_pkt:
             resp = self.decrypt_payload(resp_pkt)
             if resp and "token" in resp:
                 self.token = resp["token"]
                 logger.info(f"🎉🎉 LOGIN ERFOLGREICH! Token: {self.token}")
+                
+                # --- GET FILES ---
+                self.app_seq += 1
+                req = {"cmdId": 768, "itemCntPerPage": 45, "pageNo": 0, "token": str(self.token)}
+                b64_body = base64.b64encode(self.encrypt_json(req)) + b'\x00'
+                art_hdr = b'ARTEMIS\x00' + struct.pack('<III', 768, self.app_seq, len(b64_body))
+                pkt, _ = self.build_packet(0xD0, art_hdr + b64_body)
+                self.send_raw(pkt, "GetFiles")
+                
+                # Warte auf Cmd 768 Response
+                resp_pkt = self.wait_for_packet(timeout=10.0, wait_for_cmd=768)
+                if resp_pkt:
+                    files = self.decrypt_payload(resp_pkt)
+                    logger.info(f"Dateien: {str(files)[:100]}...")
             else:
                 logger.error(f"❌ Login Antwort ungültig: {resp}")
         else:
