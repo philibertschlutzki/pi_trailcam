@@ -3,7 +3,15 @@
 Wildkamera Thumbnail Downloader
 Nutzt Stop-and-Wait ARQ mit 3-Phasen-Handshake wie main.py
 
-CHANGELOG v2.6 (2025-12-24):
+CHANGELOG v2.7 (2025-12-24):
+- KRITISCHER FIX: Login mit utcTime-Feld (behebt 0xE0 Error)
+  * Login-Payload jetzt identisch mit Android-App
+  * cmdId=0 mit usrName, password, needVideo=0, needAudio=0
+  * utcTime: Unix-Timestamp (Replay-Schutz der Kamera)
+  * supportHeartBeat: true
+- Base64-Padding-Korrektur für verschlüsselte Payloads
+
+v2.6 (2025-12-24):
 - KRITISCH: Android-App-konformer Thumbnail-Download
   * Keepalive während Thumbnail-Transfer DEAKTIVIERT
   * Batch-Requests: bis zu 45 Thumbnails pro Request
@@ -301,9 +309,11 @@ class Session:
         return True
 
     def encrypt_json(self, obj):
+        """Verschlüsselt JSON-Objekt mit AES/ECB/PKCS7"""
         json_str = json.dumps(obj, separators=(',', ':'))
         cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
-        return cipher.encrypt(pad(json_str.encode('utf-8'), AES.block_size))
+        encrypted = cipher.encrypt(pad(json_str.encode('utf-8'), AES.block_size))
+        return encrypted
 
     def decrypt_payload(self, data):
         try:
@@ -324,25 +334,38 @@ class Session:
             return None
 
     def send_artemis_command(self, cmd_id, payload_dict):
+        """Sendet ARTEMIS-Kommando mit korrektem Padding (Android-App-konform)"""
         self.app_seq += 1
         
+        # Token nur bei cmdId != 0 anhängen
         if self.token and cmd_id != 0:
             payload_dict["token"] = str(self.token)
         
+        # JSON verschlüsseln
         enc_data = self.encrypt_json(payload_dict)
-        b64_body = base64.b64encode(enc_data) + b'\x00'
+        
+        # Base64 kodieren und mit \x00 terminieren
+        b64_body = base64.b64encode(enc_data)
+        
+        # KRITISCH: Padding korrigieren falls nötig
+        if len(b64_body) % 4 != 0:
+            b64_body += b'=' * (4 - len(b64_body) % 4)
+        
+        b64_body += b'\x00'  # Null-Terminator wie Android-App
         
         if self.debug:
             logger.debug(f"🔐 Encrypted Payload: {b64_body[:60]}")
             if self.token and cmd_id != 0:
                 logger.debug(f"🔑 Token in JSON: {str(self.token)[:20]}...")
         
+        # ARTEMIS-Header aufbauen
         art_hdr = b'ARTEMIS\x00' + struct.pack('<III', cmd_id, self.app_seq, len(b64_body))
         full_payload = art_hdr + b64_body
         
         if self.debug:
             logger.debug(f"📦 ARTEMIS Header: cmd_id={cmd_id}, app_seq={self.app_seq}, payload_len={len(b64_body)}")
 
+        # RUDP-Paket aufbauen und senden
         pkt, seq = self.build_rudp_packet(0xD0, full_payload)
 
         for attempt in range(10):
@@ -356,6 +379,7 @@ class Session:
                     data, addr = self.sock.recvfrom(65535)
                     self.log_rx(data, addr)
                     
+                    # ACK empfangen?
                     if len(data) > 7 and data[0] == 0xF1 and data[1] == 0xD1:
                         if self.debug:
                             logger.debug(f"✅ ACK für Seq={seq} empfangen")
@@ -393,6 +417,7 @@ class Session:
 
                     resp = self.decrypt_payload(data)
                     if resp:
+                        # Token extrahieren wenn vorhanden
                         if "token" in resp and not self.token:
                             self.token = resp["token"]
                             logger.info(f"🔑 TOKEN aus JSON extrahiert: {str(self.token)[:20]}...")
@@ -636,14 +661,14 @@ class Session:
             logger.info(">>> Session etabliert. Starte Login...")
             time.sleep(0.3)
 
+            # ★★★ ANDROID-APP-KONFORMER LOGIN MIT utcTime ★★★
             logger.info("🔑 Sende Login (Command 0)...")
             login_data = {
-                "cmdId": 0,
                 "usrName": "admin",
                 "password": "admin",
                 "needVideo": 0,
                 "needAudio": 0,
-                "utcTime": int(time.time()),
+                "utcTime": int(time.time()),  # KRITISCH: Replay-Schutz!
                 "supportHeartBeat": True
             }
 
@@ -651,6 +676,11 @@ class Session:
                 login_resp = self.wait_for_artemis_response(timeout=5.0)
                 
                 if login_resp:
+                    # Prüfe auf Error
+                    if login_resp.get("errorCode") != 0:
+                        logger.error(f"❌ Login fehlgeschlagen: errorCode={login_resp.get('errorCode')}")
+                        return
+                    
                     if self.token:
                         logger.info(f"✅ Login erfolgreich! Token: {str(self.token)[:20]}...")
                     else:
