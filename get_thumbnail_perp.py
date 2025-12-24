@@ -73,7 +73,7 @@ def analyze_packet(data):
     base = f"RUDP(Type={p_type:02X}, Seq={rudp_seq})"
     
     if p_type == 0xD1:
-        if len(data) >= 12: return f"{base} -> ACK(Seq {data[9]})"
+        if len(data) >= 12: return f"{base} -> ACK(For Seq {data[9]})"
         return f"{base} -> CONTROL"
     if p_type == 0xD0:
         if len(data) >= 11 and data[8:11] == b'ACK': return f"{base} -> TEXT ACK"
@@ -120,6 +120,7 @@ class HeartbeatThread(threading.Thread):
     def run(self):
         while self.running:
             try:
+                # Sende 4 Null-Bytes als Keep-Alive
                 self.sock.sendto(HEARTBEAT_PAYLOAD, self.target)
                 time.sleep(1.0)
             except: pass
@@ -161,6 +162,7 @@ class Session:
         return self.global_seq
 
     def encrypt_json(self, json_obj):
+        # FIX: Kompaktes JSON ohne Leerzeichen (WICHTIG!)
         json_str = json.dumps(json_obj, separators=(',', ':'))
         cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
         return cipher.encrypt(pad(json_str.encode('utf-8'), AES.block_size))
@@ -177,11 +179,9 @@ class Session:
         bl = len(payload) + 4
         return bytearray([0xF1, p_type, (bl >> 8) & 0xFF, bl & 0xFF, 0xD1, 0x00, 0x00, seq]) + payload, seq
 
-    # --- FIX: command_type Parameter hinzugefügt ---
     def build_cmd_packet(self, encrypted_payload, command_type):
         b64_payload = base64.b64encode(encrypted_payload)
         self.app_seq += 1
-        # Hier nutzen wir jetzt den übergebenen command_type (z.B. 768) statt hart 2
         wrapper_header = b'ARTEMIS\x00' + struct.pack('<III', command_type, self.app_seq, len(b64_payload) + 1)
         return wrapper_header + b64_payload + b'\x00'
 
@@ -216,13 +216,13 @@ class Session:
                     self.log_packet("📥 [RX]", data, addr)
 
                     if len(data) > 8 and data[0] == 0xF1:
-                        if data[1] == 0xD0: # DATA -> Muss bestätigt werden!
-                            self.send_ack(data[7])
+                        if data[1] == 0xD0: 
+                            self.send_ack(data[7]) # Bestätige Daten sofort
 
-                        if data[1] == 0xD1: # ACK
+                        if data[1] == 0xD1: # Protocol ACK
                             if (len(data) >= 10 and data[9] == seq) or data[7] == seq: return True
                         
-                        elif data[1] == 0xD0: # TEXT ACK
+                        elif data[1] == 0xD0: # Text ACK or Data
                              if len(data) >= 11 and data[8:11] == b'ACK': return True
                              self.incoming_queue.append(data)
                              return True 
@@ -265,7 +265,6 @@ class Session:
         logger.info(f"Starte Download: Dir={media_dir}, Num={media_num}")
         req_json = { "cmdId": 1285, "downloadReqs": [{ "fileType": file_type, "dirNum": media_dir, "mediaNum": media_num }] }
         enc = self.encrypt_json(req_json)
-        # --- FIX: Auch hier Command Type 1285 übergeben ---
         payload = self.build_cmd_packet(enc, 1285)
         pkt, _ = self.build_packet(0xD0, payload)
         self.send_raw(pkt) 
@@ -324,7 +323,9 @@ class Session:
         if not self.send_reliable(0xF9, full_login, "Login"):
             logger.warning("Kein Login-ACK, versuche weiter...")
         
-        hb.start()
+        # WICHTIG: Heartbeat erst starten, wenn Login durch ist
+        # Aber im "Golden Log" sendet die App auch keine Heartbeats während des Handshakes
+        # hb.start() 
         time.sleep(0.5)
 
         logger.info("2. Handshake...")
@@ -334,15 +335,20 @@ class Session:
         self.send_reliable(0xD0, MAGIC_BODY_2, "Magic2")
         time.sleep(0.5)
 
+        # HIER KEIN GetDevInfo! Direkt MediaList
         logger.info("3. Get Media List (Cmd 768)...")
         enc_list = self.encrypt_json({ "cmdId": 768, "itemCntPerPage": 10, "pageNo": 0 })
         
-        # --- FIX: HIER CMD_TYPE 768 ÜBERGEBEN ---
+        # Command 768!
         payload = self.build_cmd_packet(enc_list, 768)
         
         if self.send_reliable(0xD0, payload, "GetMediaList"): 
              logger.info("Warte auf Dateiliste...")
+             # Jetzt Heartbeat starten, da wir idle sind und warten
+             hb.start()
              resp = self.wait_for_data(timeout=10.0)
+             hb.stop()
+             
              if resp and "mediaFiles" in resp:
                  files = resp["mediaFiles"]
                  logger.info(f"✅ {len(files)} Dateien gefunden.")
@@ -350,6 +356,9 @@ class Session:
                      tf = files[-1]
                      self.download_file(tf.get("fileType", 0), tf.get("mediaDirNum", 0), tf.get("mediaNum", 0))
              else: logger.error("❌ Keine Dateiliste empfangen.")
+        else:
+            logger.error("❌ Send GetMediaList Failed")
+        
         hb.stop()
 
 if __name__ == "__main__":
