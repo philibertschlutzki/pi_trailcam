@@ -3,10 +3,10 @@
 Wildkamera Thumbnail Downloader
 Nutzt Stop-and-Wait ARQ mit 3-Phasen-Handshake wie main.py
 
-CHANGELOG v2.3 (2025-12-24):
-- KRITISCHER FIX: ARTEMIS-Header Format korrigiert
-- Header: ARTEMIS + cmd_id + app_seq + length (NICHT doppeltes cmd_id!)
-- App-Sequenznummer implementiert (hochzählend, startet bei 1)
+CHANGELOG v2.4 (2025-12-24):
+- KRITISCHER FIX: AES-Verschlüsselung korrigiert - PKCS#7 Padding statt Null-Padding
+- encrypt_json() verwendet jetzt pad() aus Crypto.Util.Padding
+- decrypt_payload() verwendet unpad() für korrekte Entschlüsselung
 """
 import socket
 import struct
@@ -22,7 +22,7 @@ import threading
 import base64
 from bleak import BleakScanner, BleakClient
 from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad
+from Crypto.Util.Padding import pad, unpad
 
 # --- CONFIG ---
 TARGET_IP = "192.168.43.1"
@@ -288,22 +288,24 @@ class Session:
         return True
 
     def encrypt_json(self, obj):
-        """AES-ECB mit Null-Byte Padding (kompakte JSON-Serialisierung)"""
-        data = json.dumps(obj, separators=(',', ':')).encode('utf-8')
-        data_with_null = data + b'\x00'
-        pad_len = (16 - (len(data_with_null) % 16)) % 16
-        padded_data = data_with_null + (b'\x00' * pad_len)
+        """AES-ECB mit PKCS#7 Padding (Standard-konform)"""
+        json_str = json.dumps(obj, separators=(',', ':'))
         cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
-        return cipher.encrypt(padded_data)
+        return cipher.encrypt(pad(json_str.encode('utf-8'), AES.block_size))
 
     def decrypt_payload(self, data):
+        """Entschlüsselt ARTEMIS-Response mit PKCS#7 Unpadding"""
         try:
             if len(data) < 28: return None
+            
+            # Base64-Teil extrahieren
             b64_part = data[28:].split(b'\x00')[0]
             raw_enc = base64.b64decode(b64_part)
+            
+            # AES-ECB entschlüsseln und PKCS#7 Padding entfernen
             cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
-            decrypted = cipher.decrypt(raw_enc)
-            json_str = decrypted.decode('utf-8').rstrip('\x00')
+            decrypted = unpad(cipher.decrypt(raw_enc), AES.block_size)
+            json_str = decrypted.decode('utf-8')
             
             if self.debug:
                 logger.debug(f"🔓 Decrypted JSON: {json_str[:200]}...")
@@ -320,7 +322,7 @@ class Session:
         
         WICHTIG: Token wird im verschlüsselten JSON-Payload übertragen!
         
-        ARTEMIS Header Format (KORRIGIERT):
+        ARTEMIS Header Format:
         Offset | Länge | Feld
         -------|-------|----------------
         0      | 8     | "ARTEMIS\x00"
