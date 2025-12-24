@@ -141,20 +141,23 @@ class Session:
         except: return False
 
     def next_seq(self):
-        self.global_seq = (self.global_seq + 1) % 65535 # Größerer Bereich für Stabilität
+        self.global_seq = (self.global_seq + 1) % 65535
+        if self.global_seq == 0: self.global_seq = 1
         return self.global_seq
 
     def encrypt_json(self, obj):
+        """100% App-konforme Null-Byte Padding Strategie"""
         data = json.dumps(obj, separators=(',', ':')).encode('utf-8')
         data_with_null = data + b'\x00'
-        pad_len = 16 - (len(data_with_null) % 16)
-        if pad_len != 16: data_with_null += b'\x00' * pad_len
+        pad_len = (16 - (len(data_with_null) % 16)) % 16
+        padded_data = data_with_null + (b'\x00' * pad_len)
         cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
-        return cipher.encrypt(data_with_null)
+        return cipher.encrypt(padded_data)
 
     def decrypt_payload(self, data):
         try:
             if len(data) < 28: return None
+            # Extrahiere Base64-Teil nach dem Artemis-Header
             b64_part = data[28:].split(b'\x00')[0]
             raw_enc = base64.b64decode(b64_part)
             cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
@@ -168,17 +171,21 @@ class Session:
         b64_body = base64.b64encode(enc_data) + b'\x00'
         curr_seq = self.next_seq()
         
-        # ARTEMIS Header (20 Bytes)
+        # ARTEMIS Header (Little Endian)
         art_hdr = b'ARTEMIS\x00' + struct.pack('<III', cmd_id, curr_seq, len(b64_body))
-        full_p = art_hdr + b64_body
+        full_payload = art_hdr + b64_body
         
-        # RUDP Header (8 Bytes)
-        blen = len(full_p) + 4
-        rudp_hdr = struct.pack('>BBHBBBB', 0xF1, 0xD0, blen, 0xD1, 0x00, 0x00, curr_seq % 255)
+        # RUDP Header (Big Endian) - SYNC FIX: modulo 256
+        blen = len(full_payload) + 4
+        rudp_hdr = struct.pack('>BBHBBBB', 0xF1, 0xD0, blen, 0xD1, 0x00, 0x00, curr_seq % 256)
         
-        self.sock.sendto(rudp_hdr + full_p, (TARGET_IP, self.active_port))
-        self.log_packet("📤 [TX]", rudp_hdr + full_p)
+        packet = rudp_hdr + full_payload
+        self.sock.sendto(packet, (TARGET_IP, self.active_port))
+        self.log_packet("📤 [TX]", packet)
         return curr_seq
+
+    def build_ack_packet(self, seq):
+        return struct.pack('>BBHBBBB', 0xF1, 0xD1, 4, 0xD1, 0x00, 0x00, seq), seq
 
     def wait_for_data(self, timeout=5.0):
         start = time.time()
@@ -187,19 +194,36 @@ class Session:
                 data, addr = self.sock.recvfrom(4096)
                 self.log_packet("📥 [RX]", data, addr)
                 if len(data) > 8 and data[0] == 0xF1:
-                    # Sende ACK für empfangene Datenpakete
+                    # RUDP ACK senden
                     if data[1] == 0xD0:
                         ack, _ = self.build_ack_packet(data[7])
                         self.sock.sendto(ack, addr)
                     
+                    # Wenn es ein Bildfragment ist (kein Artemis/JSON), hier ignorieren oder sammeln
+                    if b'ARTEMIS' not in data:
+                        continue 
+
                     res = self.decrypt_payload(data)
                     if res: return res
             except socket.timeout: pass
         return None
 
-    def build_ack_packet(self, seq):
-        # Einfaches ACK für RUDP
-        return struct.pack('>BBHBBBB', 0xF1, 0xD1, 4, 0xD1, 0x00, 0x00, seq), seq
+    def download_thumbnails(self, media_files):
+        if not media_files: return
+        req_list = []
+        for item in media_files[:45]:
+            req_list.append({
+                "fileType": item.get("fileType", 0),
+                "dirNum": item.get("dirNum", 100),
+                "mediaNum": item.get("mediaNum")
+            })
+        payload = {"cmdId": 772, "thumbnailReqs": req_list}
+        logger.info(f"🚀 Fordere {len(req_list)} Thumbnails an...")
+        self.send_cmd(772, payload)
+        
+        # HINWEIS: Hier müsste eine Logik folgen, die Binärdaten speichert!
+        for _ in range(len(req_list) * 2): 
+            self.wait_for_data(timeout=0.5)
 
     def run(self):
         if not self.setup_network(): return
@@ -207,14 +231,8 @@ class Session:
         self.sock.sendto(LBCS_PAYLOAD, (TARGET_IP, 40611))
         time.sleep(0.5)
 
-        # LOGIN (Cmd 2)
-        logger.info("Sende APP LOGIN...")
-        login_data = {
-            "cmdId": 2, "usrName": "admin", "password": "admin",
-            "utcTime": 1, "supportHeartBeat": True
-        }
-        self.send_cmd(2, login_data)
-        
+        # LOGIN
+        self.send_cmd(2, {"cmdId": 2, "usrName": "admin", "password": "admin", "utcTime": 1, "supportHeartBeat": True})
         resp = self.wait_for_data()
         if resp and 'token' in resp:
             self.token = resp['token']
@@ -223,11 +241,12 @@ class Session:
         else:
             logger.error("❌ Login fehlgeschlagen."); return
 
-        # DATEILISTE (Cmd 768)
-        self.send_cmd(768, {"cmdId": 768, "itemCntPerPage": 10, "pageNo": 0})
+        # DATEILISTE
+        self.send_cmd(768, {"cmdId": 768, "itemCntPerPage": 45, "pageNo": 0})
         resp = self.wait_for_data()
         if resp and "mediaFiles" in resp:
             logger.info(f"✅ {len(resp['mediaFiles'])} Dateien gefunden.")
+            self.download_thumbnails(resp['mediaFiles'])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Kamera Thumbnail Downloader")
