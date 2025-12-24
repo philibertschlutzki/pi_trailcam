@@ -176,6 +176,7 @@ class Session:
         self.debug = debug
         self.tx_count = 0
         self.rx_count = 0
+        self.token = None  # Token für authentifizierte Commands
 
     def log_tx(self, data, desc=""):
         """Loggt gesendete Pakete"""
@@ -265,7 +266,7 @@ class Session:
 
         if not self.active_port: return False
 
-        logger.info(f"Sende Login an {TARGET_IP}:{self.active_port}...")
+        logger.info(f"Sende Pre-Login an {TARGET_IP}:{self.active_port}...")
         payload = { "utcTime": int(time.time()), "nonce": os.urandom(8).hex() }
         enc = AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(pad(json.dumps(payload, separators=(',', ':')).encode(), AES.block_size))
         pkt = struct.pack('>BBH', 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)) + PHASE2_STATIC_HEADER + enc
@@ -308,7 +309,11 @@ class Session:
             return None
 
     def send_artemis_command(self, cmd_id, payload_dict):
-        """Sendet ARTEMIS-Kommando mit Stop-and-Wait (OHNE Token)"""
+        """Sendet ARTEMIS-Kommando mit Stop-and-Wait (MIT Token falls vorhanden)"""
+        # Token hinzufügen falls vorhanden
+        if self.token:
+            payload_dict["token"] = self.token
+        
         enc_data = self.encrypt_json(payload_dict)
         b64_body = base64.b64encode(enc_data) + b'\x00'
         
@@ -468,6 +473,10 @@ class Session:
                     "mediaNum": media_num
                 }]
             }
+            
+            # Token hinzufügen falls vorhanden
+            if self.token:
+                req["token"] = self.token
 
             if not self.send_artemis_command(772, req):
                 logger.warning(f"⚠️ Anfrage für {media_num} fehlgeschlagen.")
@@ -569,25 +578,56 @@ class Session:
             if ack_count == 0:
                 logger.warning("⚠️ Keine Handshake-ACKs empfangen!")
 
-            logger.info(">>> Session etabliert. Starte Datenabruf...")
+            logger.info(">>> Session etabliert. Starte User-Login...")
             time.sleep(0.3)
 
-            # DIREKTER Dateilisten-Abruf (Command 768) - OHNE Login Command 2!
-            # Kamera ist bereits authentifiziert durch 0xF9 Pre-Login
-            logger.info("📂 Fordere Dateiliste an (Command 768)...")
-            if self.send_artemis_command(768, {"cmdId": 768, "itemCntPerPage": 45, "pageNo": 0}):
-                file_resp = self.wait_for_artemis_response(timeout=10.0)
-                if file_resp and "mediaFiles" in file_resp:
-                    media_files = file_resp['mediaFiles']
-                    logger.info(f"✅ {len(media_files)} Dateien gefunden.")
+            # KRITISCH: Command 2 (User-Login) VOR Datenabruf
+            logger.info("🔑 Sende User-Login (Command 2)...")
+            login_data = {
+                "cmdId": 2,
+                "usrName": "admin",
+                "password": "admin",
+                "utcTime": int(time.time()),
+                "supportHeartBeat": True
+            }
 
-                    self.download_thumbnails(media_files)
+            if self.send_artemis_command(2, login_data):
+                login_resp = self.wait_for_artemis_response(timeout=5.0)
+                
+                if login_resp:
+                    if "token" in login_resp:
+                        self.token = login_resp["token"]
+                        logger.info(f"✅ Login erfolgreich! Token: {self.token[:20]}...")
+                    else:
+                        logger.warning("⚠️ Login-Response ohne Token, fahre trotzdem fort.")
+                    
+                    # Jetzt Dateiliste abrufen (Command 768)
+                    time.sleep(0.3)
+                    logger.info("📂 Fordere Dateiliste an (Command 768)...")
+                    
+                    file_req = {
+                        "cmdId": 768,
+                        "itemCntPerPage": 45,
+                        "pageNo": 0
+                    }
+                    
+                    if self.send_artemis_command(768, file_req):
+                        file_resp = self.wait_for_artemis_response(timeout=10.0)
+                        
+                        if file_resp and "mediaFiles" in file_resp:
+                            media_files = file_resp['mediaFiles']
+                            logger.info(f"✅ {len(media_files)} Dateien gefunden.")
+                            self.download_thumbnails(media_files)
+                        else:
+                            logger.error("❌ Keine Dateiliste erhalten.")
+                            if self.debug and file_resp:
+                                logger.debug(f"Response war: {file_resp}")
+                    else:
+                        logger.error("❌ Dateilisten-Anfrage fehlgeschlagen.")
                 else:
-                    logger.error("❌ Keine Dateiliste erhalten.")
-                    if self.debug and file_resp:
-                        logger.debug(f"Response war: {file_resp}")
+                    logger.error("❌ Kein Login-Response erhalten!")
             else:
-                logger.error("❌ Dateilisten-Anfrage fehlgeschlagen.")
+                logger.error("❌ Login-Command nicht bestätigt!")
 
         except KeyboardInterrupt:
             logger.info("⏹️ Abbruch durch Benutzer.")
