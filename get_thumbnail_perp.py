@@ -54,6 +54,47 @@ PHASE2_STATIC_HEADER = bytes.fromhex("0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger("CamClient")
 
+# --- UTILITY FUNCTIONS ---
+def hex_dump(data, max_lines=8):
+    """Erzeugt formatierte Hex-Dump-Ausgabe"""
+    lines = []
+    for i in range(0, min(len(data), max_lines * 16), 16):
+        chunk = data[i:i+16]
+        hex_part = ' '.join(f"{b:02x}" for b in chunk)
+        ascii_part = ''.join(chr(b) if 32 <= b < 127 else '.' for b in chunk)
+        lines.append(f"{i:08x}  {hex_part:<47}  {ascii_part}")
+    if len(data) > max_lines * 16:
+        lines.append(f"... ({len(data) - max_lines * 16} weitere Bytes)")
+    return "\n".join(lines)
+
+def analyze_packet(data):
+    """Analysiert Pakettyp für Debug-Ausgabe"""
+    if len(data) < 8 or data[0] != 0xF1:
+        return f"NON-RUDP ({len(data)} bytes)"
+    
+    pkt_type = data[1]
+    seq = data[7] if len(data) > 7 else 0
+    
+    type_names = {
+        0x41: "DISCOVERY_RESP",
+        0x42: "DATA_FRAGMENT",
+        0xD0: "DATA",
+        0xD1: "CONTROL/ACK",
+        0xF9: "PRE_LOGIN"
+    }
+    
+    type_str = type_names.get(pkt_type, f"TYPE_{pkt_type:02X}")
+    
+    # Spezielle Marker
+    if pkt_type == 0xD0 and len(data) > 15 and data[8:15] == b'ARTEMIS':
+        try:
+            cmd = struct.unpack('<I', data[16:20])[0]
+            return f"{type_str}(Seq={seq}) -> ARTEMIS(Cmd={cmd})"
+        except:
+            return f"{type_str}(Seq={seq}) -> ARTEMIS"
+    
+    return f"{type_str}(Seq={seq})"
+
 # --- WORKERS ---
 class SystemTweaks:
     @staticmethod
@@ -131,6 +172,26 @@ class Session:
         self.global_seq = 0
         self.debug = debug
         self.token = None
+        self.tx_count = 0
+        self.rx_count = 0
+
+    def log_tx(self, data, desc=""):
+        """Loggt gesendete Pakete"""
+        self.tx_count += 1
+        if self.debug:
+            logger.debug(f"📤 TX [{self.tx_count}] {analyze_packet(data)} ({len(data)} bytes)")
+            if desc:
+                logger.debug(f"   └─ {desc}")
+            logger.debug(f"\n{hex_dump(data)}")
+
+    def log_rx(self, data, addr, desc=""):
+        """Loggt empfangene Pakete"""
+        self.rx_count += 1
+        if self.debug:
+            logger.debug(f"📥 RX [{self.rx_count}] {analyze_packet(data)} ({len(data)} bytes) from {addr[0]}:{addr[1]}")
+            if desc:
+                logger.debug(f"   └─ {desc}")
+            logger.debug(f"\n{hex_dump(data)}")
 
     def setup_network(self):
         try:
@@ -173,12 +234,16 @@ class Session:
     def discover_and_login(self):
         logger.info("Starte Discovery...")
         for p in TARGET_PORTS:
-            self.sock.sendto(LBCS_PAYLOAD, (TARGET_IP, p))
+            pkt = LBCS_PAYLOAD
+            self.sock.sendto(pkt, (TARGET_IP, p))
+            self.log_tx(pkt, f"LBCS Discovery -> {TARGET_IP}:{p}")
 
         start = time.time()
         while time.time() - start < 1.5:
             try:
                 data, addr = self.sock.recvfrom(1024)
+                self.log_rx(data, addr, "Discovery Response")
+                
                 if len(data) > 4 and data[0] == 0xF1:
                     self.active_port = addr[1]
                     logger.info(f"✅ ANTWORT von {addr[0]}:{addr[1]}")
@@ -191,10 +256,13 @@ class Session:
         payload = { "utcTime": int(time.time()), "nonce": os.urandom(8).hex() }
         enc = AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(pad(json.dumps(payload, separators=(',', ':')).encode(), AES.block_size))
         pkt = struct.pack('>BBH', 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)) + PHASE2_STATIC_HEADER + enc
+        
         self.sock.sendto(pkt, (TARGET_IP, self.active_port))
+        self.log_tx(pkt, "Phase2 Pre-Login")
 
         try:
-            data, _ = self.sock.recvfrom(1024)
+            data, addr = self.sock.recvfrom(1024)
+            self.log_rx(data, addr, "Pre-Login Response")
             if data: logger.info("✅ Login Antwort erhalten.")
         except: pass
         return True
@@ -215,8 +283,15 @@ class Session:
             raw_enc = base64.b64decode(b64_part)
             cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
             decrypted = cipher.decrypt(raw_enc)
-            return json.loads(decrypted.decode('utf-8').rstrip('\x00'))
-        except Exception:
+            json_str = decrypted.decode('utf-8').rstrip('\x00')
+            
+            if self.debug:
+                logger.debug(f"🔓 Decrypted JSON: {json_str[:200]}...")
+            
+            return json.loads(json_str)
+        except Exception as e:
+            if self.debug:
+                logger.debug(f"❌ Decrypt failed: {e}")
             return None
 
     def send_artemis_command(self, cmd_id, payload_dict):
@@ -235,16 +310,19 @@ class Session:
         # Retransmission Loop
         for attempt in range(10):
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
-            if self.debug:
-                logger.debug(f"📤 TX ARTEMIS Cmd={cmd_id}, Seq={seq}, Attempt={attempt+1}")
+            self.log_tx(pkt, f"ARTEMIS Cmd={cmd_id}, Seq={seq}, Attempt={attempt+1}")
 
             # Warte auf ACK (Typ 0xD1)
             start = time.time()
             while time.time() - start < 0.8:
                 try:
-                    data, _ = self.sock.recvfrom(65535)
+                    data, addr = self.sock.recvfrom(65535)
+                    self.log_rx(data, addr)
+                    
                     if len(data) > 7 and data[0] == 0xF1 and data[1] == 0xD1:
                         # ACK erhalten
+                        if self.debug:
+                            logger.debug(f"✅ ACK für Seq={seq} empfangen")
                         return seq
                 except socket.timeout:
                     break
@@ -255,9 +333,12 @@ class Session:
     def wait_for_artemis_response(self, timeout=10.0):
         """Wartet auf ARTEMIS-JSON-Response"""
         start = time.time()
+        logger.info(f"⏳ Warte auf ARTEMIS-Response (max {timeout}s)...")
+        
         while time.time() - start < timeout:
             try:
                 data, addr = self.sock.recvfrom(65535)
+                self.log_rx(data, addr)
 
                 if len(data) < 8 or data[0] != 0xF1:
                     continue
@@ -266,21 +347,27 @@ class Session:
                 if data[1] == 0xD0 and b'ARTEMIS' in data:
                     # ACK senden
                     ack = self.build_ack(data[7])
-                    self.sock.sendto(ack, addr)
+                    self.sock.sendto(ack, (TARGET_IP, self.active_port))
+                    self.log_tx(ack, f"ACK für ARTEMIS-Response Seq={data[7]}")
 
                     # JSON dekodieren
                     resp = self.decrypt_payload(data)
                     if resp:
+                        logger.info(f"✅ ARTEMIS-Response erhalten: {list(resp.keys())}")
                         return resp
 
                 # Andere D0-Pakete ACKen, aber ignorieren
                 elif data[1] == 0xD0:
                     ack = self.build_ack(data[7])
-                    self.sock.sendto(ack, addr)
+                    self.sock.sendto(ack, (TARGET_IP, self.active_port))
+                    self.log_tx(ack, f"ACK für D0 Seq={data[7]}")
 
             except socket.timeout:
+                if self.debug:
+                    logger.debug("⏱️ Timeout, retry...")
                 continue
 
+        logger.warning(f"❌ Timeout: Keine ARTEMIS-Response nach {timeout}s")
         return None
 
     def reassemble_fragments(self, max_fragments=100, timeout=30.0):
@@ -289,9 +376,12 @@ class Session:
         start = time.time()
         last_activity = time.time()
 
+        logger.info(f"🧩 Starte Fragment-Reassembly (max {timeout}s)...")
+
         while time.time() - start < timeout and len(fragments) < max_fragments:
             try:
                 data, addr = self.sock.recvfrom(65535)
+                self.log_rx(data, addr)
 
                 if len(data) < 8 or data[0] != 0xF1:
                     continue
@@ -301,24 +391,31 @@ class Session:
 
                 # Typ 0x42 = Binärdaten-Fragment
                 if pkt_type == 0x42:
-                    payload = data[8:]  # Nach RUDP-Header
+                    payload = data[8:]
                     fragments.append((seq, payload))
                     last_activity = time.time()
 
+                    if self.debug and len(fragments) % 10 == 0:
+                        logger.debug(f"🧩 {len(fragments)} Fragmente gesammelt...")
+
                     # ACK senden
                     ack = self.build_ack(seq)
-                    self.sock.sendto(ack, addr)
+                    self.sock.sendto(ack, (TARGET_IP, self.active_port))
+                    self.log_tx(ack, f"ACK Fragment Seq={seq}")
 
                 # Typ 0xD0 mit ARTEMIS = Ende der Übertragung
                 elif pkt_type == 0xD0 and b'ARTEMIS' in data:
                     ack = self.build_ack(seq)
-                    self.sock.sendto(ack, addr)
+                    self.sock.sendto(ack, (TARGET_IP, self.active_port))
+                    self.log_tx(ack, f"ACK End-Marker Seq={seq}")
+                    logger.info(f"🏁 End-Marker empfangen, {len(fragments)} Fragmente total.")
                     break
 
                 # Andere Pakete ACKen
                 elif pkt_type == 0xD0:
                     ack = self.build_ack(seq)
-                    self.sock.sendto(ack, addr)
+                    self.sock.sendto(ack, (TARGET_IP, self.active_port))
+                    self.log_tx(ack, f"ACK D0 Seq={seq}")
 
                 # Timeout bei Inaktivität
                 if time.time() - last_activity > 3.0 and fragments:
@@ -327,14 +424,18 @@ class Session:
 
             except socket.timeout:
                 if fragments and time.time() - last_activity > 2.0:
+                    logger.info(f"⏱️ Timeout nach {len(fragments)} Fragmenten.")
                     break
                 continue
 
         if not fragments:
+            logger.warning("❌ Keine Fragmente empfangen.")
             return None
 
         # Sortiere nach Sequenznummer
         fragments.sort(key=lambda x: x[0])
+        total_size = sum(len(f[1]) for f in fragments)
+        logger.info(f"✅ {len(fragments)} Fragmente reassembliert ({total_size} bytes total).")
         return b''.join([f[1] for f in fragments])
 
     def download_thumbnails(self, media_files, output_dir="thumbnails"):
@@ -345,8 +446,9 @@ class Session:
         os.makedirs(output_dir, exist_ok=True)
         success_count = 0
 
-        for idx, item in enumerate(media_files[:50]):  # Max 50
+        for idx, item in enumerate(media_files[:50]):
             media_num = item.get("mediaNum")
+            logger.info(f"\n{'='*60}")
             logger.info(f"📥 [{idx+1}/{len(media_files[:50])}] Lade Thumbnail {media_num}...")
 
             req = {
@@ -379,8 +481,9 @@ class Session:
             else:
                 logger.warning(f"⚠️ {media_num}: Keine/zu wenig Daten")
 
-            time.sleep(0.5)  # Rate limiting
+            time.sleep(0.5)
 
+        logger.info(f"\n{'='*60}")
         logger.info(f"🎉 {success_count}/{len(media_files[:50])} Thumbnails erfolgreich heruntergeladen.")
 
     def run(self):
@@ -399,16 +502,19 @@ class Session:
 
             # 3-Phasen Handshake
             logger.info(">>> Sende Handshake...")
-            pkt, _ = self.build_rudp_packet(0xD0, ARTEMIS_HELLO_BODY)
+            pkt, seq = self.build_rudp_packet(0xD0, ARTEMIS_HELLO_BODY)
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
+            self.log_tx(pkt, f"Handshake Phase 1: Hello, Seq={seq}")
             time.sleep(0.05)
 
-            pkt, _ = self.build_rudp_packet(0xD1, MAGIC_BODY_1)
+            pkt, seq = self.build_rudp_packet(0xD1, MAGIC_BODY_1)
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
+            self.log_tx(pkt, f"Handshake Phase 2: Magic1, Seq={seq}")
             time.sleep(0.02)
 
-            pkt, _ = self.build_rudp_packet(0xD1, MAGIC_BODY_2)
+            pkt, seq = self.build_rudp_packet(0xD1, MAGIC_BODY_2)
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
+            self.log_tx(pkt, f"Handshake Phase 3: Magic2, Seq={seq}")
 
             logger.info(">>> Session etabliert. Starte Datenabruf...")
             time.sleep(0.5)
@@ -429,6 +535,8 @@ class Session:
                     logger.info(f"✅ Token erhalten: {self.token[:20]}...")
                 else:
                     logger.error("❌ Kein Token erhalten.")
+                    if self.debug and resp:
+                        logger.debug(f"Response war: {resp}")
                     return
             else:
                 logger.error("❌ Login-Command fehlgeschlagen.")
@@ -455,7 +563,7 @@ class Session:
             self.running = False
             if ping_thread: ping_thread.stop()
             if self.sock: self.sock.close()
-            logger.info("🔌 Verbindung geschlossen.")
+            logger.info(f"🔌 Verbindung geschlossen. TX: {self.tx_count}, RX: {self.rx_count}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Wildkamera Thumbnail Downloader")
