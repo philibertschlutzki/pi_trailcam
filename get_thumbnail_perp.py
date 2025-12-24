@@ -399,61 +399,60 @@ class Session:
         return False
 
     def wait_for_data(self, timeout=8.0):
-    """Wait for data packet and return decrypted JSON"""
-    start = time.time()
-    
-    while time.time() - start < timeout:
-        try:
-            data, addr = self.sock.recvfrom(4096)
-            self.log_packet("📥 [RX]", data, addr)
-            
-            if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
-                payload = data[8:]
+        """Wait for data packet and return decrypted JSON"""
+        start = time.time()
+        
+        while time.time() - start < timeout:
+            try:
+                data, addr = self.sock.recvfrom(4096)
+                self.log_packet("📥 [RX]", data, addr)
                 
-                # ❗ CRITICAL: Do NOT ACK "TEXT ACK" packets!
-                # These are protocol noise, not real data
-                if payload.startswith(b'ACK'): 
-                    continue  # Just ignore, no ACK!
+                # Check for error packets first
+                if len(data) == 4:
+                    if data == b'\xf1\xe0\x00\x00':
+                        logger.error("❌ Session/Auth Fehler von Kamera")
+                        return None
+                    elif data == b'\xf1\xf0\x00\x00':
+                        logger.error("❌ Fatal State Error von Kamera")
+                        return None
                 
-                # Only ACK real data packets
-                rx_seq = data[7]
-                self.send_ack(rx_seq)
+                if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
+                    payload = data[8:]
+                    
+                    # ❗ CRITICAL FIX: Ignore TEXT ACK packets (don't send ACK back!)
+                    if len(payload) == 3 and payload == b'ACK':
+                        continue  # This is just protocol noise
+                    
+                    # Send ACK for real data packets
+                    rx_seq = data[7]
+                    self.send_ack(rx_seq)
 
-                # Try to decrypt ARTEMIS payload
-                if b'ARTEMIS' in payload and len(payload) > 20:
-                    b64_data = payload[20:].rstrip(b'\x00')
+                    # Try to decrypt ARTEMIS payload
+                    if b'ARTEMIS' in payload and len(payload) > 20:
+                        b64_data = payload[20:].rstrip(b'\x00')
+                        try:
+                            res = self.decrypt_bytes(base64.b64decode(b64_data))
+                            if res: 
+                                return res
+                        except: 
+                            pass
+                    
+                    # Try direct base64 decode
                     try:
-                        res = self.decrypt_bytes(base64.b64decode(b64_data))
+                        res = self.decrypt_bytes(base64.b64decode(payload.rstrip(b'\x00')))
                         if res: 
                             return res
                     except: 
                         pass
-                
-                # Try direct base64 decode
-                try:
-                    res = self.decrypt_bytes(base64.b64decode(payload.rstrip(b'\x00')))
-                    if res: 
-                        return res
-                except: 
-                    pass
-            
-            # Handle error packets
-            if len(data) == 4:
-                if data == b'\xf1\xe0\x00\x00':
-                    logger.error("❌ Kamera meldet: Session/Auth Fehler")
-                    return None
-                elif data == b'\xf1\xf0\x00\x00':
-                    logger.error("❌ Kamera meldet: Fatal State Error")
-                    return None
-                    
-        except socket.timeout: 
-            pass
-        except Exception as e:
-            if self.debug:
-                logger.debug(f"Wait error: {e}")
-    
-    return None
-  
+                        
+            except socket.timeout: 
+                pass
+            except Exception as e:
+                if self.debug:
+                    logger.debug(f"Wait error: {e}")
+        
+        return None
+
     def receive_thumbnail(self, timeout=5.0):
         """
         Receive a single thumbnail via RUDP.
@@ -700,13 +699,7 @@ class Session:
             logger.error("❌ Discovery fehlgeschlagen")
             return
 
-        # 3. Start heartbeat
-        self.heartbeat_thread = HeartbeatThread(
-            self.sock, TARGET_IP, self.active_port
-        )
-        self.heartbeat_thread.start()
-
-        # 4. Login
+        # 3. Login (WITHOUT heartbeat yet!)
         logger.info("Login...")
         enc_login = self.encrypt_json({
             "utcTime": int(time.time()),
@@ -719,19 +712,27 @@ class Session:
         
         time.sleep(0.5)
 
-        # 5. Handshake
+        # 4. Handshake
         logger.info("Handshake...")
         self.send_reliable(0xD0, ARTEMIS_HELLO, "Hello")
         self.send_reliable(0xD0, MAGIC_BODY_1, "Magic1")
         time.sleep(0.05)
         self.send_reliable(0xD0, MAGIC_BODY_2, "Magic2")
         time.sleep(0.5)
+        
+        # 5. NOW start heartbeat (after handshake complete!)
+        logger.info("Starte Heartbeat...")
+        self.heartbeat_thread = HeartbeatThread(
+            self.sock, TARGET_IP, self.active_port
+        )
+        self.heartbeat_thread.start()
 
         # 6. Get media list
         all_files = self.get_media_list()
         if not all_files:
             logger.error("❌ Keine Dateien gefunden")
-            self.heartbeat_thread.stop()
+            if self.heartbeat_thread:
+                self.heartbeat_thread.stop()
             return
         
         # 7. Create thumbnail directory
@@ -773,7 +774,8 @@ class Session:
         
         if not downloaded_thumbs:
             logger.error("❌ Keine Thumbnails heruntergeladen")
-            self.heartbeat_thread.stop()
+            if self.heartbeat_thread:
+                self.heartbeat_thread.stop()
             return
         
         logger.info(f"\n✅ {len(downloaded_thumbs)} Thumbnails in '{THUMBNAIL_DIR}/' gespeichert")
@@ -803,7 +805,8 @@ class Session:
         
         if not selection or selection.lower() == 'q':
             logger.info("Abbruch durch Benutzer")
-            self.heartbeat_thread.stop()
+            if self.heartbeat_thread:
+                self.heartbeat_thread.stop()
             return
         
         # Parse selection
@@ -835,7 +838,8 @@ class Session:
         
         if not selected_files:
             logger.info("Keine Dateien ausgewählt")
-            self.heartbeat_thread.stop()
+            if self.heartbeat_thread:
+                self.heartbeat_thread.stop()
             return
         
         # Download selected files
@@ -851,7 +855,8 @@ class Session:
         logger.info(f"{'='*60}")
         
         # Cleanup
-        self.heartbeat_thread.stop()
+        if self.heartbeat_thread:
+            self.heartbeat_thread.stop()
         time.sleep(0.5)
 
 if __name__ == "__main__":
