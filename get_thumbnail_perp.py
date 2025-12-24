@@ -25,13 +25,9 @@ BLE_MAC = "C6:1E:0D:E0:32:E8"
 
 # --- CRYPTO & CONSTANTS ---
 PHASE2_KEY = b"a01bc23ed45fF56A"
+# Header für Pre-Login Payload (aus Log rekonstruiert oder Standard)
 PHASE2_STATIC_HEADER = bytes.fromhex("0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5")
 LBCS_PAYLOAD = bytes.fromhex("f14100144c42435300000000000000004343434a4a000000")
-
-# Magic Packets
-MAGIC_BODY_1 = bytes.fromhex("000000000000") 
-MAGIC_BODY_2 = bytes.fromhex("0000")         
-HEARTBEAT_PAYLOAD = bytes.fromhex("00000000")
 
 logger = logging.getLogger("CamClient")
 
@@ -110,7 +106,8 @@ class HeartbeatThread(threading.Thread):
     def run(self):
         while self.running:
             try:
-                # Sende nur, wenn Session aktiv (vermeidet 0xE0 Fehler vor Login)
+                # Heartbeat sendet 4 Null-Bytes
+                self.sock.sendto(b'\x00\x00\x00\x00', self.target)
                 time.sleep(2.0)
             except: pass
     
@@ -121,12 +118,13 @@ class Session:
         self.sock = None
         self.active_port = None
         self.global_seq = 0 
-        self.app_seq = 1
+        self.app_seq = 0 # App Seq startet bei 0, wird vor dem Senden inkrementiert
         self.debug = debug
-        self.token = None # Token Speicher
+        self.token = None 
 
     def log_packet(self, direction, data, addr=None):
         if not self.debug: return
+        # Ignore discovery flooding output
         if len(data) > 2 and data[1] == 0x42: return
         desc = analyze_packet(data)
         logger.debug(f"{direction} {desc} ({len(data)} bytes)")
@@ -151,6 +149,7 @@ class Session:
         return self.global_seq
 
     def encrypt_json(self, json_obj):
+        # Wichtig: separators=(',', ':') entfernt Leerzeichen wie die Java-App
         json_str = json.dumps(json_obj, separators=(',', ':'))
         cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
         return cipher.encrypt(pad(json_str.encode('utf-8'), AES.block_size))
@@ -165,12 +164,14 @@ class Session:
     def build_packet(self, p_type, payload):
         seq = self.next_seq()
         bl = len(payload) + 4
+        # RUDP Header: Magic(F1) + Type + Len + Magic(D1) + .. + Seq
         return bytearray([0xF1, p_type, (bl >> 8) & 0xFF, bl & 0xFF, 0xD1, 0x00, 0x00, seq]) + payload, seq
 
-    def build_cmd_packet(self, encrypted_payload, cmd_id=2):
+    def build_cmd_packet(self, encrypted_payload, cmd_id):
         b64_payload = base64.b64encode(encrypted_payload)
         self.app_seq += 1
         # ARTEMIS Header: ARTEMIS + CmdID (4) + AppSeq (4) + Len (4)
+        # Len is Length of Base64 string + 1 (for null terminator)
         wrapper_header = b'ARTEMIS\x00' + struct.pack('<III', cmd_id, self.app_seq, len(b64_payload) + 1)
         return wrapper_header + b64_payload + b'\x00'
 
@@ -202,7 +203,7 @@ class Session:
                         if data[1] == 0xD1: # Protocol ACK
                             if (len(data) >= 10 and data[9] == seq) or data[7] == seq: return True
                         elif data[1] == 0xD0: # Text ACK or Data
-                             # Wir nehmen Data auch als ACK an
+                             # Data packet also acts as implicit ACK if sequence moves on
                              return True
                 except socket.timeout: pass
                 except Exception: pass
@@ -218,32 +219,29 @@ class Session:
                 
                 if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
                     rx_seq = data[7]
-                    # IMMER ACK senden
+                    # IMMER ACK senden für empfangene Daten
                     ack_pkt, _ = self.build_packet(0xD1, bytearray([0x00, rx_seq, 0x00, rx_seq]))
                     self.send_raw(ack_pkt)
 
                     payload = data[8:]
                     if payload.startswith(b'ACK'): continue 
                     
-                    # Decrypt Logic
+                    # Decrypt Logic für ARTEMIS Wrapper
                     if b'ARTEMIS' in payload and len(payload) > 20:
+                        # Offset 20: 8 (Artemis) + 12 (Struct)
                         b64_data = payload[20:].rstrip(b'\x00')
                         try:
                             res = self.decrypt_bytes(base64.b64decode(b64_data))
                             if res: return res
                         except: pass
-                    
-                    try:
-                        res = self.decrypt_bytes(base64.b64decode(payload.rstrip(b'\x00')))
-                        if res: return res
-                    except: pass
             except socket.timeout: pass
         return None
 
     def download_file(self, file_type, media_dir, media_num):
         logger.info(f"Starte Download: Dir={media_dir}, Num={media_num}")
+        # Cmd 1285 = Start Download
         req_json = { "cmdId": 1285, "downloadReqs": [{ "fileType": file_type, "dirNum": media_dir, "mediaNum": media_num }] }
-        if self.token: req_json["token"] = self.token # Token einfügen
+        if self.token: req_json["token"] = self.token 
 
         enc = self.encrypt_json(req_json)
         payload = self.build_cmd_packet(enc, 1285)
@@ -261,7 +259,8 @@ class Session:
                 if self.debug and len(received_chunks) % 20 == 0: self.log_packet("📥 [RX]", data, addr)
 
                 if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
-                    if data[4] == 0xD1: # Bulk Header
+                    # Typ D1 an Byte 4 markiert Bulk-Daten
+                    if data[4] == 0xD1: 
                         seq_16 = (data[6] << 8) | data[7]
                         if seq_16 not in received_chunks:
                             received_chunks[seq_16] = data[8:]
@@ -303,7 +302,6 @@ class Session:
         cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
         enc_login = PHASE2_STATIC_HEADER + cipher.encrypt(pad(plain_login, AES.block_size))
         
-        # F9 Paket manuell bauen
         pkt_len = len(enc_login) + 4
         header = struct.pack('>BBH', 0xF1, 0xF9, pkt_len)
         trailer = struct.pack('BBBB', 0xD1, 0x00, 0x00, self.next_seq())
@@ -313,12 +311,15 @@ class Session:
             logger.warning("Kein Pre-Login ACK, versuche weiter...")
         
         # ---------------------------------------------------------
-        # STEP 2: APP LOGIN (Cmd 0) - FIX APPLIED
-        # Do NOT use build_cmd_packet here. Send Raw Base64 Encrypted JSON.
+        # STEP 2: APP LOGIN (Cmd 2) - FIX basierend auf Log
+        # Das Log zeigt, dass die App Command ID 2 sendet!
+        # [ARTEMIS] [02 00 00 00] ...
         # ---------------------------------------------------------
-        logger.info("2. Sende APP LOGIN (Cmd 0)...")
+        logger.info("2. Sende APP LOGIN (Cmd 2)...")
+        
+        # ACHTUNG: Auch im JSON muss cmdId=2 sein
         login_data = {
-            "cmdId": 0,
+            "cmdId": 2, 
             "usrName": "admin",
             "password": "admin",
             "needVideo": 0,
@@ -326,13 +327,14 @@ class Session:
             "utcTime": int(time.time()),
             "supportHeartBeat": True
         }
+        
         enc_app_login = self.encrypt_json(login_data)
         
-        # FIX: The protocol expects [RUDP Header] [Base64 Encrypted JSON] for Cmd 0
-        # NO "ARTEMIS" header wrapper for the initial login!
-        payload = base64.b64encode(enc_app_login) + b'\x00'
+        # Wir nutzen wieder build_cmd_packet (mit ARTEMIS Header), da das Log dies zeigt.
+        # Aber wir setzen die ID auf 2.
+        payload = self.build_cmd_packet(enc_app_login, cmd_id=2)
         
-        if self.send_reliable(0xD0, payload, "Login Cmd 0"):
+        if self.send_reliable(0xD0, payload, "Login Cmd 2"):
             logger.info("Warte auf Token...")
             resp = self.wait_for_data(timeout=5.0)
             if resp:
@@ -342,24 +344,24 @@ class Session:
                 elif 'stationId' in resp:
                     self.token = resp['stationId']
                     logger.info(f"✅ LOGIN ERFOLGREICH! StationId: {self.token}")
+                elif 'result' in resp and resp['result'] == 0:
+                     logger.info("✅ Login bestätigt (kein Token im ersten Paket?)")
                 
-                # Heartbeat jetzt sicher starten
                 hb.start()
             else:
                 logger.error("❌ Keine Login-Antwort empfangen. Abbruch.")
                 return 
         else:
-            logger.error("❌ Senden von Login Cmd 0 fehlgeschlagen.")
+            logger.error("❌ Senden von Login fehlgeschlagen.")
             return
 
         time.sleep(0.5)
 
-        # 3. Magic / GetDevInfo
+        # 3. Get Dev Info (Cmd 512)
         logger.info("3. Get Dev Info (Cmd 512)...")
         dev_info_req = { "cmdId": 512 }
         if self.token: dev_info_req["token"] = self.token
         enc_dev = self.encrypt_json(dev_info_req)
-        # Use standard build_cmd_packet (adds ARTEMIS header) for established session
         payload = self.build_cmd_packet(enc_dev, 512)
         
         if self.send_reliable(0xD0, payload, "GetDevInfo"):
