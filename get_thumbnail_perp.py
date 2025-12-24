@@ -64,23 +64,24 @@ def hex_dump_str(data):
 def analyze_packet(data):
     if len(data) == 4 and data == b'\x00\x00\x00\x00': return "HEARTBEAT"
     if len(data) < 8 or data[0] != 0xF1:
-        if data == b'\xf1\xe0\x00\x00': return "ERROR (0xE0)"
-        if data == b'\xf1\xf0\x00\x00': return "FATAL (0xF0)"
-        return f"UNKNOWN ({len(data)}b)"
+        if data == b'\xf1\xe0\x00\x00': return "ERROR (0xE0) - Session/Auth Fail"
+        if data == b'\xf1\xf0\x00\x00': return "FATAL (0xF0) - State Error"
+        return f"UNKNOWN ({len(data)} bytes)"
     
     p_type = data[1]
     rudp_seq = data[7]
     base = f"RUDP(Type={p_type:02X}, Seq={rudp_seq})"
     
     if p_type == 0xD1:
-        if len(data) >= 12: return f"{base} -> ACK(For Seq {data[9]})"
+        if len(data) >= 12: return f"{base} -> ACK(Seq {data[9]})"
         return f"{base} -> CONTROL"
     if p_type == 0xD0:
         if len(data) >= 11 and data[8:11] == b'ACK': return f"{base} -> TEXT ACK"
         if len(data) > 24 and data[8:15] == b'ARTEMIS':
             try:
                 cmd = struct.unpack('<I', data[16:20])[0]
-                return f"{base} -> ARTEMIS(Cmd={cmd})"
+                seq = struct.unpack('<I', data[20:24])[0]
+                return f"{base} -> ARTEMIS(Cmd={cmd}, AppSeq={seq})"
             except: pass
     return base
 
@@ -133,14 +134,14 @@ class Session:
         self.global_seq = 0 
         self.app_seq = 1
         self.debug = debug
-        self.incoming_queue = [] 
+        self.token = None # NEU: Token Speicher
 
     def log_packet(self, direction, data, addr=None):
         if not self.debug: return
-        if len(data) > 2 and data[1] == 0x42: return 
+        if len(data) > 2 and data[1] == 0x42: return
         desc = analyze_packet(data)
-        logger.debug(f"{direction} {desc} ({len(data)}b)")
-        if "ARTEMIS" in desc or "Login" in desc or "ERROR" in desc or "FATAL" in desc:
+        logger.debug(f"{direction} {desc} ({len(data)} bytes)")
+        if "ARTEMIS" in desc or "Login" in desc or "UNKNOWN" in desc or "ERROR" in desc:
              logger.debug("\n" + hex_dump_str(data))
 
     def setup_network(self):
@@ -177,10 +178,10 @@ class Session:
         bl = len(payload) + 4
         return bytearray([0xF1, p_type, (bl >> 8) & 0xFF, bl & 0xFF, 0xD1, 0x00, 0x00, seq]) + payload, seq
 
-    def build_cmd_packet(self, encrypted_payload, command_type):
+    def build_cmd_packet(self, encrypted_payload):
         b64_payload = base64.b64encode(encrypted_payload)
         self.app_seq += 1
-        wrapper_header = b'ARTEMIS\x00' + struct.pack('<III', command_type, self.app_seq, len(b64_payload) + 1)
+        wrapper_header = b'ARTEMIS\x00' + struct.pack('<III', 2, self.app_seq, len(b64_payload) + 1)
         return wrapper_header + b64_payload + b'\x00'
 
     def build_batch_ack(self, seq_list):
@@ -189,10 +190,6 @@ class Session:
         for s in seq_list: payload.extend([(s >> 8) & 0xFF, s & 0xFF])
         bl = len(payload) + 4
         return bytearray([0xF1, 0xD1, (bl >> 8) & 0xFF, bl & 0xFF, 0xD1, 0x04, 0x00, 0x00]) + payload
-
-    def send_ack(self, rx_seq):
-        ack_pkt, _ = self.build_packet(0xD1, bytearray([0x00, rx_seq, 0x00, rx_seq]))
-        self.send_raw(ack_pkt)
 
     def send_raw(self, pkt):
         self.log_packet("📤 [TX]", pkt)
@@ -204,27 +201,19 @@ class Session:
             pkt = payload; seq = pkt[7]
 
         logger.info(f"Sende {label} (Seq {seq})...")
-        
         for attempt in range(5): 
             self.send_raw(pkt)
             start_wait = time.time()
-            while time.time() - start_wait < 0.5:
+            while time.time() - start_wait < 0.4:
                 try:
                     data, addr = self.sock.recvfrom(4096)
                     self.log_packet("📥 [RX]", data, addr)
-
                     if len(data) > 8 and data[0] == 0xF1:
-                        if data[1] == 0xD0: 
-                            self.send_ack(data[7])
-
-                        if data[1] == 0xD1:
+                        if data[1] == 0xD1: # Protocol ACK
                             if (len(data) >= 10 and data[9] == seq) or data[7] == seq: return True
-                        
-                        elif data[1] == 0xD0:
+                        elif data[1] == 0xD0: # Text ACK or Data
                              if len(data) >= 11 and data[8:11] == b'ACK': return True
-                             self.incoming_queue.append(data)
-                             return True 
-
+                             pass # Data content is handled later
                 except socket.timeout: pass
                 except Exception: pass
         logger.warning(f"❌ Kein ACK für {label} (Seq {seq})")
@@ -233,41 +222,43 @@ class Session:
     def wait_for_data(self, timeout=8.0):
         start = time.time()
         while time.time() - start < timeout:
-            if self.incoming_queue:
-                data = self.incoming_queue.pop(0)
-            else:
-                try:
-                    data, addr = self.sock.recvfrom(4096)
-                    self.log_packet("📥 [RX]", data, addr)
-                except socket.timeout: continue
-            
-            if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
-                self.send_ack(data[7])
-
-                payload = data[8:]
-                if payload.startswith(b'ACK'): continue
+            try:
+                data, addr = self.sock.recvfrom(4096)
+                self.log_packet("📥 [RX]", data, addr)
                 
-                if b'ARTEMIS' in payload and len(payload) > 20:
-                    b64_data = payload[20:].rstrip(b'\x00')
+                if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
+                    rx_seq = data[7]
+                    ack_pkt, _ = self.build_packet(0xD1, bytearray([0x00, rx_seq, 0x00, rx_seq]))
+                    self.send_raw(ack_pkt)
+
+                    payload = data[8:]
+                    if payload.startswith(b'ACK'): continue 
+                    
+                    if b'ARTEMIS' in payload and len(payload) > 20:
+                        b64_data = payload[20:].rstrip(b'\x00')
+                        try:
+                            res = self.decrypt_bytes(base64.b64decode(b64_data))
+                            if res: return res
+                        except: pass
+                    
                     try:
-                        res = self.decrypt_bytes(base64.b64decode(b64_data))
-                        if res: 
-                            if self.debug: logger.debug(f"Decrypted: {res}")
-                            return res
+                        res = self.decrypt_bytes(base64.b64decode(payload.rstrip(b'\x00')))
+                        if res: return res
                     except: pass
-                try:
-                    res = self.decrypt_bytes(base64.b64decode(payload.rstrip(b'\x00')))
-                    if res: 
-                        if self.debug: logger.debug(f"Decrypted: {res}")
-                        return res
-                except: pass
+            except socket.timeout: pass
         return None
 
     def download_file(self, file_type, media_dir, media_num):
         logger.info(f"Starte Download: Dir={media_dir}, Num={media_num}")
-        req_json = { "cmdId": 1285, "downloadReqs": [{ "fileType": file_type, "dirNum": media_dir, "mediaNum": media_num }] }
+        # NEU: Token im Download-Request (falls nötig, schadet nicht)
+        req_json = { 
+            "cmdId": 1285, 
+            "downloadReqs": [{ "fileType": file_type, "dirNum": media_dir, "mediaNum": media_num }] 
+        }
+        if self.token: req_json["token"] = self.token # Token einfügen
+
         enc = self.encrypt_json(req_json)
-        payload = self.build_cmd_packet(enc, 1285)
+        payload = self.build_cmd_packet(enc)
         pkt, _ = self.build_packet(0xD0, payload)
         self.send_raw(pkt) 
         
@@ -282,7 +273,7 @@ class Session:
                 if self.debug and len(received_chunks) % 20 == 0: self.log_packet("📥 [RX]", data, addr)
 
                 if len(data) > 8 and data[0] == 0xF1 and data[1] == 0xD0:
-                    if data[4] == 0xD1:
+                    if data[4] == 0xD1: 
                         seq_16 = (data[6] << 8) | data[7]
                         if seq_16 not in received_chunks:
                             received_chunks[seq_16] = data[8:]
@@ -325,58 +316,53 @@ class Session:
         if not self.send_reliable(0xF9, full_login, "Login"):
             logger.warning("Kein Login-ACK, versuche weiter...")
         
-        time.sleep(1.0)
+        hb.start()
+        time.sleep(0.5)
 
         logger.info("2. Handshake...")
         self.send_reliable(0xD0, ARTEMIS_HELLO, "Hello")
-        time.sleep(0.1)
-        self.send_reliable(0xD0, MAGIC_BODY_1, "Magic1")
-        time.sleep(0.1)
-        self.send_reliable(0xD0, MAGIC_BODY_2, "Magic2")
-        time.sleep(1.5)
-
-        # NEU: GetDevInfo (Command 1) - KRITISCH!
-        logger.info("3. GetDevInfo (Cmd 1)...")
-        enc_devinfo = self.encrypt_json({ "cmdId": 1 })
-        devinfo_payload = self.build_cmd_packet(enc_devinfo, 1)
         
-        if self.send_reliable(0xD0, devinfo_payload, "GetDevInfo"):
-            logger.info("Warte auf DevInfo-Response...")
-            dev_resp = self.wait_for_data(timeout=5.0)
-            if dev_resp:
-                logger.info(f"✅ DevInfo erhalten: {list(dev_resp.keys())}")
-                if self.debug: logger.debug(f"DevInfo-Details: {dev_resp}")
+        # --- NEU: TOKEN ABFRAGEN ---
+        logger.info("⏳ Warte auf Token aus Hello-Antwort...")
+        token_resp = self.wait_for_data(timeout=5.0)
+        
+        if token_resp:
+            if 'token' in token_resp:
+                self.token = token_resp['token']
+            elif 'stationId' in token_resp:
+                self.token = token_resp['stationId']
+            
+            if self.token:
+                logger.info(f"✅ Token erhalten: {self.token}")
             else:
-                logger.warning("⚠️  Keine DevInfo-Antwort - setze fort...")
+                logger.warning(f"⚠️ Antwort erhalten, aber kein Token: {token_resp}")
         else:
-            logger.error("❌ GetDevInfo Send Failed")
-            return
-        
-        time.sleep(1.0)
+            logger.warning("⚠️ Keine Antwort auf Hello erhalten! Fortsetzung riskant...")
+        # ---------------------------
 
-        # MediaList nur nach erfolgreichem DevInfo
-        logger.info("4. Get Media List (Cmd 768)...")
-        enc_list = self.encrypt_json({ "cmdId": 768, "itemCntPerPage": 10, "pageNo": 0 })
-        payload = self.build_cmd_packet(enc_list, 768)
+        self.send_reliable(0xD0, MAGIC_BODY_1, "Magic1")
+        time.sleep(0.05)
+        self.send_reliable(0xD0, MAGIC_BODY_2, "Magic2")
+        time.sleep(0.5)
+
+        logger.info("3. Get Media List (Cmd 768)...")
+        # --- NEU: TOKEN EINFÜGEN ---
+        list_params = { "cmdId": 768, "itemCntPerPage": 10, "pageNo": 0 }
+        if self.token: list_params["token"] = self.token
+        
+        enc_list = self.encrypt_json(list_params)
+        payload = self.build_cmd_packet(enc_list)
         
         if self.send_reliable(0xD0, payload, "GetMediaList"): 
              logger.info("Warte auf Dateiliste...")
-             hb.start()
              resp = self.wait_for_data(timeout=10.0)
-             hb.stop()
-             
              if resp and "mediaFiles" in resp:
                  files = resp["mediaFiles"]
                  logger.info(f"✅ {len(files)} Dateien gefunden.")
                  if len(files) > 0:
                      tf = files[-1]
                      self.download_file(tf.get("fileType", 0), tf.get("mediaDirNum", 0), tf.get("mediaNum", 0))
-             else: 
-                 logger.error("❌ Keine Dateiliste empfangen.")
-                 if self.debug and resp: logger.debug(f"Unerwartete Response: {resp}")
-        else:
-            logger.error("❌ Send GetMediaList Failed")
-        
+             else: logger.error("❌ Keine Dateiliste empfangen.")
         hb.stop()
 
 if __name__ == "__main__":
