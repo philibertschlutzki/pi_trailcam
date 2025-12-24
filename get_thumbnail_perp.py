@@ -174,7 +174,6 @@ class Session:
         self.running = True
         self.global_seq = 0
         self.debug = debug
-        self.token = None
         self.tx_count = 0
         self.rx_count = 0
 
@@ -272,18 +271,17 @@ class Session:
         pkt = struct.pack('>BBH', 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)) + PHASE2_STATIC_HEADER + enc
         
         self.sock.sendto(pkt, (TARGET_IP, self.active_port))
-        self.log_tx(pkt, "Phase2 Pre-Login")
+        self.log_tx(pkt, "Phase2 Pre-Login (authentifiziert Kamera)")
 
         try:
             data, addr = self.sock.recvfrom(1024)
             self.log_rx(data, addr, "Pre-Login Response")
-            if data: logger.info("✅ Login Antwort erhalten.")
+            if data: logger.info("✅ Kamera authentifiziert (0xF9 abgeschlossen).")
         except: pass
         return True
 
     def encrypt_json(self, obj):
         """AES-ECB mit Null-Byte Padding (kompakte JSON-Serialisierung)"""
-        # KRITISCH: separators=(',',':') für kompakte Darstellung ohne Leerzeichen
         data = json.dumps(obj, separators=(',', ':')).encode('utf-8')
         data_with_null = data + b'\x00'
         pad_len = (16 - (len(data_with_null) % 16)) % 16
@@ -310,10 +308,7 @@ class Session:
             return None
 
     def send_artemis_command(self, cmd_id, payload_dict):
-        """Sendet ARTEMIS-Kommando mit Stop-and-Wait"""
-        if self.token:
-            payload_dict["token"] = self.token
-
+        """Sendet ARTEMIS-Kommando mit Stop-and-Wait (OHNE Token)"""
         enc_data = self.encrypt_json(payload_dict)
         b64_body = base64.b64encode(enc_data) + b'\x00'
         
@@ -577,31 +572,9 @@ class Session:
             logger.info(">>> Session etabliert. Starte Datenabruf...")
             time.sleep(0.3)
 
-            # APP LOGIN (Command 2) - FIX: Korrekte utcTime
-            login_data = {
-                "cmdId": 2,
-                "usrName": "admin",
-                "password": "admin",
-                "utcTime": int(time.time()),  # KRITISCH: Aktueller Timestamp statt 0
-                "supportHeartBeat": True
-            }
-
-            if self.send_artemis_command(2, login_data):
-                resp = self.wait_for_artemis_response(timeout=10.0)
-                if resp and 'token' in resp:
-                    self.token = resp['token']
-                    logger.info(f"✅ Token erhalten: {self.token[:20]}...")
-                else:
-                    logger.error("❌ Kein Token erhalten.")
-                    if self.debug and resp:
-                        logger.debug(f"Response war: {resp}")
-                    return
-            else:
-                logger.error("❌ Login-Command fehlgeschlagen.")
-                return
-
-            # Dateiliste abrufen (Command 768)
-            logger.info("📂 Fordere Dateiliste an...")
+            # DIREKTER Dateilisten-Abruf (Command 768) - OHNE Login Command 2!
+            # Kamera ist bereits authentifiziert durch 0xF9 Pre-Login
+            logger.info("📂 Fordere Dateiliste an (Command 768)...")
             if self.send_artemis_command(768, {"cmdId": 768, "itemCntPerPage": 45, "pageNo": 0}):
                 file_resp = self.wait_for_artemis_response(timeout=10.0)
                 if file_resp and "mediaFiles" in file_resp:
@@ -611,6 +584,8 @@ class Session:
                     self.download_thumbnails(media_files)
                 else:
                     logger.error("❌ Keine Dateiliste erhalten.")
+                    if self.debug and file_resp:
+                        logger.debug(f"Response war: {file_resp}")
             else:
                 logger.error("❌ Dateilisten-Anfrage fehlgeschlagen.")
 
