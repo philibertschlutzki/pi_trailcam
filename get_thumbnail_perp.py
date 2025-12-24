@@ -2,6 +2,10 @@
 """
 Wildkamera Thumbnail Downloader
 Nutzt Stop-and-Wait ARQ mit 3-Phasen-Handshake wie main.py
+
+CHANGELOG v2.1 (2025-12-24):
+- Token-Authentifizierung korrigiert: Token wird aus ARTEMIS-Header extrahiert
+- Token wird korrekt im ARTEMIS-Header (Bytes 8-11) gesendet, nicht im JSON
 """
 import socket
 import struct
@@ -309,10 +313,24 @@ class Session:
             return None
 
     def send_artemis_command(self, cmd_id, payload_dict):
-        """Sendet ARTEMIS-Kommando mit Stop-and-Wait (MIT Token falls vorhanden)"""
-        # Token hinzufügen falls vorhanden
-        if self.token:
-            payload_dict["token"] = self.token
+        """
+        Sendet ARTEMIS-Kommando mit Stop-and-Wait
+        
+        WICHTIG: Token wird im ARTEMIS-Header gesendet (Bytes 8-11), NICHT im JSON!
+        
+        ARTEMIS Header Format:
+        Offset | Länge | Feld
+        -------|-------|----------------
+        0      | 8     | "ARTEMIS\x00"
+        8      | 4     | Token (Little Endian)
+        12     | 4     | Command ID
+        16     | 2     | Payload Length
+        18     | 2     | Reserved (0x0000)
+        20     | N     | Base64(AES-ECB(JSON))
+        """
+        # Token darf NIEMALS ins JSON - wird im Header übertragen!
+        if "token" in payload_dict:
+            del payload_dict["token"]
         
         enc_data = self.encrypt_json(payload_dict)
         b64_body = base64.b64encode(enc_data) + b'\x00'
@@ -320,15 +338,20 @@ class Session:
         if self.debug:
             logger.debug(f"🔐 Encrypted Payload: {b64_body[:60]}")
 
-        art_hdr = b'ARTEMIS\x00' + struct.pack('<IIHH', cmd_id, cmd_id, len(b64_body), 0)
+        # ARTEMIS-Header mit Token
+        token_value = self.token if self.token else 0
+        art_hdr = b'ARTEMIS\x00' + struct.pack('<I', token_value) + struct.pack('<I', cmd_id) + struct.pack('<HH', len(b64_body), 0)
         full_payload = art_hdr + b64_body
+        
+        if self.debug:
+            logger.debug(f"📦 ARTEMIS Header: token={token_value} (0x{token_value:08x}), cmd_id={cmd_id}")
 
         pkt, seq = self.build_rudp_packet(0xD0, full_payload)
 
         # Retransmission Loop
         for attempt in range(10):
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
-            self.log_tx(pkt, f"ARTEMIS Cmd={cmd_id}, Seq={seq}, Attempt={attempt+1}")
+            self.log_tx(pkt, f"ARTEMIS Cmd={cmd_id}, Token=0x{token_value:08x}, Seq={seq}, Attempt={attempt+1}")
 
             start = time.time()
             while time.time() - start < 1.5:
@@ -347,7 +370,11 @@ class Session:
         return None
 
     def wait_for_artemis_response(self, timeout=10.0):
-        """Wartet auf ARTEMIS-JSON-Response"""
+        """
+        Wartet auf ARTEMIS-JSON-Response und extrahiert Token aus Header
+        
+        Token-Extraktion erfolgt aus ARTEMIS-Header (Bytes 8-11), nicht aus JSON!
+        """
         start = time.time()
         logger.info(f"⏳ Warte auf ARTEMIS-Response (max {timeout}s)...")
         
@@ -371,6 +398,21 @@ class Session:
                     ack = self.build_ack(data[7])
                     self.sock.sendto(ack, (TARGET_IP, self.active_port))
                     self.log_tx(ack, f"ACK für ARTEMIS-Response Seq={data[7]}")
+
+                    # ★★★ TOKEN-EXTRAKTION AUS ARTEMIS-HEADER ★★★
+                    artemis_offset = data.find(b'ARTEMIS\x00')
+                    if artemis_offset != -1 and len(data) >= artemis_offset + 12:
+                        # Token bei ARTEMIS-Header Offset +8 (4 Bytes, Little Endian)
+                        token_bytes = data[artemis_offset + 8:artemis_offset + 12]
+                        extracted_token = struct.unpack('<I', token_bytes)[0]
+                        
+                        # Token nur bei gültigen Werten speichern (> 0)
+                        if extracted_token > 0 and extracted_token < 0xFFFFFFFF:
+                            if self.token != extracted_token:
+                                self.token = extracted_token
+                                logger.info(f"🔑 TOKEN extrahiert: {self.token} (0x{self.token:08x})")
+                            elif self.debug:
+                                logger.debug(f"🔑 Token bestätigt: {self.token} (0x{self.token:08x})")
 
                     resp = self.decrypt_payload(data)
                     if resp:
@@ -453,7 +495,7 @@ class Session:
         return b''.join([f[1] for f in fragments])
 
     def download_thumbnails(self, media_files, output_dir="thumbnails"):
-        """Lädt Thumbnails einzeln herunter"""
+        """Lädt Thumbnails einzeln herunter (Token wird automatisch im Header eingefügt)"""
         if not media_files:
             return
 
@@ -474,9 +516,8 @@ class Session:
                 }]
             }
             
-            # Token hinzufügen falls vorhanden
-            if self.token:
-                req["token"] = self.token
+            # WICHTIG: Token NICHT ins JSON einfügen!
+            # Token wird automatisch von send_artemis_command() im Header hinzugefügt
 
             if not self.send_artemis_command(772, req):
                 logger.warning(f"⚠️ Anfrage für {media_num} fehlgeschlagen.")
@@ -595,11 +636,11 @@ class Session:
                 login_resp = self.wait_for_artemis_response(timeout=5.0)
                 
                 if login_resp:
-                    if "token" in login_resp:
-                        self.token = login_resp["token"]
-                        logger.info(f"✅ Login erfolgreich! Token: {self.token[:20]}...")
+                    # Token wurde bereits aus Header extrahiert
+                    if self.token:
+                        logger.info(f"✅ Login erfolgreich! Token: 0x{self.token:08x}")
                     else:
-                        logger.warning("⚠️ Login-Response ohne Token, fahre trotzdem fort.")
+                        logger.warning("⚠️ Kein Token erhalten, fahre trotzdem fort.")
                     
                     # Jetzt Dateiliste abrufen (Command 768)
                     time.sleep(0.3)
