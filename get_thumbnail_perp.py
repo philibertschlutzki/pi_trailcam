@@ -231,8 +231,19 @@ class Session:
         return header + payload, seq
 
     def build_ack(self, rx_seq):
+        """Baut ACK-Paket OHNE Sequenznummern-Inkrement (fix für 0xE0/0xF0)"""
         payload = bytearray([0x00, rx_seq, 0x00, rx_seq])
-        return self.build_rudp_packet(0xD1, payload)[0]
+        body_len = len(payload) + 4
+        header = bytearray()
+        header.append(0xF1)
+        header.append(0xD1)  # ACK-Typ
+        header.append((body_len >> 8) & 0xFF)
+        header.append(body_len & 0xFF)
+        header.append(0xD1)
+        header.append(0x00)
+        header.append(0x00)
+        header.append(0x00)  # KRITISCH: ACKs benutzen statisch Seq=0
+        return header + payload
 
     def discover_and_login(self):
         logger.info("Starte Discovery...")
