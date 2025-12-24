@@ -282,7 +282,8 @@ class Session:
         return True
 
     def encrypt_json(self, obj):
-        """AES-ECB mit Null-Byte Padding"""
+        """AES-ECB mit Null-Byte Padding (kompakte JSON-Serialisierung)"""
+        # KRITISCH: separators=(',',':') für kompakte Darstellung ohne Leerzeichen
         data = json.dumps(obj, separators=(',', ':')).encode('utf-8')
         data_with_null = data + b'\x00'
         pad_len = (16 - (len(data_with_null) % 16)) % 16
@@ -526,7 +527,7 @@ class Session:
             self.sock.sendto(pkt, (TARGET_IP, self.active_port))
             self.log_tx(pkt, f"Handshake Phase 3: Magic2, Seq={seq}")
 
-            # FIX: Warte auf Handshake-Completion UND verarbeite ACKs
+            # Warte auf Handshake-Completion UND verarbeite ACKs
             logger.info(">>> Warte auf Handshake-Completion...")
             keepalive_count = 0
             ack_count = 0
@@ -541,14 +542,12 @@ class Session:
                     
                     pkt_type = data[1]
                     
-                    # Typ 0x43 = Keepalive (optional)
                     if pkt_type == 0x43:
                         keepalive_count += 1
                         if keepalive_count >= 3:
                             logger.info(f"✅ Session stabil ({keepalive_count} Keepalives)")
                             break
                     
-                    # Typ 0xD0/0xD1 = Handshake-ACKs → MÜSSEN beantwortet werden!
                     elif pkt_type in [0xD0, 0xD1] and len(data) > 7:
                         seq = data[7]
                         ack = self.build_ack(seq)
@@ -556,13 +555,11 @@ class Session:
                         self.log_tx(ack, f"ACK für Handshake-Response Seq={seq}")
                         ack_count += 1
                         
-                        # Nach 2 ACKs ist Handshake komplett
                         if ack_count >= 2:
                             logger.info(f"✅ Handshake abgeschlossen ({ack_count} ACKs gesendet)")
                             time.sleep(0.2)
                             break
                     
-                    # 0xE0/0xF0 = Sofortiger Abbruch
                     elif pkt_type == 0xE0:
                         logger.error("❌ Kamera Error 0xE0 während Handshake")
                         return
@@ -580,12 +577,12 @@ class Session:
             logger.info(">>> Session etabliert. Starte Datenabruf...")
             time.sleep(0.3)
 
-            # APP LOGIN (Command 2)
+            # APP LOGIN (Command 2) - FIX: Korrekte utcTime
             login_data = {
                 "cmdId": 2,
                 "usrName": "admin",
                 "password": "admin",
-                "utcTime": 0,
+                "utcTime": int(time.time()),  # KRITISCH: Aktueller Timestamp statt 0
                 "supportHeartBeat": True
             }
 
