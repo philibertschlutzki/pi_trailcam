@@ -10,6 +10,9 @@ Korrigiert basierend auf Protocol_analysis.md:
 Fixes:
 - Definiert ARTEMIS_HELLO_BODY (war vorher undefiniert → Script crash).
 - Implementiert minimale Discovery, damit active_port gesetzt wird (sonst sendet send_raw() nichts).
+
+Feature:
+- BLE Wakeup-Option (wie in main.py), damit die Kamera vor Wi-Fi/UDP geweckt werden kann.
 """
 import socket
 import struct
@@ -24,6 +27,7 @@ import os
 import threading
 import base64
 import random
+from bleak import BleakScanner, BleakClient
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 
@@ -33,6 +37,9 @@ TARGET_PORTS = [40611, 3333]
 FIXED_LOCAL_PORT = 35281
 DEFAULT_SSID = "KJK_E0FF"
 DEFAULT_PASS = "85087127"
+
+# Default BLE MAC (can be overridden via --ble-mac)
+BLE_MAC = "C6:1E:0D:E0:32:E8"
 
 # --- CONSTANTS ---
 LBCS_PAYLOAD = bytes.fromhex("f14100144c42435300000000000000004343434a4a000000")
@@ -66,6 +73,29 @@ ARTEMIS_HELLO_BODY = build_artemis_frame(2, 1, ARTEMIS_HELLO_B64 + b"\x00")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger("CamClient")
+
+
+class BLEWorker:
+    @staticmethod
+    async def wake_camera(mac: str, scan_timeout: float = 20.0, connect_timeout: float = 10.0) -> bool:
+        """Wake the camera's Wi-Fi module via BLE (Phase 0)."""
+        logger.info(f"Suche BLE {mac}...")
+        try:
+            dev = await BleakScanner.find_device_by_address(mac, timeout=scan_timeout)
+            if not dev:
+                logger.warning("BLE nicht gefunden (schon wach?).")
+                return False
+            async with BleakClient(dev, timeout=connect_timeout) as client:
+                await client.write_gatt_char(
+                    "00000002-0000-1000-8000-00805f9b34fb",
+                    bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]),
+                    response=True,
+                )
+                logger.info("✅ BLE Wakeup gesendet.")
+                return True
+        except Exception as e:
+            logger.error(f"BLE Wakeup fehlgeschlagen: {e}")
+            return False
 
 
 class WiFiWorker:
@@ -348,8 +378,17 @@ class Session:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--wifi", action="store_true")
+    parser.add_argument("--ble", action="store_true", help="Weckt die Kamera per BLE (aktiviert Wi-Fi-Modul)")
+    parser.add_argument("--ble-mac", default=BLE_MAC, help="BLE MAC-Adresse der Kamera")
+    parser.add_argument("--ble-wait", type=int, default=20, help="Wartezeit nach BLE-Wakeup (Sekunden)")
+    parser.add_argument("--wifi", action="store_true", help="Verbinde zum Kamera-WLAN via nmcli")
     args = parser.parse_args()
+
+    if args.ble:
+        asyncio.run(BLEWorker.wake_camera(args.ble_mac))
+        time.sleep(max(0, args.ble_wait))
+
     if args.wifi:
         WiFiWorker.connect(DEFAULT_SSID, DEFAULT_PASS)
+
     Session(debug=True).run()
