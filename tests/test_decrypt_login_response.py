@@ -7,8 +7,9 @@ that the enhanced decryption strategies can successfully extract the token.
 
 import base64
 import json
+import os
 from Crypto.Cipher import AES
-from Crypto.Util.Padding import unpad
+from Crypto.Util.Padding import pad, unpad
 
 
 # Test fixture: MsgType=3 packet from debug04012026.txt (line 118)
@@ -35,7 +36,6 @@ def test_decrypt_strategies():
     
     # Strategy (a): Standard ECB
     print("Testing Strategy (a): AES-ECB")
-    from Crypto.Util.Padding import pad
     cipher_ecb = AES.new(PHASE2_KEY, AES.MODE_ECB)
     encrypted_ecb = cipher_ecb.encrypt(pad(json_bytes, AES.block_size))
     b64_ecb = base64.b64encode(encrypted_ecb)
@@ -51,7 +51,6 @@ def test_decrypt_strategies():
     
     # Strategy (b): CBC with IV
     print("\nTesting Strategy (b): AES-CBC with IV")
-    import os
     iv = os.urandom(16)
     cipher_cbc_enc = AES.new(PHASE2_KEY, AES.MODE_CBC, iv)
     encrypted_cbc = cipher_cbc_enc.encrypt(pad(json_bytes, AES.block_size))
@@ -101,7 +100,6 @@ def test_manual_unpad_fallback():
     
     # Create encrypted data with non-standard padding
     cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
-    from Crypto.Util.Padding import pad
     encrypted = cipher.encrypt(pad(json_bytes, AES.block_size))
     
     # Decrypt

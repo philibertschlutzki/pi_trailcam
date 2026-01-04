@@ -64,7 +64,7 @@ HEARTBEAT_PAYLOAD_END = bytes.fromhex(
     "000100190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00"
 )
 
-PHASE2_KEY = b"a01bc23ed45fF56A"
+PHASE2_KEY = b"a01bc23ed45fF56A"  # Note: ECB mode is used per camera vendor protocol specification (Protocol_analysis.md §4.2)
 PHASE2_STATIC_HEADER = bytes.fromhex(
     "0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5"
 )
@@ -416,9 +416,9 @@ class Session:
                 if self.debug:
                     logger.debug(f"⚠️ CBC strategy failed: {e}")
 
-        # Strategy (c): Try removing prefix bytes (4, 8, or 16) if payload has prefix
+        # Strategy (c): Try removing prefix bytes (3, 4, 8, or 16) if payload has prefix
         if not obj:
-            for prefix_size in [4, 8, 16, 3]:
+            for prefix_size in [3, 4, 8, 16]:
                 if len(raw) > prefix_size and len(raw[prefix_size:]) % 16 == 0:
                     try:
                         ciphertext = raw[prefix_size:]
@@ -443,8 +443,8 @@ class Session:
         
         # Strategy (d): Try CBC with prefix removal
         if not obj:
-            for prefix_size in [4, 8, 16, 3]:
-                # After removing prefix, we need at least 32 bytes (16 for IV + 16 for one block)
+            for prefix_size in [3, 4, 8, 16]:
+                # After removing prefix, we need at least 32 bytes (16 for IV + 16 for one AES block)
                 if len(raw) > prefix_size + 32 and len(raw[prefix_size + 16:]) % 16 == 0:
                     try:
                         data_after_prefix = raw[prefix_size:]
