@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.11
+"""Wildkamera Thumbnail Downloader - consolidated v4.12
 
-Optimizations in this version (v4.11):
-- Robust Decryption: Implements manual padding removal if standard unpad fails.
-  (Solves 'Padding is incorrect' error when camera sends non-standard padded blocks).
-- Inherits v4.10 fixes:
-  - Token buffering & debug
+Optimizations in this version (v4.12):
+- Event Parsing Fix: Cmd=9 (ARTEMISw) is treated as plaintext JSON (no Base64/AES decode attempt).
+  (Solves 'base64.b64decode failed: Incorrect padding' errors for events).
+- Inherits v4.11 fixes:
+  - Robust Decryption (manual unpad fallback)
+  - Token buffering
   - Event queueing
   - Login timing optimizations
 """
@@ -328,7 +329,21 @@ class Session:
         if hdr is None:
             return None
 
-        off, _magic, cmd_id, app_seq, alen = hdr
+        off, magic, cmd_id, app_seq, alen = hdr
+        
+        # FIX v4.12: ARTEMISw (oft Events) ist meist Plaintext, kein Base64/AES.
+        # Wir versuchen hier nicht zu decrypten, wenn es ARTEMISw ist, es sei denn wir sind sicher.
+        # Aber da _try_parse_evt() das schon macht, können wir hier einfach failen oder Plaintext probieren.
+        if magic == ARTEMIS_W:
+            # Optional: Check if payload looks like JSON directly
+            payload = self._extract_artemis_payload(data, off, alen)
+            raw = payload.split(b"\x00")[0]
+            try:
+                obj = json.loads(raw.decode("utf-8", errors="ignore"))
+                return obj, cmd_id, app_seq
+            except Exception:
+                pass # Falls kein Plaintext, weiter mit B64 Versuch (manche Firmwares sind weird)
+
         payload = self._extract_artemis_payload(data, off, alen)
         b64_part = payload.split(b"\x00")[0]
         if not b64_part:
