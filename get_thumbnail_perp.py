@@ -361,21 +361,93 @@ class Session:
                 )
             return None
 
-        dec = AES.new(PHASE2_KEY, AES.MODE_ECB).decrypt(raw)
+        # Enhanced instrumentation for debugging decryption issues
+        if self.debug:
+            logger.debug(
+                f"🔍 Decrypt attempt: field1={field1}, AppSeq={app_seq}, "
+                f"b64_len={len(b64_part)}, raw_len={len(raw)}, "
+                f"raw_is_16_aligned={len(raw) % 16 == 0}"
+            )
+            logger.debug(f"🔍 Raw (first 32B): {raw[:32].hex()}")
 
-        obj: Optional[Dict[str, Any]] = None
+        # Try multiple decryption strategies
+        obj = None
+        strategy = None
+
+        # Strategy (a): Current AES-ECB approach (baseline)
         try:
-            unpadded = unpad(dec, AES.block_size)
-            obj = json.loads(unpadded.decode("utf-8"))
-        except Exception:
+            dec_ecb = AES.new(PHASE2_KEY, AES.MODE_ECB).decrypt(raw)
             if self.debug:
-                logger.debug(f"⚠️ Standard unpad/json failed (field1={field1}), trying fallback...")
-            obj = self._manual_unpad_utf8_json(dec)
+                logger.debug(f"🔍 ECB decrypted (first 32B): {dec_ecb[:32].hex()}")
+            
+            try:
+                unpadded = unpad(dec_ecb, AES.block_size)
+                obj = json.loads(unpadded.decode("utf-8"))
+                strategy = "ECB"
+            except Exception:
+                obj = self._manual_unpad_utf8_json(dec_ecb)
+                if obj:
+                    strategy = "ECB-manual"
+        except Exception as e:
+            if self.debug:
+                logger.debug(f"⚠️ ECB strategy failed: {e}")
+
+        # Strategy (b): AES-CBC with IV = first 16 bytes of raw
+        if not obj and len(raw) > 16 and len(raw[16:]) % 16 == 0:
+            try:
+                iv = raw[:16]
+                ciphertext = raw[16:]
+                if self.debug:
+                    logger.debug(f"🔍 Trying CBC: IV={iv.hex()}, ciphertext_len={len(ciphertext)}")
+                
+                dec_cbc = AES.new(PHASE2_KEY, AES.MODE_CBC, iv).decrypt(ciphertext)
+                if self.debug:
+                    logger.debug(f"🔍 CBC decrypted (first 32B): {dec_cbc[:32].hex()}")
+                
+                try:
+                    unpadded = unpad(dec_cbc, AES.block_size)
+                    obj = json.loads(unpadded.decode("utf-8"))
+                    strategy = "CBC"
+                except Exception:
+                    obj = self._manual_unpad_utf8_json(dec_cbc)
+                    if obj:
+                        strategy = "CBC-manual"
+            except Exception as e:
+                if self.debug:
+                    logger.debug(f"⚠️ CBC strategy failed: {e}")
+
+        # Strategy (c): Try removing prefix bytes (4, 8, or 16) if payload has prefix
+        if not obj:
+            for prefix_size in [4, 8, 16]:
+                if len(raw) > prefix_size and len(raw[prefix_size:]) % 16 == 0:
+                    try:
+                        ciphertext = raw[prefix_size:]
+                        if self.debug:
+                            logger.debug(f"🔍 Trying ECB with {prefix_size}B prefix removal, ciphertext_len={len(ciphertext)}")
+                        
+                        dec_prefix = AES.new(PHASE2_KEY, AES.MODE_ECB).decrypt(ciphertext)
+                        
+                        try:
+                            unpadded = unpad(dec_prefix, AES.block_size)
+                            obj = json.loads(unpadded.decode("utf-8"))
+                            strategy = f"ECB-prefix{prefix_size}"
+                            break
+                        except Exception:
+                            obj = self._manual_unpad_utf8_json(dec_prefix)
+                            if obj:
+                                strategy = f"ECB-prefix{prefix_size}-manual"
+                                break
+                    except Exception as e:
+                        if self.debug:
+                            logger.debug(f"⚠️ ECB-prefix{prefix_size} failed: {e}")
 
         if not isinstance(obj, dict):
             if self.debug:
-                logger.debug(f"❌ Decryption failed (field1={field1})")
+                logger.debug(f"❌ All decryption strategies failed (field1={field1}, AppSeq={app_seq})")
             return None
+
+        if self.debug and strategy:
+            logger.debug(f"✅ Decryption successful using strategy: {strategy}")
 
         return obj, field1, app_seq, magic
 
@@ -623,7 +695,11 @@ class Session:
         tok = obj.get("token")
         if tok is None:
             if self.debug:
+                # Log full JSON to help debug token extraction issues
+                json_str = json.dumps(obj, ensure_ascii=False)
+                json_preview = json_str[:200] + "..." if len(json_str) > 200 else json_str
                 logger.debug(f"⚠️ MsgType=3 Login-Response ohne Token (AppSeq={app_seq})")
+                logger.debug(f"📄 Full JSON: {json_preview}")
             return None
 
         if not strict_appseq and app_seq != int(expected_app_seq):
