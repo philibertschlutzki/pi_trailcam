@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.5
+"""Wildkamera Thumbnail Downloader - consolidated v4.6
 
 Fixes / Improvements:
 - Issue #134: Login Timeout
@@ -13,8 +13,12 @@ Fixes / Improvements:
 - Debug/Logging:
   * Mit --debug werden alle TX/RX Frames inkl. Pkt-Typ (D0/42/43/...), Seq, BodyLen und (wenn vorhanden) ARTEMIS Cmd/AppSeq/Len geloggt.
   * Zusätzlich wird ein Logfile get_thumbnail_perp_debug.log geschrieben (unbuffered flush+fsync), damit Logs bei Crash nicht verloren gehen.
-  * Neu: optionaler "RAW RX window" nach Login-Request (Default: 20s). In diesem Zeitfenster werden alle empfangenen UDP-Pakete roh geloggt
+  * Optionaler "RAW RX window" nach Login-Request (Default: 20s). In diesem Zeitfenster werden alle empfangenen UDP-Pakete roh geloggt
     (src_ip, src_port, len, vollständiger Hexdump), plus ARTEMIS-Metadaten (cmd_id/app_seq/alen), auch wenn es nicht das erwartete Cmd ist.
+
+- Fix Issue #138 (Hello keine Antwort):
+  * Manche Kameras senden im Discovery/Prelogin weiterhin Pkt-Typ 0x42, aber ohne ARTEMIS-Payload (z.B. "LBCS...").
+    Diese Frames dürfen nicht in den ARTEMIS-FRAG-Reassembler laufen und sollten auch nicht ge-ACKt werden.
 
 Hinweis: Das Script ist auf Python 3.8+ kompatibel (kein PEP604 "bytes | None").
 """
@@ -355,7 +359,6 @@ class Session:
             if addr[0] != TARGET_IP:
                 continue
 
-            # best-effort: RUDP hat mind. 8b; LBCS reply ist in deiner Implementierung RUDP-ish
             self.active_port = addr[1]
             logger.info(f"✅ Discovery OK, active_port={self.active_port}")
             return True
@@ -432,20 +435,13 @@ class Session:
         pkt = struct.pack(">BBH", 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)
         ) + PHASE2_STATIC_HEADER + enc
 
-        # IMPORTANT: an alle Ports senden, um Port-Mismatch zu vermeiden.
         for p in TARGET_PORTS:
             self.send_to(pkt, p, desc="PreLogin")
 
-        # kurz warten und alles loggen/pumpen
         self.pump(timeout=1.0, accept_cmd=None)
 
     def pump(self, timeout: float, accept_cmd: Optional[Union[int, Set[int]]] = None) -> Optional[bytes]:
-        """Empfängt Pakete, ack't wenn nötig und loggt in --debug alle Frames.
-
-        accept_cmd:
-          - None: keine Filterung, return beim ersten Paket
-          - int/set: return beim ersten ARTEMIS-Paket das passt
-        """
+        """Empfängt Pakete, ack't wenn nötig und loggt in --debug alle Frames."""
 
         start = time.time()
         while time.time() - start < timeout:
@@ -478,11 +474,18 @@ class Session:
                 continue
 
             # ACK nur für "voll" RUDP (>=8)
+            looks_artemis_frag = False
             if len(data) >= 8 and data[0] == 0xF1:
                 pkt_type = data[1]
                 rx_seq = data[7]
 
-                if pkt_type in (0xD0, 0x42):
+                if pkt_type == 0x42:
+                    frag_payload = data[8:]
+                    # Nur dann als ARTEMIS-FRAG behandeln, wenn ARTEMIS-Signatur sichtbar ist
+                    # oder wir bereits ARTEMIS im Buffer haben. (Fix für Issue #138)
+                    looks_artemis_frag = (b"ARTEMIS\x00" in frag_payload) or (b"ARTEMIS\x00" in self._frag_buf)
+
+                if pkt_type == 0xD0 or (pkt_type == 0x42 and looks_artemis_frag):
                     is_ack_payload = (len(data) >= 11 and data[8:11] == b"ACK")
                     if not is_ack_payload and self.active_port:
                         ack = self.build_ack_10(rx_seq)
@@ -490,20 +493,24 @@ class Session:
 
                 # FRAG-Reassembly
                 if pkt_type == 0x42:
-                    self._frag_buf += data[8:]
-                    re = self._try_reassemble_artemis()
-                    if re is None:
-                        continue
-                    data = re
+                    if looks_artemis_frag:
+                        self._frag_buf += data[8:]
+                        re = self._try_reassemble_artemis()
+                        if re is None:
+                            continue
+                        data = re
 
-                    # Nach Reassembly nochmals Meta loggen (deckt "ARTEMIS" über Fragmentgrenzen ab)
-                    if self.raw_rx_dump and self._raw_window_active():
-                        meta = self._parse_artemis_meta_any(data)
-                        if meta is not None:
-                            off, cmd_id, app_seq, alen = meta
-                            logger.debug(
-                                f"🧩 ARTEMIS(meta reassembled) from={addr[0]}:{addr[1]} off=0x{off:x} cmd_id={cmd_id} app_seq={app_seq} alen={alen}"
-                            )
+                        # Nach Reassembly nochmals Meta loggen (deckt "ARTEMIS" über Fragmentgrenzen ab)
+                        if self.raw_rx_dump and self._raw_window_active():
+                            meta = self._parse_artemis_meta_any(data)
+                            if meta is not None:
+                                off, cmd_id, app_seq, alen = meta
+                                logger.debug(
+                                    f"🧩 ARTEMIS(meta reassembled) from={addr[0]}:{addr[1]} off=0x{off:x} cmd_id={cmd_id} app_seq={app_seq} alen={alen}"
+                                )
+                    else:
+                        if self.debug:
+                            logger.debug("FRAG ohne ARTEMIS-Signatur (vermutlich LBCS/Discovery); skip reassembly/ack")
 
             if accept_cmd is None:
                 return data
@@ -559,20 +566,17 @@ class Session:
         logger.info(">>> Handshake Step 1: Hello (force seq 0)")
         hello_pkt, _ = self.build_packet(0xD0, ARTEMIS_HELLO_BODY, force_seq=0)
 
-        # 1) primär an active_port
         self.send_raw(hello_pkt, desc="Hello")
         r = self.pump(timeout=2.2, accept_cmd=None)
         if r is not None:
             return True
 
-        # 2) Fallback: wenn active_port nicht der "Handshake-Port" ist
         alt_ports = [p for p in TARGET_PORTS if p != self.active_port]
         if alt_ports:
             logger.warning("Keine Antwort auf Hello via active_port; Fallback auf alternativen Port…")
             self.send_raw(hello_pkt, desc="Hello(fallback)", port=alt_ports[0])
             r = self.pump(timeout=2.2, accept_cmd=None)
             if r is not None:
-                # Wenn auf anderem Port Antwort kam, Port umstellen
                 self.active_port = alt_ports[0]
                 logger.info(f"✅ active_port auf {self.active_port} umgestellt (Hello-Fallback).")
                 return True
@@ -624,7 +628,6 @@ class Session:
         pkt, _ = self.build_packet(0xD0, art)
         self.send_raw(pkt, desc="Login")
 
-        # RAW RX-Dump direkt nach Login-Request (zur Diagnose "Antwort kommt an, wird aber nicht geparst")
         if self.debug and self.raw_rx_dump:
             self.enable_raw_rx_dump()
 
@@ -642,7 +645,6 @@ class Session:
         self.token = resp["token"]
         logger.info(f"✅ LOGIN OK! Token: {self.token}")
 
-        # --- Beispiel: Cmd 768 File-List ---
         logger.info(">>> Request file list (Cmd 768)…")
         self.app_seq += 1
         req = {"cmdId": 768, "itemCntPerPage": 45, "pageNo": 0, "token": str(self.token)}
