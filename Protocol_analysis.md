@@ -12,7 +12,7 @@ Die Kommunikation erfolgt über ein proprietäres Stack-Modell auf UDP-Basis:
 
 1. **Physisch/Link:** Wi-Fi (Credentials via BLE).
 2. **Transport:** **RUDP** (Reliable UDP) – Ein Custom-Layer für Sequenzierung, Fragmentierung und ACKs.
-3. **Applikation:** **Artemis** – Ein verschlüsseltes Command-Response-Protokoll mit JSON-Payloads.
+3. **Applikation:** **ARTEMIS** – Ein verschlüsseltes Command-Response-Protokoll mit JSON-Payloads.
 
 ---
 
@@ -53,9 +53,9 @@ Jedes UDP-Paket besitzt einen 8-Byte Header. Die Kommunikation ist **Big-Endian*
 
 | Typ | Name | Beschreibung |
 | --- | --- | --- |
-| `0xD0` | **DATA** | Reguläres Datenpaket (enthält Artemis-Payload). Erfordert ACK. |
+| `0xD0` | **DATA** | Reguläres Datenpaket (enthält ARTEMIS-Payload). Erfordert ACK. |
 | `0xD1` | **ACK/CTRL** | Bestätigung oder Kontrollpaket (Magic 1/2). |
-| `0x42` | **FRAG** | Datenfragment (Teil einer größeren Artemis-Nachricht). Erfordert ACK. |
+| `0x42` | **FRAG** | Datenfragment (Teil einer größeren ARTEMIS-Nachricht). Erfordert ACK. |
 | `0xF9` | **PRE_LOGIN** | Initialisierung der Verschlüsselung (Nonce Exchange). |
 | `0x41` | **DISC_RESP** | Antwort auf Discovery Broadcast. |
 | `0x43` | **KEEPALIVE** | Low-Level Keepalive (oft ohne Payload). |
@@ -72,23 +72,25 @@ Falsche Länge führt zu Retransmissions (Endlos-Schleifen).
 
 ---
 
-## 4. Application Layer: Artemis
+## 4. Application Layer: ARTEMIS
 
-Die Artemis-Payload befindet sich im Datenbereich des RUDP-Pakets.
-Alle Integer-Werte im Artemis-Header sind **Little-Endian**.
+Die ARTEMIS-Payload befindet sich im Datenbereich des RUDP-Pakets (also ab Offset `0x08`).
+Alle Integer-Werte im ARTEMIS-Header sind **Little-Endian**.
 
-### 4.1 Artemis Header (20 Bytes)
+### 4.1 ARTEMIS Frame Header (20 Bytes)
 
-| Offset | Feld | Länge | Wert / Beschreibung |
+Wichtig: In den vorliegenden Captures ist das eigentliche **"cmdId"** (z.B. Login `0`, GetDevInfo `512`) nicht im Klartext-Header enthalten, sondern als Feld im **verschlüsselten JSON** innerhalb der Payload.
+
+| Offset (ab ARTEMIS-Start) | Feld | Länge | Wert / Beschreibung |
 | --- | --- | --- | --- |
-| 0x00 | **Magic** | 8 Bytes | `"ARTEMIS\0"` (`41 52 54 45 4d 49 53 00`) |
-| 0x08 | **CmdID** | 4 Bytes | Command ID (z.B. `2`=Hello, `0`=Login) |
-| 0x0C | **AppSeq** | 4 Bytes | App-Level Sequenzzähler (inkrementierend) |
-| 0x10 | **Len** | 4 Bytes | Länge der nachfolgenden Daten (Base64-String) |
+| 0x00 | **Signature** | 8 Bytes | `"ARTEMIS\0"` (`41 52 54 45 4d 49 53 00`) |
+| 0x08 | **MsgType** | 4 Bytes | Nachrichtentyp: `2` = Command Request, `3` = Command Response |
+| 0x0C | **AppSeq** | 4 Bytes | App-Level Sequenzzähler (inkrementierend; korreliert mit `AppSeq` in Logs) |
+| 0x10 | **PayloadLen** | 4 Bytes | Länge des folgenden Base64-Strings (ohne Nullterminator) |
 
 ### 4.2 Payload & Verschlüsselung
 
-Die Daten nach dem Artemis-Header sind **immer** ein Base64-String, der `\x00`-terminiert ist.
+Die Daten nach dem ARTEMIS-Header sind **immer** ein Base64-String, der `\x00`-terminiert ist.
 
 1. **Format:** `Header` + `Base64_String` + `0x00`.
 2. **Inhalt:** Der Base64-String dekodiert zu einem AES-verschlüsselten Block.
@@ -99,6 +101,64 @@ Die Daten nach dem Artemis-Header sind **immer** ein Base64-String, der `\x00`-t
 
 
 4. **Klartext:** Ein JSON-Objekt.
+
+### 4.3 Login-Handshake (cmdId = 0)
+
+Basierend auf den vorliegenden Log-Daten und der Protokollstruktur handelt es sich bei folgendem Austausch um eine **authentifizierte Sitzungsinitiierung (Login-Handshake)** im proprietären ARTEMIS-Protokoll, wie es typischerweise von Wildkamera-Apps (z.B. "TrailCam Go" für KJK230-Klone) zur Kommunikation über UDP verwendet wird.
+
+Der Block zeigt den Austausch eines **Befehlspakets (TX)** und der zugehörigen **Antwort (RX)**, wobei die Nutzdaten (Payload) **verschlüsselt und Base64-kodiert** übertragen werden.
+
+#### 4.3.1 TX-Paket (Login Request)
+
+Dies ist der Login-Befehl (`cmdId: 0` im entschlüsselten JSON), den die App an die Kamera sendet.
+
+| Offset (Hex, ab UDP-Frame) | Wert (Hex) | Typ | Interpretation |
+| --- | --- | --- | --- |
+| 00-00 | `f1` | Byte | Magic Byte: Kennung für den Start des RUDP-Frames. |
+| 01-01 | `d0` | Byte | RUDP Type: `0xD0` = DATA (enthält ARTEMIS-Payload). |
+| 02-03 | `00 c5` | Int16 (BE) | RUDP Length: `0x00C5` (Payload + 4). |
+| 08-0F | `ARTEMIS\0` | String | Protokoll-Signatur: Nullterminierter ASCII-String `"ARTEMIS"`. |
+| 10-13 | `02 00 00 00` | Int32 (LE) | ARTEMIS MsgType: `2` = Command Request. |
+| 14-17 | `01 00 00 00` | Int32 (LE) | ARTEMIS AppSeq: `1` (korreliert mit AppSeq 1 in den Logs). |
+| 18-1B | `ad 00 00 00` | Int32 (LE) | PayloadLen: `0xAD` = 173 Bytes (Länge des folgenden Base64-Strings). |
+| 1C-Ende | `4a 38 57...` | Base64 | Encrypted Payload: Base64-String beginnt mit `J8WW...` (AES(JSON)). |
+
+**TX-Payload (inhaltlich, nach Entschlüsselung):** JSON-ähnliches Objekt mit Parametern wie:
+
+- `cmdId: 0` (Login)
+- `usrName: admin`
+- `password: admin`
+- `utcTime: <Unix-Timestamp>`
+- `supportHeartBeat: true`
+
+#### 4.3.2 RX-Paket (Login Response)
+
+Dies ist die Login-Bestätigung der Kamera.
+
+| Offset (Hex, ab UDP-Frame) | Wert (Hex) | Typ | Interpretation |
+| --- | --- | --- | --- |
+| 00-00 | `f1` | Byte | Magic Byte. |
+| 10-13 | `03 00 00 00` | Int32 (LE) | ARTEMIS MsgType: `3` = Command Response. |
+| 14-17 | `01 00 00 00` | Int32 (LE) | ARTEMIS AppSeq: `1` (bestätigt die Anfrage). |
+| 18-1B | `81 00 00 00` | Int32 (LE) | PayloadLen: `0x81` = 129 Bytes (Länge des Base64-Strings). |
+| 1C-Ende | `37 73 51...` | Base64 | Encrypted Payload: Base64-String beginnt mit `7sQ3...` (AES(JSON)). |
+
+**RX-Payload (inhaltlich, nach Entschlüsselung):**
+
+- `errorCode: 0` (Success)
+- `result: 0`
+- `cmdId: 0`
+- Session-Token (z.B. als Feld `token`)
+
+#### 4.3.3 Flow-Einordnung
+
+Dieser Austausch ist der erste Schritt ("AppSeq 1") nach dem UDP-Socket-Connect und authentifiziert den Client, bevor weitere Befehle wie `GetDevInfo` (`cmdId: 512`) oder `Video-Stream-Start` (`cmdId: 258`) akzeptiert werden.
+
+Das Format der Datenübertragung ist:
+
+```
+[RUDP Header] -> [ARTEMIS Header] -> [PayloadLen] -> [Base64(AES(JSON))]\x00
+```
 
 ---
 
@@ -121,12 +181,12 @@ Die Daten nach dem Artemis-Header sind **immer** ein Base64-String, der `\x00`-t
 
 Hier scheiterten frühere Implementierungen. Der Ablauf muss exakt sein.
 
-| Schritt | Richtung | RUDP Typ | Artemis Cmd | Inhalt / Aktion |
+| Schritt | Richtung | RUDP Typ | ARTEMIS MsgType | Inhalt / Aktion |
 | --- | --- | --- | --- | --- |
-| 1 | Client -> Cam | `0xD0` | `2` (Hello) | "Hello"-JSON (verschlüsselt). |
-| 2 | Cam -> Client | `0xD1` | - | **ACK** für Hello. |
-| 3 | Cam -> Client | `0xD0` | **`3`** (Result) | **Kritisch:** Antwort auf Hello ist Cmd 3! Script muss dies akzeptieren. |
-| 4 | Client -> Cam | `0xD1` | - | **ACK** für Cmd 3. |
+| 1 | Client -> Cam | `0xD0` | `2` | ARTEMIS Request + Base64(AES(JSON)). |
+| 2 | Cam -> Client | `0xD1` | - | **ACK** für Request. |
+| 3 | Cam -> Client | `0xD0` | **`3`** | ARTEMIS Response. |
+| 4 | Client -> Cam | `0xD1` | - | **ACK** für Response. |
 | 5 | Client -> Cam | `0xD1` | - | **Magic 1** (`00 00...` Payload). Seq springt oft. |
 | 6 | Client -> Cam | `0xD1` | - | **Magic 2** (`00 00` Payload). |
 
@@ -135,27 +195,26 @@ Hier scheiterten frühere Implementierungen. Der Ablauf muss exakt sein.
 ### Phase 3: Stabilisierung & Login
 
 1. **Stabilisierung (Heartbeats):**
-* Client sendet `Cmd 2` (Heartbeat, Payload `MzlB...`) alle **3 Sekunden**.
+* Client sendet Heartbeats in kurzem Intervall.
 * Client **wartet zwingend** auf das ACK der Kamera für jeden Heartbeat, um Sequenz-Synchronität zu beweisen.
 
 
-2. **Login:**
-* Client sendet `Cmd 0` (Login Request) mit User/Pass und `utcTime`.
-* **Wichtig:** Client wartet auf **`Cmd 3`** (Login Response).
-* **Token:** Aus dem JSON der Response (`{"token": 12345...}`) wird der Session-Token extrahiert.
+2. **Login (cmdId = 0):**
+* Client sendet ARTEMIS Request (MsgType `2`) dessen entschlüsseltes JSON `cmdId: 0` und Credentials enthält.
+* Kamera antwortet mit ARTEMIS Response (MsgType `3`) und liefert (bei Erfolg) `errorCode: 0` sowie einen Session-Token.
 
 
 
 ### Phase 4: Datentransfer (Operation)
 
-Für alle weiteren Befehle (z.B. Dateiliste `Cmd 768`, Thumbnails `Cmd 772`) gilt:
+Für alle weiteren Befehle (z.B. Dateiliste `cmdId 768`, Thumbnails `cmdId 772`) gilt:
 
 * Der Token muss im JSON enthalten sein: `{"cmdId": 768, "token": "..."}`.
 * **Große Daten (Fragmentierung):**
 * Kamera sendet Pakete vom Typ `0x42` (FRAG).
 * Jedes Fragment muss ge-ACKt werden.
-* Das letzte Paket ist Typ `0xD0` (mit Artemis-Header) und schließt den Transfer ab.
-* Die Payload aller Fragmente + des letzten Pakets wird konkateniert -> ergibt Artemis Header + Base64 Daten.
+* Das letzte Paket ist Typ `0xD0` (mit ARTEMIS-Header) und schließt den Transfer ab.
+* Die Payload aller Fragmente + des letzten Pakets wird konkateniert -> ergibt ARTEMIS Header + Base64 Daten.
 
 
 
@@ -175,7 +234,7 @@ Für alle weiteren Befehle (z.B. Dateiliste `Cmd 768`, Thumbnails `Cmd 772`) gil
 **Magic Payloads:**
 
 * **Discovery (LBCS):** `f14100144c42435300000000000000004343434a4a000000`
-* **Heartbeat Body:** `415254454d49530002000000...` (Artemis Header Cmd 2 + Base64 `MzlB...`)
+* **Heartbeat Body:** `415254454d49530002000000...` (ARTEMIS Header + Base64 `MzlB...`)
 
 **Timing:**
 

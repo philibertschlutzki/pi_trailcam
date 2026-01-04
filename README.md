@@ -64,14 +64,30 @@ After discovery succeeds, send encrypted login credentials:
 
 ### 5. ARTEMIS Session Layer
 
-After successful login, initiate the main session:
+After successful pre-login, the actual application protocol runs inside RUDP DATA packets.
 
-- **Command Type:** `0xD0` (ARTEMIS Hello)
-- **Packet Structure:** `[Magic 0xF1] [Type] [Length: 2 bytes big-endian] [Payload]`
-- **Session Payload:** Hardcoded 160-byte hello packet containing base64-encoded session token
-- **Heartbeat:** Send `F1 D1 00 0E ...` every 2 seconds to maintain connection
+- **Outer Transport:** RUDP over UDP (`0xF1` magic + packet type like `0xD0` for DATA)
+- **Inner Protocol Signature:** ASCII `"ARTEMIS\0"`
+- **Encrypted Payload:** A Base64 string that decodes to AES(JSON)
 
-### 6. Event Filtering
+In other words, the typical on-wire structure is:
+
+```
+[RUDP header] -> [ARTEMIS header] -> [payload_len] -> Base64(AES(JSON))
+```
+
+For a full breakdown (endianness, offsets, packet types), see [Protocol_analysis.md](https://github.com/philibertschlutzki/pi_trailcam/blob/main/Protocol_analysis.md).
+
+### 6. ARTEMIS Login Handshake (cmdId = 0)
+
+Based on the captured traffic logs and app debug logs, the first authenticated session initiation after the UDP socket is established is a **login handshake**.
+
+- **TX (App -> Camera):** RUDP `0xD0` DATA packet containing an ARTEMIS request header (msgType `2`) and a Base64(AES(JSON)) payload where the decrypted JSON includes (at least) `cmdId: 0`, `usrName`, `password`, `utcTime`, and `supportHeartBeat`.
+- **RX (Camera -> App):** ARTEMIS response (msgType `3`) with the same `AppSeq`, and a Base64(AES(JSON)) payload where the decrypted JSON includes (at least) `errorCode: 0`, `result: 0`, `cmdId: 0`, and a session token.
+
+This login must succeed before the camera will accept higher-level commands like `GetDevInfo` (`cmdId: 512`) or starting a stream (`cmdId: 258`).
+
+### 7. Event Filtering
 
 The main loop receives status packets and events. Packet filtering by size reduces spam:
 
