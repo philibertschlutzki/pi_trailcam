@@ -4,7 +4,8 @@
 Fixes / Improvements:
 - Robust Login (Token-based):
   * Hello-AppSeq wird nicht mehr hartcodiert (AppSeq=1), sondern dynamisch inkrementiert.
-  * Login akzeptiert Response nicht nur über Cmd==3, sondern über erfolgreiches Decrypt + JSON enthält "token".
+  * Token kann auch schon VOR dem Login-Request eintreffen (z.B. während Stabilisierung); wird daher vorab „gesnifft“.
+  * Login akzeptiert Response nicht nur über Cmd==3, sondern über erfolgreiches Decrypt + JSON enthält "token" (cmd_id egal).
   * AES/JSON Decrypt ist robuster: ARTEMIS Header wird an beliebigem Offset erkannt (auch bei FRAG-Reassembly).
 
 - Netzwerk:
@@ -492,6 +493,51 @@ class Session:
         _off, _magic, cmd_id, _app_seq, _alen = hdr
         return cmd_id
 
+    def _extract_token_any(self, pkt: bytes) -> Optional[Tuple[str, int, int]]:
+        """Extrahiert token aus beliebigem ARTEMIS-Frame (cmd_id egal)."""
+
+        try:
+            r = self._decrypt_artemis_json_any(pkt)
+            if r is None:
+                return None
+            obj, cmd_id, app_seq = r
+
+            if not isinstance(obj, dict):
+                return None
+            if "token" not in obj:
+                return None
+
+            tok = obj.get("token")
+            if tok is None:
+                return None
+
+            return str(tok), int(cmd_id), int(app_seq)
+        except Exception:
+            return None
+
+    def wait_for_token(self, timeout: float, phase: str) -> bool:
+        """Wartet bis ein gültiges token empfangen wurde und speichert es in self.token."""
+
+        found: Dict[str, Any] = {"token": None, "cmd_id": None, "app_seq": None}
+
+        def tok_ok(pkt: bytes) -> bool:
+            t = self._extract_token_any(pkt)
+            if t is None:
+                return False
+            tok, cmd_id, app_seq = t
+            found["token"] = tok
+            found["cmd_id"] = cmd_id
+            found["app_seq"] = app_seq
+            return True
+
+        _pkt = self.pump(timeout=timeout, accept_predicate=tok_ok, filter_evt=True)
+        if not found["token"]:
+            return False
+
+        self.token = str(found["token"])
+        logger.info(f"✅ TOKEN OK ({phase}) cmd_id={found['cmd_id']} app_seq={found['app_seq']} token={self.token}")
+        return True
+
     def send_heartbeat(self):
         if time.time() - self.last_heartbeat_time < 2.0:
             return
@@ -726,59 +772,38 @@ class Session:
             self.send_heartbeat()
             self.pump(timeout=0.5, accept_predicate=lambda _d: False)
 
-        logger.info(">>> Login…")
-        self.app_seq += 1
-        login_data = {
-            "cmdId": 0,
-            "usrName": "admin",
-            "password": "admin",
-            "needVideo": 0,
-            "needAudio": 0,
-            "utcTime": int(time.time()),
-            "supportHeartBeat": True,
-        }
-        b64_body = base64.b64encode(self.encrypt_json(login_data)) + b"\x00"
-        art = build_artemis_frame(0, self.app_seq, b64_body)
-
-        pkt, _ = self.build_packet(0xD0, art)
-        self.send_raw(pkt, desc="Login")
-
+        # Token kann bei manchen Kameras schon VOR dem Login-Request kommen (z.B. als Cmd=3 während Stabilisierung).
+        logger.info(">>> Token-Scan vor Login…")
         if self.debug and self.raw_rx_dump:
-            self.enable_raw_rx_dump()
+            self.enable_raw_rx_dump(seconds=3.0)
 
-        logger.info("⏳ Warte auf Login-Response (Cmd 3, token-basiert)…")
+        if not self.wait_for_token(timeout=2.5, phase="pre-login"):
+            logger.info(">>> Login…")
+            self.app_seq += 1
+            login_data = {
+                "cmdId": 0,
+                "usrName": "admin",
+                "password": "admin",
+                "needVideo": 0,
+                "needAudio": 0,
+                "utcTime": int(time.time()),
+                "supportHeartBeat": True,
+            }
+            b64_body = base64.b64encode(self.encrypt_json(login_data)) + b"\x00"
+            art = build_artemis_frame(0, self.app_seq, b64_body)
 
-        def login_ok(pkt2: bytes) -> bool:
-            try:
-                r = self._decrypt_artemis_json_any(pkt2)
-                if r is None:
-                    return False
-                obj, cmd_id, _app_seq = r
-                return bool(cmd_id == 3 and "token" in obj)
-            except Exception:
-                return False
+            pkt, _ = self.build_packet(0xD0, art)
+            self.send_raw(pkt, desc="Login")
 
-        resp_pkt = self.pump(
-            timeout=max(8.0, self.raw_rx_window_seconds),
-            accept_predicate=login_ok,
-            filter_evt=True,
-        )
-        if not resp_pkt:
-            logger.error("❌ Login Timeout")
-            return
+            if self.debug and self.raw_rx_dump:
+                self.enable_raw_rx_dump()
 
-        dec = self._decrypt_artemis_json_any(resp_pkt)
-        if dec is None:
-            logger.error("❌ Login Antwort ungültig (Decrypt fehlgeschlagen)")
-            return
-
-        resp, cmd_id, app_seq = dec
-        if cmd_id != 3 or "token" not in resp:
-            logger.error(f"❌ Login Antwort ungültig: cmd_id={cmd_id} app_seq={app_seq} resp={resp}")
-            return
-
-        self.token = str(resp["token"])
-        logger.info(f"✅ LOGIN OK! Token: {self.token}")
+            logger.info("⏳ Warte auf Token (Login-Response)…")
+            if not self.wait_for_token(timeout=max(8.0, self.raw_rx_window_seconds), phase="login"):
+                logger.error("❌ Login Timeout (kein Token empfangen)")
+                return
+        else:
+            logger.info(">>> Token bereits vorhanden; überspringe Login-Request.")
 
         logger.info(">>> Request file list (Cmd 768)…")
         self.app_seq += 1
