@@ -1,32 +1,41 @@
 #!/usr/bin/env python3
-"""
-Wildkamera Thumbnail Downloader - consolidated v4.3
+"""Wildkamera Thumbnail Downloader - consolidated v4.4
 
-Konsolidiert Fixes aus get_thumbnails.py + get_thumbnail_perp.py:
-- Phase2 Pre-Login (F9) ist implementiert (war in get_thumbnail_perp.py nur Placeholder).
-- Login wartet auf Cmd 3 (Result) und extrahiert token.
-- ACK: 10 Bytes (Header 8 + Payload 2) und ACK für DATA (D0) + FRAG (42).
-- Minimaler FRAG-Reassembler für ARTEMIS Frames.
-- Discovery setzt active_port zuverlässig.
+Fixes / Improvements:
+- Issue #134: Login Timeout
+  * Login wartet auf Cmd 3 (Result) und extrahiert token.
+  * FRAG-Reassembly für ARTEMIS Frames (Pkt 0x42) vorhanden.
+
+- Issue #135: Hello nicht bestätigt/keine Antwort
+  * Pre-Login (F9) wird an ALLE bekannten Zielports gesendet (TARGET_PORTS), damit kein Port-Mismatch den Handshake blockiert.
+  * Hello wird primär an active_port gesendet; bei fehlender Antwort wird ein Fallback-Versuch auf dem alternativen Port gemacht.
+
+- Debug/Logging:
+  * Mit --debug werden alle TX/RX Frames inkl. Pkt-Typ (D0/42/43/...), Seq, BodyLen und (wenn vorhanden) ARTEMIS Cmd/AppSeq/Len geloggt.
+  * Zusätzlich wird ein Logfile get_thumbnail_perp_debug.log geschrieben (unbuffered flush+fsync), damit Logs bei Crash nicht verloren gehen.
+
+Hinweis: Das Script ist auf Python 3.8+ kompatibel (kein PEP604 "bytes | None").
 """
 
-import socket
-import struct
-import time
-import json
-import logging
-import sys
 import argparse
-import subprocess
 import asyncio
 import base64
+import json
+import logging
 import os
+import socket
+import struct
+import subprocess
+import sys
+import time
+from typing import Optional, Iterable, Union, Set
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 
 try:
     from bleak import BleakScanner, BleakClient
+
     BLE_AVAILABLE = True
 except Exception:
     BLE_AVAILABLE = False
@@ -66,16 +75,52 @@ ARTEMIS_HELLO_B64 = (
     b"sh4L234p6VLtbnd4iq+8YcQJdk05GSR0cM4="
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
+
 logger = logging.getLogger("CamClient")
 
 
+class FlushFileHandler(logging.FileHandler):
+    """FileHandler, der sofort flush+fsync macht (Crash-safe Logs)."""
+
+    def emit(self, record):
+        super().emit(record)
+        try:
+            self.flush()
+            os.fsync(self.stream.fileno())
+        except Exception:
+            pass
+
+
+def setup_logging(debug: bool):
+    level = logging.DEBUG if debug else logging.INFO
+
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.setLevel(level)
+
+    fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setLevel(level)
+    sh.setFormatter(fmt)
+    root.addHandler(sh)
+
+    if debug:
+        fh = FlushFileHandler("get_thumbnail_perp_debug.log", mode="w", encoding="utf-8")
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(fmt)
+        root.addHandler(fh)
+
+
+def hexdump(data: bytes, max_len: int = 96) -> str:
+    if not data:
+        return ""
+    if len(data) <= max_len:
+        return data.hex()
+    return data[:max_len].hex() + f"…(+{len(data)-max_len}b)"
+
+
 def build_artemis_frame(cmd_id: int, app_seq: int, body: bytes) -> bytes:
-    # ARTEMIS\x00 + cmd(u32le) + seq(u32le) + len(u32le) + body
     return b"ARTEMIS\x00" + struct.pack("<III", cmd_id, app_seq, len(body)) + body
 
 
@@ -89,7 +134,7 @@ class BLEWorker:
             logger.error("BLE nicht verfügbar (bleak fehlt).")
             return False
 
-        logger.info(f"Suche BLE {mac}...")
+        logger.info(f"Suche BLE {mac}…")
         try:
             dev = await BleakScanner.find_device_by_address(mac, timeout=scan_timeout)
             if not dev:
@@ -102,6 +147,7 @@ class BLEWorker:
                     bytearray([0x13, 0x57, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]),
                     response=True,
                 )
+
             logger.info("✅ BLE Wakeup gesendet.")
             return True
         except Exception as e:
@@ -113,15 +159,19 @@ class WiFiWorker:
     @staticmethod
     def connect(ssid, password):
         try:
-            subprocess.run(["sudo", "iwconfig", "wlan0", "power", "off"],
-                           check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(
+                ["sudo", "iwconfig", "wlan0", "power", "off"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
             if subprocess.run(["iwgetid", "-r"], capture_output=True, text=True).stdout.strip() == ssid:
                 logger.info(f"WLAN bereits mit {ssid} verbunden.")
                 return True
         except Exception:
             pass
 
-        logger.info("Verbinde WLAN...")
+        logger.info("Verbinde WLAN…")
         subprocess.run(["sudo", "nmcli", "c", "delete", ssid], capture_output=True)
         subprocess.run(["sudo", "nmcli", "d", "wifi", "rescan"], capture_output=True)
         time.sleep(3)
@@ -134,26 +184,74 @@ class WiFiWorker:
 
 
 class Session:
-    def __init__(self, debug=False):
-        self.sock = None
-        self.active_port = None
+    TYPE_NAMES = {
+        0x41: "DISC",
+        0x42: "FRAG",
+        0x43: "KEEPALIVE",
+        0xD0: "DATA",
+        0xD1: "ACK",
+        0xE0: "ERR",
+        0xF0: "DISC",
+        0xF9: "PRE",
+    }
+
+    def __init__(self, debug: bool = False):
+        self.sock: Optional[socket.socket] = None
+        self.active_port: Optional[int] = None
 
         self.global_seq = 0
         self.app_seq = 0
 
         self.debug = debug
 
-        self.token = None
+        self.token: Optional[str] = None
         self.last_heartbeat_time = 0.0
         self.heartbeat_cnt = 0
 
         self._frag_buf = bytearray()
 
-    def dlog(self, msg):
-        if self.debug:
-            logger.debug(msg)
+    def analyze_packet(self, data: bytes) -> str:
+        if not data:
+            return "EMPTY"
 
-    def setup_network(self):
+        if data[0] != 0xF1:
+            return f"NON-F1(len={len(data)}) {hexdump(data, 32)}"
+
+        if len(data) < 2:
+            return f"F1-SHORT(len={len(data)})"
+
+        pkt_type = data[1]
+        tname = self.TYPE_NAMES.get(pkt_type, f"0x{pkt_type:02X}")
+
+        # Pre-Login Antworten sind manchmal kein "voller" RUDP-Header.
+        if len(data) < 8:
+            return f"F1 {tname} (short,len={len(data)}) {hexdump(data, 48)}"
+
+        body_len = (data[2] << 8) | data[3]
+        seq = data[7]
+        info = f"RUDP {tname} Seq={seq} BodyLen={body_len}"
+
+        # ARTEMIS decode
+        if len(data) >= 28 and data[8:16] == b"ARTEMIS\x00":
+            try:
+                cmd_id = struct.unpack("<I", data[16:20])[0]
+                app_seq = struct.unpack("<I", data[20:24])[0]
+                alen = struct.unpack("<I", data[24:28])[0]
+                info += f" | ARTEMIS Cmd={cmd_id} AppSeq={app_seq} ALen={alen}"
+            except Exception:
+                pass
+
+        return info
+
+    def log_tx(self, pkt: bytes, desc: str = ""):
+        if self.debug:
+            logger.debug(f"📤 {self.analyze_packet(pkt)} {desc} | hex={hexdump(pkt)}")
+
+    def log_rx(self, pkt: bytes, desc: str = ""):
+        if self.debug:
+            logger.debug(f"📥 {self.analyze_packet(pkt)} {desc} | hex={hexdump(pkt)}")
+
+    def setup_network(self) -> bool:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect((TARGET_IP, 1))
@@ -171,23 +269,43 @@ class Session:
         logger.info(f"Socket: {local_ip}:{FIXED_LOCAL_PORT}")
         return True
 
-    def discovery(self, timeout=2.0):
-        logger.info("Discovery...")
+    def send_to(self, pkt: bytes, port: int, desc: str = ""):
+        if not self.sock:
+            return
+        self.sock.sendto(pkt, (TARGET_IP, port))
+        self.log_tx(pkt, desc=f"to={TARGET_IP}:{port} {desc}")
+
+    def send_raw(self, pkt: bytes, desc: str = "", port: Optional[int] = None):
+        if not self.sock:
+            return
+        p = port if port is not None else self.active_port
+        if not p:
+            return
+        self.sock.sendto(pkt, (TARGET_IP, p))
+        self.log_tx(pkt, desc=f"to={TARGET_IP}:{p} {desc}")
+
+    def discovery(self, timeout: float = 2.0) -> bool:
+        logger.info("Discovery…")
         for p in TARGET_PORTS:
-            self.sock.sendto(LBCS_PAYLOAD, (TARGET_IP, p))
+            self.send_to(LBCS_PAYLOAD, p, desc="LBCS")
 
         start = time.time()
         while time.time() - start < timeout:
             try:
-                data, addr = self.sock.recvfrom(2048)
+                data, addr = self.sock.recvfrom(2048)  # type: ignore[union-attr]
             except socket.timeout:
                 continue
+            except Exception:
+                continue
 
-            if not data or len(data) < 8 or data[0] != 0xF1:
+            self.log_rx(data, desc=f"from={addr}")
+
+            if not data or len(data) < 2 or data[0] != 0xF1:
                 continue
             if addr[0] != TARGET_IP:
                 continue
 
+            # best-effort: RUDP hat mind. 8b; LBCS reply ist in deiner Implementierung RUDP-ish
             self.active_port = addr[1]
             logger.info(f"✅ Discovery OK, active_port={self.active_port}")
             return True
@@ -195,13 +313,13 @@ class Session:
         logger.error("❌ Discovery failed (no reply on candidate ports)")
         return False
 
-    def next_seq(self):
+    def next_seq(self) -> int:
         self.global_seq = (self.global_seq + 1) % 255
         if self.global_seq == 0:
             self.global_seq = 1
         return self.global_seq
 
-    def build_packet(self, packet_type, payload, force_seq=None):
+    def build_packet(self, packet_type: int, payload: bytes, force_seq: Optional[int] = None):
         if force_seq is None:
             seq = self.next_seq()
         else:
@@ -209,29 +327,20 @@ class Session:
             self.global_seq = seq
 
         body_len = len(payload) + 4
-        header = bytearray([0xF1, packet_type, (body_len >> 8) & 0xFF, body_len & 0xFF,
-                            0xD1, 0x00, 0x00, seq])
+        header = bytearray([0xF1, packet_type, (body_len >> 8) & 0xFF, body_len & 0xFF, 0xD1, 0x00, 0x00, seq])
         return bytes(header) + payload, seq
 
     def build_ack_10(self, rx_seq: int) -> bytes:
-        # 10 bytes total: header(8) + payload(2)
         payload = bytes([0x00, rx_seq])
         body_len = 6
-        header = bytes([0xF1, 0xD1, (body_len >> 8) & 0xFF, body_len & 0xFF,
-                        0xD1, 0x00, 0x00, rx_seq])
+        header = bytes([0xF1, 0xD1, (body_len >> 8) & 0xFF, body_len & 0xFF, 0xD1, 0x00, 0x00, rx_seq])
         return header + payload
 
-    def send_raw(self, pkt: bytes):
-        if not self.active_port:
-            return
-        self.sock.sendto(pkt, (TARGET_IP, self.active_port))
-
-    def encrypt_json(self, obj):
+    def encrypt_json(self, obj) -> bytes:
         raw = json.dumps(obj, separators=(",", ":")).encode("utf-8")
         return AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(pad(raw, AES.block_size))
 
     def decrypt_payload(self, data: bytes):
-        # expects: RUDP(8) + ARTEMIS(8+12) + b64...
         try:
             if len(data) < 28:
                 return None
@@ -241,12 +350,13 @@ class Session:
             raw = base64.b64decode(b64_part)
             dec = unpad(AES.new(PHASE2_KEY, AES.MODE_ECB).decrypt(raw), AES.block_size)
             return json.loads(dec.decode("utf-8"))
-        except Exception:
+        except Exception as e:
+            if self.debug:
+                logger.debug(f"Decrypt failed: {e}")
             return None
 
-    def get_cmd_id(self, data: bytes):
-        # cmd located at offset 16 (RUDP(8)+ARTEMIS(8))
-        if len(data) > 20 and b"ARTEMIS\x00" in data[8:24]:
+    def get_cmd_id(self, data: bytes) -> Optional[int]:
+        if len(data) >= 28 and data[8:16] == b"ARTEMIS\x00":
             try:
                 return struct.unpack("<I", data[16:20])[0]
             except Exception:
@@ -256,47 +366,108 @@ class Session:
     def send_heartbeat(self):
         if time.time() - self.last_heartbeat_time < 2.0:
             return
+
         self.heartbeat_cnt = (self.heartbeat_cnt + 1) % 255
         body = bytearray(HEARTBEAT_BODY_START) + bytearray([self.heartbeat_cnt]) + bytearray(HEARTBEAT_PAYLOAD_END)
         pkt, _ = self.build_packet(0xD0, bytes(body))
-        self.send_raw(pkt)
+        self.send_raw(pkt, desc=f"Heartbeat cnt={self.heartbeat_cnt}")
         self.last_heartbeat_time = time.time()
-        self.dlog(f"💓 Heartbeat cnt={self.heartbeat_cnt}")
 
     def send_prelogin(self):
-        logger.info(">>> Pre-Login...")
+        logger.info(">>> Pre-Login…")
         payload = {"utcTime": int(time.time()), "nonce": os.urandom(8).hex()}
         enc = AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(
             pad(json.dumps(payload, separators=(",", ":")).encode("utf-8"), AES.block_size)
         )
-        # NOTE: Dieses Prelogin-Format ist aus get_thumbnails.py übernommen.
-        pkt = struct.pack(">BBH", 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)) + PHASE2_STATIC_HEADER + enc
-        self.send_raw(pkt)
+        pkt = struct.pack(">BBH", 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)
+        ) + PHASE2_STATIC_HEADER + enc
 
-        # Nicht streng prüfen, nur „Traffic“ konsumieren
-        self.wait_for_cmd(timeout=2.0, cmd_accept=None)
+        # IMPORTANT: an alle Ports senden, um Port-Mismatch zu vermeiden.
+        for p in TARGET_PORTS:
+            self.send_to(pkt, p, desc="PreLogin")
 
-    def _try_reassemble_artemis(self) -> bytes | None:
-        # Suche nach ARTEMIS Header im Buffer
+        # kurz warten und alles loggen/pumpen
+        self.pump(timeout=1.0, accept_cmd=None)
+
+    def pump(self, timeout: float, accept_cmd: Optional[Union[int, Set[int]]] = None) -> Optional[bytes]:
+        """Empfängt Pakete, ack't wenn nötig und loggt in --debug alle Frames.
+
+        accept_cmd:
+          - None: keine Filterung, return beim ersten Paket
+          - int/set: return beim ersten ARTEMIS-Paket das passt
+        """
+        start = time.time()
+        while time.time() - start < timeout:
+            if self.active_port and self.global_seq > 1:
+                self.send_heartbeat()
+
+            try:
+                data, addr = self.sock.recvfrom(65535)  # type: ignore[union-attr]
+            except socket.timeout:
+                continue
+            except Exception:
+                continue
+
+            self.log_rx(data, desc=f"from={addr}")
+
+            if not data or len(data) < 2:
+                continue
+
+            # ACK nur für "voll" RUDP (>=8)
+            if len(data) >= 8 and data[0] == 0xF1:
+                pkt_type = data[1]
+                rx_seq = data[7]
+
+                if pkt_type in (0xD0, 0x42):
+                    is_ack_payload = (len(data) >= 11 and data[8:11] == b"ACK")
+                    if not is_ack_payload and self.active_port:
+                        ack = self.build_ack_10(rx_seq)
+                        self.send_raw(ack, desc=f"ACK(rx_seq={rx_seq})")
+
+                # FRAG-Reassembly
+                if pkt_type == 0x42:
+                    self._frag_buf += data[8:]
+                    re = self._try_reassemble_artemis()
+                    if re is None:
+                        continue
+                    data = re
+
+            if accept_cmd is None:
+                return data
+
+            cmd_id = self.get_cmd_id(data)
+            if cmd_id is None:
+                continue
+
+            if isinstance(accept_cmd, int):
+                if cmd_id == accept_cmd:
+                    return data
+                if self.debug:
+                    logger.debug(f"⚠️ Ignore Cmd {cmd_id} (warte auf {accept_cmd})")
+            else:
+                if cmd_id in accept_cmd:
+                    return data
+                if self.debug:
+                    logger.debug(f"⚠️ Ignore Cmd {cmd_id} (warte auf {sorted(list(accept_cmd))})")
+
+        return None
+
+    def _try_reassemble_artemis(self) -> Optional[bytes]:
         idx = self._frag_buf.find(b"ARTEMIS\x00")
         if idx < 0:
-            # Buffer begrenzen
             if len(self._frag_buf) > 1024 * 1024:
                 self._frag_buf.clear()
             return None
 
-        # Vorlauf verwerfen
         if idx > 0:
             del self._frag_buf[:idx]
 
-        # Mindestlänge: ARTEMIS(8) + 3*4 = 20
         if len(self._frag_buf) < 20:
             return None
 
         try:
             cmd_id, app_seq, blen = struct.unpack("<III", self._frag_buf[8:20])
         except Exception:
-            # Off-bytes -> ein Byte schieben
             del self._frag_buf[:1]
             return None
 
@@ -307,72 +478,33 @@ class Session:
         payload = bytes(self._frag_buf[:total])
         del self._frag_buf[:total]
 
-        # zu einem "DATA"-Packet formen, damit decrypt_payload() mit Offsets passt
+        # künstlicher RUDP Header, damit Offsets in decrypt_payload passen
         rudp_hdr = bytes([0xF1, 0xD0, 0x00, 0x00, 0xD1, 0x00, 0x00, 0x00])
         return rudp_hdr + payload
 
-    def wait_for_cmd(self, timeout=5.0, cmd_accept=None):
-        """
-        cmd_accept:
-          - None: akzeptiert alles (nur IO pumpen)
-          - int: akzeptiert genau dieses Cmd
-          - set/list/tuple: akzeptiert eines davon
-        """
-        start = time.time()
-        while time.time() - start < timeout:
-            if self.active_port and self.global_seq > 1:
-                self.send_heartbeat()
+    def hello_handshake(self) -> bool:
+        logger.info(">>> Handshake Step 1: Hello (force seq 0)")
+        hello_pkt, _ = self.build_packet(0xD0, ARTEMIS_HELLO_BODY, force_seq=0)
 
-            try:
-                data, addr = self.sock.recvfrom(65535)
-            except socket.timeout:
-                continue
-            except Exception:
-                continue
+        # 1) primär an active_port
+        self.send_raw(hello_pkt, desc="Hello")
+        r = self.pump(timeout=2.2, accept_cmd=None)
+        if r is not None:
+            return True
 
-            if not data or len(data) < 2:
-                continue
+        # 2) Fallback: wenn active_port nicht der "Handshake-Port" ist
+        alt_ports = [p for p in TARGET_PORTS if p != self.active_port]
+        if alt_ports:
+            logger.warning("Keine Antwort auf Hello via active_port; Fallback auf alternativen Port…")
+            self.send_raw(hello_pkt, desc="Hello(fallback)", port=alt_ports[0])
+            r = self.pump(timeout=2.2, accept_cmd=None)
+            if r is not None:
+                # Wenn auf anderem Port Antwort kam, Port umstellen
+                self.active_port = alt_ports[0]
+                logger.info(f"✅ active_port auf {self.active_port} umgestellt (Hello-Fallback).")
+                return True
 
-            # RUDP?
-            if len(data) >= 8 and data[0] == 0xF1:
-                pkt_type = data[1]
-                rx_seq = data[7]
-
-                # ACK für DATA/FRAG (außer wenn selbst ACK Payload)
-                if pkt_type in (0xD0, 0x42):
-                    is_ack_payload = (len(data) >= 11 and data[8:11] == b"ACK")
-                    if not is_ack_payload and self.active_port:
-                        self.sock.sendto(self.build_ack_10(rx_seq), (TARGET_IP, self.active_port))
-
-                # FRAG -> in Buffer und ggf. reassemblen
-                if pkt_type == 0x42:
-                    self._frag_buf += data[8:]
-                    re = self._try_reassemble_artemis()
-                    if re is not None:
-                        data = re
-                        pkt_type = 0xD0  # virtuell "DATA"
-                    else:
-                        continue
-
-                # Cmd extrahieren und filtern
-                cmd_id = self.get_cmd_id(data)
-
-                # Noise/Event Cmd 9 ignorieren (wie in euren Scripts)
-                if cmd_id == 9:
-                    continue
-
-                if cmd_accept is None:
-                    return data
-
-                if isinstance(cmd_accept, int):
-                    if cmd_id == cmd_accept:
-                        return data
-                else:
-                    if cmd_id in set(cmd_accept):
-                        return data
-
-            # Non-RUDP: ignorieren
-        return None
+        return False
 
     def run(self):
         if not self.setup_network():
@@ -380,35 +512,29 @@ class Session:
         if not self.discovery():
             return
 
-        # Pre-Login ist für viele Geräte nötig
         self.send_prelogin()
+        time.sleep(0.25)
 
-        # Hello/Handshake möglichst nahe am funktionierenden Script:
-        logger.info(">>> Handshake Step 1: Hello (force seq 0)")
-        hello_pkt, _ = self.build_packet(0xD0, ARTEMIS_HELLO_BODY, force_seq=0)
-        self.send_raw(hello_pkt)
-        if not self.wait_for_cmd(timeout=2.0, cmd_accept=None):
+        if not self.hello_handshake():
             logger.error("❌ Hello nicht bestätigt/keine Antwort")
             return
 
         logger.info(">>> Handshake Step 2: Magic 1 (force seq 3)")
         m1, _ = self.build_packet(0xD1, MAGIC_BODY_1, force_seq=3)
-        self.send_raw(m1)
+        self.send_raw(m1, desc="Magic1")
         time.sleep(0.05)
 
         logger.info(">>> Handshake Step 3: Magic 2 (force seq 1)")
         m2, _ = self.build_packet(0xD1, MAGIC_BODY_2, force_seq=1)
-        self.send_raw(m2)
+        self.send_raw(m2, desc="Magic2")
         time.sleep(0.05)
 
-        # Stabilisierung
-        logger.info(">>> Stabilisierung...")
+        logger.info(">>> Stabilisierung…")
         for _ in range(2):
             self.send_heartbeat()
-            self.wait_for_cmd(timeout=0.5, cmd_accept=None)
+            self.pump(timeout=0.5, accept_cmd=None)
 
-        # Login
-        logger.info(">>> Login...")
+        logger.info(">>> Login…")
         self.app_seq += 1
         login_data = {
             "cmdId": 0,
@@ -423,10 +549,10 @@ class Session:
         art = build_artemis_frame(0, self.app_seq, b64_body)
 
         pkt, _ = self.build_packet(0xD0, art)
-        self.send_raw(pkt)
+        self.send_raw(pkt, desc="Login")
 
-        # Wichtig: Login-Response ist Result Cmd 3 (nicht Cmd 0)
-        resp_pkt = self.wait_for_cmd(timeout=8.0, cmd_accept=3)
+        logger.info("⏳ Warte auf Login-Response (Cmd 3)…")
+        resp_pkt = self.pump(timeout=8.0, accept_cmd=3)
         if not resp_pkt:
             logger.error("❌ Login Timeout")
             return
@@ -439,16 +565,16 @@ class Session:
         self.token = resp["token"]
         logger.info(f"✅ LOGIN OK! Token: {self.token}")
 
-        # Optional: Beispiel-Request (Cmd 768) - ggf. fragmentiert
-        logger.info(">>> Request file list (Cmd 768)...")
+        # --- Beispiel: Cmd 768 File-List ---
+        logger.info(">>> Request file list (Cmd 768)…")
         self.app_seq += 1
         req = {"cmdId": 768, "itemCntPerPage": 45, "pageNo": 0, "token": str(self.token)}
         b64_body = base64.b64encode(self.encrypt_json(req)) + b"\x00"
         art = build_artemis_frame(768, self.app_seq, b64_body)
         pkt, _ = self.build_packet(0xD0, art)
-        self.send_raw(pkt)
+        self.send_raw(pkt, desc="Cmd768")
 
-        pkt = self.wait_for_cmd(timeout=10.0, cmd_accept=768)
+        pkt = self.pump(timeout=10.0, accept_cmd=768)
         if pkt:
             files = self.decrypt_payload(pkt)
             logger.info(f"Cmd768 response (preview): {str(files)[:200]}")
@@ -458,12 +584,14 @@ class Session:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--debug", action="store_true", help="Debug logging")
+    parser.add_argument("--debug", action="store_true", help="Debug logging (inkl. Frame-Dumps)")
     parser.add_argument("--ble", action="store_true", help="Weckt die Kamera per BLE (aktiviert Wi-Fi-Modul)")
     parser.add_argument("--ble-mac", default=BLE_MAC, help="BLE MAC-Adresse der Kamera")
     parser.add_argument("--ble-wait", type=int, default=20, help="Wartezeit nach BLE-Wakeup (Sekunden)")
     parser.add_argument("--wifi", action="store_true", help="Verbinde zum Kamera-WLAN via nmcli")
     args = parser.parse_args()
+
+    setup_logging(args.debug)
 
     if args.ble:
         asyncio.run(BLEWorker.wake_camera(args.ble_mac))
