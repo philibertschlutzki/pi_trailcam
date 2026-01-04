@@ -418,7 +418,7 @@ class Session:
 
         # Strategy (c): Try removing prefix bytes (4, 8, or 16) if payload has prefix
         if not obj:
-            for prefix_size in [4, 8, 16]:
+            for prefix_size in [4, 8, 16, 3]:
                 if len(raw) > prefix_size and len(raw[prefix_size:]) % 16 == 0:
                     try:
                         ciphertext = raw[prefix_size:]
@@ -440,6 +440,34 @@ class Session:
                     except Exception as e:
                         if self.debug:
                             logger.debug(f"⚠️ ECB-prefix{prefix_size} failed: {e}")
+        
+        # Strategy (d): Try CBC with prefix removal
+        if not obj:
+            for prefix_size in [4, 8, 16, 3]:
+                # After removing prefix, we need at least 32 bytes (16 for IV + 16 for one block)
+                if len(raw) > prefix_size + 32 and len(raw[prefix_size + 16:]) % 16 == 0:
+                    try:
+                        data_after_prefix = raw[prefix_size:]
+                        iv = data_after_prefix[:16]
+                        ciphertext = data_after_prefix[16:]
+                        if self.debug:
+                            logger.debug(f"🔍 Trying CBC with {prefix_size}B prefix removal, IV+ciphertext_len={len(data_after_prefix)}")
+                        
+                        dec_cbc_prefix = AES.new(PHASE2_KEY, AES.MODE_CBC, iv).decrypt(ciphertext)
+                        
+                        try:
+                            unpadded = unpad(dec_cbc_prefix, AES.block_size)
+                            obj = json.loads(unpadded.decode("utf-8"))
+                            strategy = f"CBC-prefix{prefix_size}"
+                            break
+                        except Exception:
+                            obj = self._manual_unpad_utf8_json(dec_cbc_prefix)
+                            if obj:
+                                strategy = f"CBC-prefix{prefix_size}-manual"
+                                break
+                    except Exception as e:
+                        if self.debug:
+                            logger.debug(f"⚠️ CBC-prefix{prefix_size} failed: {e}")
 
         if not isinstance(obj, dict):
             if self.debug:
