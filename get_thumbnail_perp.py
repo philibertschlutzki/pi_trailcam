@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.9
+"""Wildkamera Thumbnail Downloader - consolidated v4.10
 
-Optimizations in this version (v4.9):
-- Token buffering: Cmd=3 packets received during handshake/stabilization are now buffered
-- Pre-scan check: Before starting 3-second token scan, check if token already arrived
-- Event filtering: Cmd=9 (evtId=4) packets are explicitly ignored to prevent buffer pollution
-- Improved timing: Token can arrive at any point after PreLogin and will be captured
+Optimizations in this version (v4.10):
+- Token buffering: Cmd=3 packets received during handshake/stabilization are buffered.
+- Buffer validation debug: For buffered Cmd=3 packets, log full Base64 payload and decode/decrypt errors.
+- Event handling: Cmd=9 (ARTEMISw events) are ACKed but routed into a separate event queue and can be filtered from the main flow.
+- Login timing: Prefer waiting for token after sending Login (token may arrive only after Login request).
 """
 
 import argparse
@@ -42,6 +42,9 @@ DEFAULT_SSID = "KJK_E0FF"
 DEFAULT_PASS = "85087127"
 
 BLE_MAC = "C6:1E:0D:E0:32:E8"
+
+# Login timing: give camera time after initial heartbeat/magic sequence.
+LOGIN_DELAY_AFTER_STABILIZATION = 2.0
 
 
 # --- CONSTANTS / PAYLOADS ---
@@ -223,9 +226,10 @@ class Session:
         # --- Event spam control (Debug) ---
         self._evt_last_log_ts: float = 0.0
         self._evt_suppressed: int = 0
+        self._event_queue: deque = deque(maxlen=200)
 
-        # --- NEW: Token buffer (v4.9) ---
-        self._token_packet_buffer: deque = deque(maxlen=10)  # Buffer for potential token packets
+        # --- Token buffer (Cmd=3) ---
+        self._token_packet_buffer: deque = deque(maxlen=10)
         self._buffering_active = False
 
     def enable_token_buffering(self):
@@ -285,6 +289,14 @@ class Session:
             return b""
         return data[start:end]
 
+    @staticmethod
+    def _pad_b64(b64_part: bytes) -> bytes:
+        if not b64_part:
+            return b64_part
+        if len(b64_part) % 4 != 0:
+            b64_part += b"=" * (4 - (len(b64_part) % 4))
+        return b64_part
+
     def _decrypt_artemis_json_any(self, data: bytes) -> Optional[Tuple[Dict[str, Any], int, int]]:
         """Robustes Decrypt: findet ARTEMIS Header an beliebigem Offset und entschlüsselt Base64(AES-ECB(JSON))."""
 
@@ -298,14 +310,46 @@ class Session:
         if not b64_part:
             return None
 
-        if len(b64_part) % 4 != 0:
-            b64_part += b"=" * (4 - (len(b64_part) % 4))
+        b64_part = self._pad_b64(b64_part)
 
-        raw = base64.b64decode(b64_part)
-        dec = unpad(AES.new(PHASE2_KEY, AES.MODE_ECB).decrypt(raw), AES.block_size)
-        obj = json.loads(dec.decode("utf-8"))
+        try:
+            raw = base64.b64decode(b64_part)
+        except Exception as e:
+            if self.debug:
+                logger.debug(
+                    "❌ base64.b64decode failed "
+                    f"(Cmd={cmd_id}, AppSeq={app_seq}, b64_len={len(b64_part)}): {e!r}"
+                )
+                try:
+                    logger.debug(f"🧾 b64(full)={b64_part.decode('ascii', errors='replace')}")
+                except Exception:
+                    pass
+            return None
+
+        try:
+            dec = unpad(AES.new(PHASE2_KEY, AES.MODE_ECB).decrypt(raw), AES.block_size)
+        except Exception as e:
+            if self.debug:
+                logger.debug(
+                    "❌ AES decrypt/unpad failed "
+                    f"(Cmd={cmd_id}, AppSeq={app_seq}, raw_len={len(raw)}): {e!r}"
+                )
+            return None
+
+        try:
+            obj = json.loads(dec.decode("utf-8"))
+        except Exception as e:
+            if self.debug:
+                logger.debug(
+                    "❌ JSON decode failed "
+                    f"(Cmd={cmd_id}, AppSeq={app_seq}, dec_len={len(dec)}): {e!r}"
+                )
+                logger.debug(f"🧾 dec(hex)={hexdump(dec, max_len=256)}")
+            return None
+
         if not isinstance(obj, dict):
             return None
+
         return obj, cmd_id, app_seq
 
     def _try_parse_evt(self, data: bytes) -> Optional[Dict[str, Any]]:
@@ -508,39 +552,85 @@ class Session:
     def _extract_token_any(self, pkt: bytes) -> Optional[Tuple[str, int, int]]:
         """Extrahiert token aus beliebigem ARTEMIS-Frame (cmd_id egal)."""
 
-        try:
-            r = self._decrypt_artemis_json_any(pkt)
-            if r is None:
-                return None
-            obj, cmd_id, app_seq = r
-
-            if not isinstance(obj, dict):
-                return None
-            if "token" not in obj:
-                return None
-
-            tok = obj.get("token")
-            if tok is None:
-                return None
-
-            return str(tok), int(cmd_id), int(app_seq)
-        except Exception:
+        r = self._decrypt_artemis_json_any(pkt)
+        if r is None:
             return None
 
+        obj, cmd_id, app_seq = r
+
+        if not isinstance(obj, dict) or "token" not in obj:
+            return None
+
+        tok = obj.get("token")
+        if tok is None:
+            return None
+
+        return str(tok), int(cmd_id), int(app_seq)
+
+    def _debug_dump_buffered_cmd3(self, pkt: bytes, idx: int):
+        if not self.debug:
+            return
+
+        hdr = self._parse_artemis_header_any(pkt)
+        if hdr is None:
+            logger.debug(f"🧾 Buffer[{idx}] no ARTEMIS header")
+            return
+
+        off, magic, cmd_id, app_seq, alen = hdr
+        payload = self._extract_artemis_payload(pkt, off, alen)
+        b64_part = payload.split(b"\x00")[0]
+        b64_part_padded = self._pad_b64(b64_part)
+
+        tag = "ARTEMISw" if magic == ARTEMIS_W else "ARTEMIS"
+        try:
+            b64_str = b64_part_padded.decode("ascii", errors="replace")
+        except Exception:
+            b64_str = "<decode-error>"
+
+        logger.debug(
+            f"🧾 Buffer[{idx}] {tag} Cmd={cmd_id} AppSeq={app_seq} ALen={alen} "
+            f"b64_len={len(b64_part_padded)} b64='{b64_str}'"
+        )
+
+        try:
+            raw = base64.b64decode(b64_part_padded)
+            logger.debug(f"✅ Buffer[{idx}] base64 decode ok raw_len={len(raw)}")
+        except Exception as e:
+            logger.debug(f"❌ Buffer[{idx}] base64 decode failed: {e!r}")
+            return
+
+        try:
+            dec = unpad(AES.new(PHASE2_KEY, AES.MODE_ECB).decrypt(raw), AES.block_size)
+            logger.debug(f"✅ Buffer[{idx}] AES decrypt ok dec_len={len(dec)}")
+        except Exception as e:
+            logger.debug(f"❌ Buffer[{idx}] AES decrypt/unpad failed: {e!r}")
+            return
+
+        try:
+            j = dec.decode("utf-8")
+            logger.debug(f"🧾 Buffer[{idx}] json(raw)={j}")
+        except Exception as e:
+            logger.debug(f"❌ Buffer[{idx}] utf-8 decode failed: {e!r}")
+
     def _check_buffered_tokens(self) -> bool:
-        """Prüft gepufferte Pakete auf Token (v4.9)."""
+        """Prüft gepufferte Pakete auf Token."""
         if not self._token_packet_buffer:
             return False
 
         if self.debug:
             logger.debug(f"🔍 Prüfe {len(self._token_packet_buffer)} gepufferte Pakete auf Token…")
 
-        for pkt in list(self._token_packet_buffer):
+        for i, pkt in enumerate(list(self._token_packet_buffer)):
+            # v4.10: Debug the buffered payload end-to-end
+            self._debug_dump_buffered_cmd3(pkt, i)
+
             t = self._extract_token_any(pkt)
             if t is not None:
                 tok, cmd_id, app_seq = t
                 self.token = str(tok)
-                logger.info(f"✅ TOKEN aus Puffer extrahiert (Cmd={cmd_id}, AppSeq={app_seq}): {self.token}")
+                logger.info(
+                    f"✅ TOKEN aus Puffer extrahiert (Cmd={cmd_id}, AppSeq={app_seq}, len={len(self.token)}): {self.token}"
+                )
                 return True
 
         return False
@@ -548,7 +638,7 @@ class Session:
     def wait_for_token(self, timeout: float, phase: str) -> bool:
         """Wartet bis ein gültiges token empfangen wurde und speichert es in self.token."""
 
-        # NEW (v4.9): Check buffer first
+        # Check buffer first (in case token arrived early)
         if self._check_buffered_tokens():
             logger.info(f">>> Token bereits im Puffer vorhanden ({phase})")
             return True
@@ -570,7 +660,9 @@ class Session:
             return False
 
         self.token = str(found["token"])
-        logger.info(f"✅ TOKEN OK ({phase}) cmd_id={found['cmd_id']} app_seq={found['app_seq']} token={self.token}")
+        logger.info(
+            f"✅ TOKEN OK ({phase}) cmd_id={found['cmd_id']} app_seq={found['app_seq']} token_len={len(self.token)}"
+        )
         return True
 
     def send_heartbeat(self):
@@ -636,28 +728,27 @@ class Session:
             except Exception:
                 continue
 
-            if self.raw_rx_dump and self._raw_window_active():
-                logger.debug(f"🧾 RAW RX from={addr[0]}:{addr[1]} len={len(data)}\n{hexdump_full(data)}")
+            # Parse event early so RAW dump can reduce noise
+            evt = self._try_parse_evt(data)
 
-                meta = self._parse_artemis_meta_any(data)
-                if meta is not None:
-                    off, cmd_id, app_seq, alen = meta
-                    logger.debug(
-                        f"🧩 ARTEMIS meta from={addr[0]}:{addr[1]} off=0x{off:x} cmd_id={cmd_id} app_seq={app_seq} alen={alen}"
-                    )
+            if self.raw_rx_dump and self._raw_window_active():
+                if evt is not None and filter_evt:
+                    # avoid flooding debug logs with full hexdumps of event spam
+                    logger.debug(f"🧾 RAW RX (event) from={addr[0]}:{addr[1]} len={len(data)}")
+                else:
+                    logger.debug(f"🧾 RAW RX from={addr[0]}:{addr[1]} len={len(data)}\n{hexdump_full(data)}")
+
+                    meta = self._parse_artemis_meta_any(data)
+                    if meta is not None:
+                        off, cmd_id, app_seq, alen = meta
+                        logger.debug(
+                            f"🧩 ARTEMIS meta from={addr[0]}:{addr[1]} off=0x{off:x} cmd_id={cmd_id} app_seq={app_seq} alen={alen}"
+                        )
 
             self.log_rx(data, desc=f"from={addr}")
 
             if not data or len(data) < 2:
                 continue
-
-            # NEW (v4.9): Buffer potential token packets (Cmd=3) if buffering is active
-            if self._buffering_active:
-                cmd_id = self.get_cmd_id(data)
-                if cmd_id == 3:  # Cmd=3 usually contains token
-                    self._token_packet_buffer.append(data)
-                    if self.debug:
-                        logger.debug(f"🔓 Cmd=3 Paket gepuffert (Buffer: {len(self._token_packet_buffer)} Pakete)")
 
             looks_artemis_frag = False
             if len(data) >= 8 and data[0] == 0xF1:
@@ -668,6 +759,7 @@ class Session:
                     frag_payload = data[8:]
                     looks_artemis_frag = (ARTEMIS_NULL in frag_payload) or (ARTEMIS_NULL in self._frag_buf)
 
+                # ACK data and artemis fragments (including events) to prevent retransmit storm
                 if pkt_type == 0xD0 or (pkt_type == 0x42 and looks_artemis_frag):
                     is_ack_payload = self._is_simple_ack_payload(data)
                     if not is_ack_payload and self.active_port:
@@ -693,12 +785,20 @@ class Session:
                         if self.debug:
                             logger.debug("FRAG ohne ARTEMIS-Signatur (vermutlich LBCS/Discovery); skip reassembly/ack")
 
-            # NEW (v4.9): Filter Cmd=9 (evtId=4) explicitly to prevent buffer pollution
-            evt = self._try_parse_evt(data)
+            # Token buffer: store Cmd=3 during handshake/stabilization
+            if self._buffering_active:
+                cmd_id = self.get_cmd_id(data)
+                if cmd_id == 3:
+                    self._token_packet_buffer.append(data)
+                    if self.debug:
+                        logger.debug(f"🔓 Cmd=3 Paket gepuffert (Buffer: {len(self._token_packet_buffer)} Pakete)")
+
+            # Events: ACKed above but routed to separate queue; optionally filtered from main flow
             if evt is not None:
+                self._event_queue.append(evt)
                 self._log_evt_rate_limited(evt)
                 if filter_evt:
-                    continue  # Ignore event packets
+                    continue
 
             if accept_predicate is not None:
                 try:
@@ -794,7 +894,7 @@ class Session:
         if not self.discovery():
             return
 
-        # NEW (v4.9): Enable token buffering BEFORE PreLogin
+        # Enable token buffering BEFORE PreLogin
         self.enable_token_buffering()
 
         self.send_prelogin()
@@ -819,12 +919,15 @@ class Session:
             self.send_heartbeat()
             self.pump(timeout=0.5, accept_predicate=lambda _d: False)
 
-        # NEW (v4.9): Check buffer BEFORE starting token scan
-        logger.info(">>> Token-Scan vor Login (check buffer first)…")
-        if self.debug and self.raw_rx_dump:
-            self.enable_raw_rx_dump(seconds=3.0)
+        if LOGIN_DELAY_AFTER_STABILIZATION > 0:
+            logger.info(f">>> Warte {LOGIN_DELAY_AFTER_STABILIZATION:.1f}s vor Login…")
+            time.sleep(LOGIN_DELAY_AFTER_STABILIZATION)
 
-        if not self.wait_for_token(timeout=2.5, phase="pre-login"):
+        # Prefer token after login, but still check buffer once in case token arrived early
+        logger.info(">>> Token-Check (nur Buffer) vor Login…")
+        if self._check_buffered_tokens():
+            logger.info(">>> Token bereits vorhanden; überspringe Login-Request.")
+        else:
             logger.info(">>> Login…")
             self.app_seq += 1
             login_data = {
@@ -849,8 +952,6 @@ class Session:
             if not self.wait_for_token(timeout=max(8.0, self.raw_rx_window_seconds), phase="login"):
                 logger.error("❌ Login Timeout (kein Token empfangen)")
                 return
-        else:
-            logger.info(">>> Token bereits vorhanden; überspringe Login-Request.")
 
         # Disable buffering after successful login
         self.disable_token_buffering()
