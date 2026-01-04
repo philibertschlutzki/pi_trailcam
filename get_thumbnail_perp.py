@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.4
+"""Wildkamera Thumbnail Downloader - consolidated v4.5
 
 Fixes / Improvements:
 - Issue #134: Login Timeout
@@ -13,6 +13,8 @@ Fixes / Improvements:
 - Debug/Logging:
   * Mit --debug werden alle TX/RX Frames inkl. Pkt-Typ (D0/42/43/...), Seq, BodyLen und (wenn vorhanden) ARTEMIS Cmd/AppSeq/Len geloggt.
   * Zusätzlich wird ein Logfile get_thumbnail_perp_debug.log geschrieben (unbuffered flush+fsync), damit Logs bei Crash nicht verloren gehen.
+  * Neu: optionaler "RAW RX window" nach Login-Request (Default: 20s). In diesem Zeitfenster werden alle empfangenen UDP-Pakete roh geloggt
+    (src_ip, src_port, len, vollständiger Hexdump), plus ARTEMIS-Metadaten (cmd_id/app_seq/alen), auch wenn es nicht das erwartete Cmd ist.
 
 Hinweis: Das Script ist auf Python 3.8+ kompatibel (kein PEP604 "bytes | None").
 """
@@ -28,7 +30,7 @@ import struct
 import subprocess
 import sys
 import time
-from typing import Optional, Iterable, Union, Set
+from typing import Optional, Union, Set, Tuple
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
@@ -120,6 +122,19 @@ def hexdump(data: bytes, max_len: int = 96) -> str:
     return data[:max_len].hex() + f"…(+{len(data)-max_len}b)"
 
 
+def hexdump_full(data: bytes, width: int = 16) -> str:
+    """Vollständiger Hexdump (ohne Trunkierung), zeilenweise."""
+
+    if data is None:
+        return ""
+
+    out = []
+    for off in range(0, len(data), width):
+        chunk = data[off : off + width]
+        out.append(f"{off:04x}: {chunk.hex()}")
+    return "\n".join(out)
+
+
 def build_artemis_frame(cmd_id: int, app_seq: int, body: bytes) -> bytes:
     return b"ARTEMIS\x00" + struct.pack("<III", cmd_id, app_seq, len(body)) + body
 
@@ -195,7 +210,7 @@ class Session:
         0xF9: "PRE",
     }
 
-    def __init__(self, debug: bool = False):
+    def __init__(self, debug: bool = False, raw_rx_window_seconds: float = 20.0, raw_rx_dump: bool = True):
         self.sock: Optional[socket.socket] = None
         self.active_port: Optional[int] = None
 
@@ -209,6 +224,41 @@ class Session:
         self.heartbeat_cnt = 0
 
         self._frag_buf = bytearray()
+
+        # --- RAW window options (Debug) ---
+        self.raw_dump_until: float = 0.0
+        self.raw_rx_window_seconds = float(raw_rx_window_seconds)
+        self.raw_rx_dump = bool(raw_rx_dump)
+
+    def enable_raw_rx_dump(self, seconds: Optional[float] = None):
+        secs = self.raw_rx_window_seconds if seconds is None else float(seconds)
+        self.raw_dump_until = time.time() + secs
+        if self.debug:
+            logger.debug(f"🧾 RAW-RX-DUMP aktiv für {secs:.1f}s (bis {self.raw_dump_until})")
+
+    def _raw_window_active(self) -> bool:
+        return bool(self.debug and self.raw_dump_until and time.time() < self.raw_dump_until)
+
+    @staticmethod
+    def _parse_artemis_meta_any(data: bytes) -> Optional[Tuple[int, int, int, int]]:
+        """Findet 'ARTEMIS\x00' an beliebigem Offset und parsed (cmd_id, app_seq, alen)."""
+
+        if not data:
+            return None
+
+        idx = data.find(b"ARTEMIS\x00")
+        if idx < 0:
+            return None
+
+        base = idx + 8
+        if len(data) < base + 12:
+            return None
+
+        try:
+            cmd_id, app_seq, alen = struct.unpack("<III", data[base : base + 12])
+            return idx, cmd_id, app_seq, alen
+        except Exception:
+            return None
 
     def analyze_packet(self, data: bytes) -> str:
         if not data:
@@ -396,6 +446,7 @@ class Session:
           - None: keine Filterung, return beim ersten Paket
           - int/set: return beim ersten ARTEMIS-Paket das passt
         """
+
         start = time.time()
         while time.time() - start < timeout:
             if self.active_port and self.global_seq > 1:
@@ -407,6 +458,19 @@ class Session:
                 continue
             except Exception:
                 continue
+
+            # RAW RX dump (ohne Filter), aber nur wenn explizit aktiviert
+            if self.raw_rx_dump and self._raw_window_active():
+                logger.debug(
+                    f"🧾 RAW RX from={addr[0]}:{addr[1]} len={len(data)}\n{hexdump_full(data)}"
+                )
+
+                meta = self._parse_artemis_meta_any(data)
+                if meta is not None:
+                    off, cmd_id, app_seq, alen = meta
+                    logger.debug(
+                        f"🧩 ARTEMIS meta from={addr[0]}:{addr[1]} off=0x{off:x} cmd_id={cmd_id} app_seq={app_seq} alen={alen}"
+                    )
 
             self.log_rx(data, desc=f"from={addr}")
 
@@ -431,6 +495,15 @@ class Session:
                     if re is None:
                         continue
                     data = re
+
+                    # Nach Reassembly nochmals Meta loggen (deckt "ARTEMIS" über Fragmentgrenzen ab)
+                    if self.raw_rx_dump and self._raw_window_active():
+                        meta = self._parse_artemis_meta_any(data)
+                        if meta is not None:
+                            off, cmd_id, app_seq, alen = meta
+                            logger.debug(
+                                f"🧩 ARTEMIS(meta reassembled) from={addr[0]}:{addr[1]} off=0x{off:x} cmd_id={cmd_id} app_seq={app_seq} alen={alen}"
+                            )
 
             if accept_cmd is None:
                 return data
@@ -551,8 +624,12 @@ class Session:
         pkt, _ = self.build_packet(0xD0, art)
         self.send_raw(pkt, desc="Login")
 
+        # RAW RX-Dump direkt nach Login-Request (zur Diagnose "Antwort kommt an, wird aber nicht geparst")
+        if self.debug and self.raw_rx_dump:
+            self.enable_raw_rx_dump()
+
         logger.info("⏳ Warte auf Login-Response (Cmd 3)…")
-        resp_pkt = self.pump(timeout=8.0, accept_cmd=3)
+        resp_pkt = self.pump(timeout=max(8.0, self.raw_rx_window_seconds), accept_cmd=3)
         if not resp_pkt:
             logger.error("❌ Login Timeout")
             return
@@ -585,6 +662,17 @@ class Session:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true", help="Debug logging (inkl. Frame-Dumps)")
+    parser.add_argument(
+        "--raw-rx-window",
+        type=float,
+        default=20.0,
+        help="RAW RX dump window nach Login-Request (Sekunden, default: 20.0).",
+    )
+    parser.add_argument(
+        "--no-raw-rx",
+        action="store_true",
+        help="Deaktiviert RAW RX dump window (auch wenn --debug aktiv ist).",
+    )
     parser.add_argument("--ble", action="store_true", help="Weckt die Kamera per BLE (aktiviert Wi-Fi-Modul)")
     parser.add_argument("--ble-mac", default=BLE_MAC, help="BLE MAC-Adresse der Kamera")
     parser.add_argument("--ble-wait", type=int, default=20, help="Wartezeit nach BLE-Wakeup (Sekunden)")
@@ -600,4 +688,8 @@ if __name__ == "__main__":
     if args.wifi:
         WiFiWorker.connect(DEFAULT_SSID, DEFAULT_PASS)
 
-    Session(debug=args.debug).run()
+    Session(
+        debug=args.debug,
+        raw_rx_window_seconds=args.raw_rx_window,
+        raw_rx_dump=(not args.no_raw_rx),
+    ).run()
