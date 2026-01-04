@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.12
+"""Wildkamera Thumbnail Downloader - consolidated v4.13
 
-Optimizations in this version (v4.12):
-- Event Parsing Fix: Cmd=9 (ARTEMISw) is treated as plaintext JSON (no Base64/AES decode attempt).
-  (Solves 'base64.b64decode failed: Incorrect padding' errors for events).
-- Inherits v4.11 fixes:
-  - Robust Decryption (manual unpad fallback)
-  - Token buffering
-  - Event queueing
-  - Login timing optimizations
+Changes in this version (v4.13):
+- Login handshake fix: ARTEMIS ("ARTEMIS\x00") header field1 is MsgType (2=request, 3=response), not cmdId.
+  Requests are now sent with MsgType=2 and the real cmdId stays inside the encrypted JSON.
+- Response matching: cmdId filtering is now based on decrypted JSON (cmdId), not on the ARTEMIS header field.
+- Token extraction: token is accepted only from MsgType=3 responses that match the expected AppSeq of the login request.
+- Keeps v4.12: ARTEMISw Cmd=9 is parsed as plaintext JSON event (no base64/AES attempt).
 """
 
 import argparse
@@ -22,7 +20,7 @@ import struct
 import subprocess
 import sys
 import time
-from typing import Optional, Union, Set, Tuple, Callable, Any, Dict, List
+from typing import Optional, Union, Set, Tuple, Callable, Any, Dict
 from collections import deque
 
 from Crypto.Cipher import AES
@@ -46,7 +44,6 @@ DEFAULT_PASS = "85087127"
 
 BLE_MAC = "C6:1E:0D:E0:32:E8"
 
-# Login timing: give camera time after initial heartbeat/magic sequence.
 LOGIN_DELAY_AFTER_STABILIZATION = 2.0
 
 
@@ -56,6 +53,7 @@ LBCS_PAYLOAD = bytes.fromhex("f14100144c42435300000000000000004343434a4a000000")
 MAGIC_BODY_1 = bytes.fromhex("000000000000")
 MAGIC_BODY_2 = bytes.fromhex("0000")
 
+# Heartbeat body is a vendor-specific "ARTEMIS" blob; keep as-is.
 HEARTBEAT_BODY_START = bytes.fromhex("415254454d49530002000000")
 HEARTBEAT_PAYLOAD_END = bytes.fromhex(
     "000100190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00"
@@ -68,6 +66,9 @@ PHASE2_STATIC_HEADER = bytes.fromhex(
 
 ARTEMIS_NULL = b"ARTEMIS\x00"
 ARTEMIS_W = b"ARTEMISw"
+
+ARTEMIS_MSG_REQUEST = 2
+ARTEMIS_MSG_RESPONSE = 3
 
 # Hello base64 blob
 ARTEMIS_HELLO_B64 = (
@@ -122,8 +123,6 @@ def hexdump(data: bytes, max_len: int = 96) -> str:
 
 
 def hexdump_full(data: bytes, width: int = 16) -> str:
-    """Vollständiger Hexdump (ohne Trunkierung), zeilenweise."""
-
     if data is None:
         return ""
 
@@ -134,8 +133,13 @@ def hexdump_full(data: bytes, width: int = 16) -> str:
     return "\n".join(out)
 
 
-def build_artemis_frame(cmd_id: int, app_seq: int, body: bytes) -> bytes:
-    return ARTEMIS_NULL + struct.pack("<III", cmd_id, app_seq, len(body)) + body
+def build_artemis_frame(msg_type: int, app_seq: int, body: bytes) -> bytes:
+    """Builds an ARTEMIS\x00 frame.
+
+    field1 is MsgType (2=request, 3=response) according to Protocol_analysis.md.
+    """
+
+    return ARTEMIS_NULL + struct.pack("<III", int(msg_type), int(app_seq), len(body)) + body
 
 
 class BLEWorker:
@@ -221,29 +225,25 @@ class Session:
 
         self._frag_buf = bytearray()
 
-        # --- RAW window options (Debug) ---
         self.raw_dump_until: float = 0.0
         self.raw_rx_window_seconds = float(raw_rx_window_seconds)
         self.raw_rx_dump = bool(raw_rx_dump)
 
-        # --- Event spam control (Debug) ---
         self._evt_last_log_ts: float = 0.0
         self._evt_suppressed: int = 0
         self._event_queue: deque = deque(maxlen=200)
 
-        # --- Token buffer (Cmd=3) ---
+        # Token buffer (raw MsgType=3 responses during handshake/login)
         self._token_packet_buffer: deque = deque(maxlen=10)
         self._buffering_active = False
 
     def enable_token_buffering(self):
-        """Aktiviert Token-Pufferung (sollte vor PreLogin gestartet werden)."""
         self._buffering_active = True
         self._token_packet_buffer.clear()
         if self.debug:
             logger.debug("🔓 Token-Pufferung aktiviert")
 
     def disable_token_buffering(self):
-        """Deaktiviert Token-Pufferung."""
         self._buffering_active = False
         if self.debug:
             logger.debug("🔒 Token-Pufferung deaktiviert")
@@ -259,9 +259,11 @@ class Session:
 
     @staticmethod
     def _parse_artemis_header_any(data: bytes) -> Optional[Tuple[int, bytes, int, int, int]]:
-        """Findet ARTEMIS Header (ARTEMIS\x00 oder ARTEMISw) an beliebigem Offset.
+        """Finds ARTEMIS header at any offset.
 
-        Returns: (offset, magic8, cmd_id, app_seq, alen)
+        Returns: (offset, magic8, field1, app_seq, alen)
+        - For ARTEMIS\x00: field1 = MsgType (2=request, 3=response)
+        - For ARTEMISw:   field1 = cmd_id (e.g. 9 for event)
         """
 
         if not data:
@@ -277,8 +279,8 @@ class Session:
                 return None
 
             try:
-                cmd_id, app_seq, alen = struct.unpack("<III", data[base : base + 12])
-                return idx, magic, cmd_id, app_seq, alen
+                field1, app_seq, alen = struct.unpack("<III", data[base : base + 12])
+                return idx, magic, int(field1), int(app_seq), int(alen)
             except Exception:
                 return None
 
@@ -302,47 +304,40 @@ class Session:
 
     @staticmethod
     def _manual_unpad_utf8_json(decrypted: bytes) -> Optional[Dict[str, Any]]:
-        """Versucht, JSON aus einem decrypted Byte-String zu extrahieren, auch bei kaputtem Padding."""
-        # Strategie: Wir suchen das letzte '}', da JSON mit '}' enden muss.
-        # Alles danach ignorieren wir als Padding.
-        
         try:
-            # 1. Versuch: Dekodieren mit 'replace' um Fehler zu sehen, aber 'ignore' für Parsing besser
             s = decrypted.decode("utf-8", errors="ignore")
-            
-            # Suche nach letztem '}'
             end_idx = s.rfind("}")
             if end_idx == -1:
                 return None
-            
-            # JSON-String bis inkl. '}'
-            json_str = s[:end_idx+1]
+            json_str = s[: end_idx + 1]
             obj = json.loads(json_str)
             return obj
         except Exception:
             return None
 
-    def _decrypt_artemis_json_any(self, data: bytes) -> Optional[Tuple[Dict[str, Any], int, int]]:
-        """Robustes Decrypt: findet ARTEMIS Header an beliebigem Offset und entschlüsselt Base64(AES-ECB(JSON))."""
+    def _decrypt_artemis_json_any(self, data: bytes) -> Optional[Tuple[Dict[str, Any], int, int, bytes]]:
+        """Decrypts Base64(AES-ECB(JSON)) from ARTEMIS\x00 frames; ARTEMISw may be plaintext JSON.
+
+        Returns: (obj, field1, app_seq, magic)
+        - field1 = MsgType for ARTEMIS\x00, cmd_id for ARTEMISw
+        """
 
         hdr = self._parse_artemis_header_any(data)
         if hdr is None:
             return None
 
-        off, magic, cmd_id, app_seq, alen = hdr
-        
-        # FIX v4.12: ARTEMISw (oft Events) ist meist Plaintext, kein Base64/AES.
-        # Wir versuchen hier nicht zu decrypten, wenn es ARTEMISw ist, es sei denn wir sind sicher.
-        # Aber da _try_parse_evt() das schon macht, können wir hier einfach failen oder Plaintext probieren.
+        off, magic, field1, app_seq, alen = hdr
+
+        # ARTEMISw is often plaintext JSON (events)
         if magic == ARTEMIS_W:
-            # Optional: Check if payload looks like JSON directly
             payload = self._extract_artemis_payload(data, off, alen)
             raw = payload.split(b"\x00")[0]
             try:
                 obj = json.loads(raw.decode("utf-8", errors="ignore"))
-                return obj, cmd_id, app_seq
+                if isinstance(obj, dict):
+                    return obj, field1, app_seq, magic
             except Exception:
-                pass # Falls kein Plaintext, weiter mit B64 Versuch (manche Firmwares sind weird)
+                return None
 
         payload = self._extract_artemis_payload(data, off, alen)
         b64_part = payload.split(b"\x00")[0]
@@ -357,36 +352,29 @@ class Session:
             if self.debug:
                 logger.debug(
                     "❌ base64.b64decode failed "
-                    f"(Cmd={cmd_id}, AppSeq={app_seq}, b64_len={len(b64_part)}): {e!r}"
+                    f"(field1={field1}, AppSeq={app_seq}, b64_len={len(b64_part)}): {e!r}"
                 )
             return None
 
-        # 1. Versuch: Standard unpad
         dec = AES.new(PHASE2_KEY, AES.MODE_ECB).decrypt(raw)
-        obj = None
 
+        obj: Optional[Dict[str, Any]] = None
         try:
             unpadded = unpad(dec, AES.block_size)
             obj = json.loads(unpadded.decode("utf-8"))
         except Exception:
-            # 2. Versuch: Manuelles Ent-Padden / JSON Extract (Fallback)
             if self.debug:
-                 logger.debug(f"⚠️ Standard unpad/json failed (Cmd={cmd_id}), trying fallback...")
-            
+                logger.debug(f"⚠️ Standard unpad/json failed (field1={field1}), trying fallback...")
             obj = self._manual_unpad_utf8_json(dec)
-            if obj is not None and self.debug:
-                logger.debug(f"✅ Fallback decryption success (Cmd={cmd_id})")
 
         if not isinstance(obj, dict):
-             if self.debug and obj is None:
-                 logger.debug(f"❌ Decryption completely failed (Cmd={cmd_id})")
-             return None
+            if self.debug:
+                logger.debug(f"❌ Decryption failed (field1={field1})")
+            return None
 
-        return obj, cmd_id, app_seq
+        return obj, field1, app_seq, magic
 
     def _try_parse_evt(self, data: bytes) -> Optional[Dict[str, Any]]:
-        """Parst ARTEMISw-Events (z.B. {"evtId":4})."""
-
         hdr = self._parse_artemis_header_any(data)
         if hdr is None:
             return None
@@ -404,13 +392,7 @@ class Session:
             s = raw.decode("utf-8", errors="strict")
             obj = json.loads(s)
             if isinstance(obj, dict) and "evtId" in obj:
-                return {
-                    "evtId": obj.get("evtId"),
-                    "cmd_id": cmd_id,
-                    "app_seq": app_seq,
-                    "alen": alen,
-                    "raw": obj,
-                }
+                return {"evtId": obj.get("evtId"), "cmd_id": cmd_id, "app_seq": app_seq, "alen": alen, "raw": obj}
         except Exception:
             return None
 
@@ -418,18 +400,44 @@ class Session:
 
     @staticmethod
     def _is_simple_ack_payload(data: bytes) -> bool:
-        # z.B. f1 d0 00 07 d1 00 00 00 41 43 4b
         return bool(len(data) >= 11 and data[0] == 0xF1 and data[1] == 0xD0 and data[8:11] == b"ACK")
 
     @staticmethod
-    def _parse_artemis_meta_any(data: bytes) -> Optional[Tuple[int, int, int, int]]:
-        """Findet ARTEMIS Header an beliebigem Offset und parsed (cmd_id, app_seq, alen)."""
-
+    def _parse_artemis_meta_any(data: bytes) -> Optional[Tuple[int, bytes, int, int, int]]:
         hdr = Session._parse_artemis_header_any(data)
         if hdr is None:
             return None
-        off, _magic, cmd_id, app_seq, alen = hdr
-        return off, cmd_id, app_seq, alen
+        off, magic, field1, app_seq, alen = hdr
+        return off, magic, field1, app_seq, alen
+
+    def _get_artemis_msg_type(self, data: bytes) -> Optional[int]:
+        hdr = self._parse_artemis_header_any(data)
+        if hdr is None:
+            return None
+        _off, magic, field1, _app_seq, _alen = hdr
+        if magic != ARTEMIS_NULL:
+            return None
+        return int(field1)
+
+    def _get_artemis_app_seq(self, data: bytes) -> Optional[int]:
+        hdr = self._parse_artemis_header_any(data)
+        if hdr is None:
+            return None
+        _off, _magic, _field1, app_seq, _alen = hdr
+        return int(app_seq)
+
+    def _get_json_cmd_id(self, data: bytes) -> Optional[int]:
+        r = self._decrypt_artemis_json_any(data)
+        if r is None:
+            return None
+        obj, _field1, _app_seq, magic = r
+        if magic != ARTEMIS_NULL:
+            return None
+        try:
+            v = obj.get("cmdId")
+            return int(v) if v is not None else None
+        except Exception:
+            return None
 
     def analyze_packet(self, data: bytes) -> str:
         if not data:
@@ -453,9 +461,11 @@ class Session:
 
         hdr = self._parse_artemis_header_any(data)
         if hdr is not None:
-            _off, magic, cmd_id, app_seq, alen = hdr
-            tag = "ARTEMISw" if magic == ARTEMIS_W else "ARTEMIS"
-            info += f" | {tag} Cmd={cmd_id} AppSeq={app_seq} ALen={alen}"
+            _off, magic, field1, app_seq, alen = hdr
+            if magic == ARTEMIS_W:
+                info += f" | ARTEMISw Cmd={field1} AppSeq={app_seq} ALen={alen}"
+            else:
+                info += f" | ARTEMIS MsgType={field1} AppSeq={app_seq} ALen={alen}"
 
         return info
 
@@ -549,7 +559,9 @@ class Session:
             self.global_seq = seq
 
         body_len = len(payload) + 4
-        header = bytearray([0xF1, packet_type, (body_len >> 8) & 0xFF, body_len & 0xFF, 0xD1, 0x00, 0x00, seq])
+        header = bytearray(
+            [0xF1, packet_type, (body_len >> 8) & 0xFF, body_len & 0xFF, 0xD1, 0x00, 0x00, seq]
+        )
         return bytes(header) + payload, seq
 
     def build_ack_10(self, rx_seq: int) -> bytes:
@@ -562,119 +574,78 @@ class Session:
         raw = json.dumps(obj, separators=(",", ":")).encode("utf-8")
         return AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(pad(raw, AES.block_size))
 
-    def decrypt_payload(self, data: bytes):
-        try:
-            r = self._decrypt_artemis_json_any(data)
-            if r is None:
-                return None
-            obj, _cmd_id, _app_seq = r
-            return obj
-        except Exception as e:
-            if self.debug:
-                logger.debug(f"Decrypt failed: {e}")
+    def decrypt_payload(self, data: bytes) -> Optional[Dict[str, Any]]:
+        r = self._decrypt_artemis_json_any(data)
+        if r is None:
             return None
+        obj, _field1, _app_seq, _magic = r
+        return obj
 
-    def get_cmd_id(self, data: bytes) -> Optional[int]:
-        hdr = self._parse_artemis_header_any(data)
-        if hdr is None:
+    def _extract_token_from_login_response(self, pkt: bytes, expected_app_seq: int) -> Optional[str]:
+        """Accept token only from login responses (MsgType=3) matching expected AppSeq."""
+
+        msg_type = self._get_artemis_msg_type(pkt)
+        app_seq = self._get_artemis_app_seq(pkt)
+        if msg_type != ARTEMIS_MSG_RESPONSE or app_seq != int(expected_app_seq):
             return None
-        _off, _magic, cmd_id, _app_seq, _alen = hdr
-        return cmd_id
-
-    def _extract_token_any(self, pkt: bytes) -> Optional[Tuple[str, int, int]]:
-        """Extrahiert token aus beliebigem ARTEMIS-Frame (cmd_id egal)."""
 
         r = self._decrypt_artemis_json_any(pkt)
         if r is None:
             return None
 
-        obj, cmd_id, app_seq = r
+        obj, _field1, _app_seq2, magic = r
+        if magic != ARTEMIS_NULL:
+            return None
 
-        if not isinstance(obj, dict) or "token" not in obj:
+        # Must be login cmdId=0
+        try:
+            cmd_id = obj.get("cmdId")
+            if cmd_id is None or int(cmd_id) != 0:
+                return None
+        except Exception:
             return None
 
         tok = obj.get("token")
         if tok is None:
             return None
 
-        return str(tok), int(cmd_id), int(app_seq)
+        return str(tok)
 
-    def _debug_dump_buffered_cmd3(self, pkt: bytes, idx: int):
-        if not self.debug:
-            return
-
-        hdr = self._parse_artemis_header_any(pkt)
-        if hdr is None:
-            logger.debug(f"🧾 Buffer[{idx}] no ARTEMIS header")
-            return
-
-        off, magic, cmd_id, app_seq, alen = hdr
-        payload = self._extract_artemis_payload(pkt, off, alen)
-        b64_part = payload.split(b"\x00")[0]
-        b64_part_padded = self._pad_b64(b64_part)
-
-        tag = "ARTEMISw" if magic == ARTEMIS_W else "ARTEMIS"
-        try:
-            b64_str = b64_part_padded.decode("ascii", errors="replace")
-        except Exception:
-            b64_str = "<decode-error>"
-
-        logger.debug(
-            f"🧾 Buffer[{idx}] {tag} Cmd={cmd_id} AppSeq={app_seq} ALen={alen} "
-            f"b64_len={len(b64_part_padded)} b64='{b64_str}'"
-        )
-
-    def _check_buffered_tokens(self) -> bool:
-        """Prüft gepufferte Pakete auf Token."""
+    def _check_buffered_login_token(self, expected_app_seq: int) -> bool:
         if not self._token_packet_buffer:
             return False
 
         if self.debug:
-            logger.debug(f"🔍 Prüfe {len(self._token_packet_buffer)} gepufferte Pakete auf Token…")
+            logger.debug(f"🔍 Prüfe {len(self._token_packet_buffer)} gepufferte Pakete auf Login-Token (AppSeq={expected_app_seq})…")
 
-        for i, pkt in enumerate(list(self._token_packet_buffer)):
-            # Debug the buffered payload end-to-end
-            self._debug_dump_buffered_cmd3(pkt, i)
-
-            t = self._extract_token_any(pkt)
-            if t is not None:
-                tok, cmd_id, app_seq = t
-                self.token = str(tok)
-                logger.info(
-                    f"✅ TOKEN aus Puffer extrahiert (Cmd={cmd_id}, AppSeq={app_seq}, len={len(self.token)}): {self.token}"
-                )
+        for pkt in list(self._token_packet_buffer):
+            tok = self._extract_token_from_login_response(pkt, expected_app_seq=expected_app_seq)
+            if tok:
+                self.token = tok
+                logger.info(f"✅ TOKEN aus Puffer extrahiert (login AppSeq={expected_app_seq}, len={len(self.token)})")
                 return True
 
         return False
 
-    def wait_for_token(self, timeout: float, phase: str) -> bool:
-        """Wartet bis ein gültiges token empfangen wurde und speichert es in self.token."""
-
-        # Check buffer first (in case token arrived early)
-        if self._check_buffered_tokens():
-            logger.info(f">>> Token bereits im Puffer vorhanden ({phase})")
+    def wait_for_login_token(self, timeout: float, expected_app_seq: int) -> bool:
+        if self._check_buffered_login_token(expected_app_seq=expected_app_seq):
             return True
 
-        found: Dict[str, Any] = {"token": None, "cmd_id": None, "app_seq": None}
+        found: Dict[str, Any] = {"token": None}
 
         def tok_ok(pkt: bytes) -> bool:
-            t = self._extract_token_any(pkt)
-            if t is None:
+            tok = self._extract_token_from_login_response(pkt, expected_app_seq=expected_app_seq)
+            if not tok:
                 return False
-            tok, cmd_id, app_seq = t
             found["token"] = tok
-            found["cmd_id"] = cmd_id
-            found["app_seq"] = app_seq
             return True
 
-        _pkt = self.pump(timeout=timeout, accept_predicate=tok_ok, filter_evt=True)
+        _ = self.pump(timeout=timeout, accept_predicate=tok_ok, filter_evt=True)
         if not found["token"]:
             return False
 
         self.token = str(found["token"])
-        logger.info(
-            f"✅ TOKEN OK ({phase}) cmd_id={found['cmd_id']} app_seq={found['app_seq']} token_len={len(self.token)}"
-        )
+        logger.info(f"✅ TOKEN OK (login) app_seq={expected_app_seq} token_len={len(self.token)}")
         return True
 
     def send_heartbeat(self):
@@ -693,13 +664,11 @@ class Session:
         enc = AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(
             pad(json.dumps(payload, separators=(",", ":")).encode("utf-8"), AES.block_size)
         )
-        pkt = struct.pack(">BBH", 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)
-        ) + PHASE2_STATIC_HEADER + enc
+        pkt = struct.pack(">BBH", 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)) + PHASE2_STATIC_HEADER + enc
 
         for p in TARGET_PORTS:
             self.send_to(pkt, p, desc="PreLogin")
 
-        # Nur "pumpen" zum RX/ACK/Logging (nicht auf irgendein Paket "returnen")
         self.pump(timeout=1.0, accept_predicate=lambda _d: False)
 
     def _log_evt_rate_limited(self, evt: Dict[str, Any]):
@@ -726,8 +695,6 @@ class Session:
         accept_predicate: Optional[Callable[[bytes], bool]] = None,
         filter_evt: bool = True,
     ) -> Optional[bytes]:
-        """Empfängt Pakete, ack't wenn nötig und loggt in --debug alle Frames."""
-
         start = time.time()
         while time.time() - start < timeout:
             if self.active_port and self.global_seq > 1:
@@ -740,22 +707,24 @@ class Session:
             except Exception:
                 continue
 
-            # Parse event early so RAW dump can reduce noise
             evt = self._try_parse_evt(data)
 
             if self.raw_rx_dump and self._raw_window_active():
                 if evt is not None and filter_evt:
-                    # avoid flooding debug logs with full hexdumps of event spam
                     logger.debug(f"🧾 RAW RX (event) from={addr[0]}:{addr[1]} len={len(data)}")
                 else:
                     logger.debug(f"🧾 RAW RX from={addr[0]}:{addr[1]} len={len(data)}\n{hexdump_full(data)}")
-
                     meta = self._parse_artemis_meta_any(data)
                     if meta is not None:
-                        off, cmd_id, app_seq, alen = meta
-                        logger.debug(
-                            f"🧩 ARTEMIS meta from={addr[0]}:{addr[1]} off=0x{off:x} cmd_id={cmd_id} app_seq={app_seq} alen={alen}"
-                        )
+                        off, magic, field1, app_seq, alen = meta
+                        if magic == ARTEMIS_W:
+                            logger.debug(
+                                f"🧩 ARTEMISw meta from={addr[0]}:{addr[1]} off=0x{off:x} cmd_id={field1} app_seq={app_seq} alen={alen}"
+                            )
+                        else:
+                            logger.debug(
+                                f"🧩 ARTEMIS meta from={addr[0]}:{addr[1]} off=0x{off:x} msg_type={field1} app_seq={app_seq} alen={alen}"
+                            )
 
             self.log_rx(data, desc=f"from={addr}")
 
@@ -771,12 +740,10 @@ class Session:
                     frag_payload = data[8:]
                     looks_artemis_frag = (ARTEMIS_NULL in frag_payload) or (ARTEMIS_NULL in self._frag_buf)
 
-                # ACK data and artemis fragments (including events) to prevent retransmit storm
+                # ACK all DATA + relevant FRAG
                 if pkt_type == 0xD0 or (pkt_type == 0x42 and looks_artemis_frag):
-                    is_ack_payload = self._is_simple_ack_payload(data)
-                    if not is_ack_payload and self.active_port:
-                        ack = self.build_ack_10(rx_seq)
-                        self.send_raw(ack, desc=f"ACK(rx_seq={rx_seq})")
+                    if not self._is_simple_ack_payload(data) and self.active_port:
+                        self.send_raw(self.build_ack_10(rx_seq), desc=f"ACK(rx_seq={rx_seq})")
 
                 if pkt_type == 0x42:
                     if looks_artemis_frag:
@@ -785,27 +752,20 @@ class Session:
                         if re is None:
                             continue
                         data = re
-
-                        if self.raw_rx_dump and self._raw_window_active():
-                            meta = self._parse_artemis_meta_any(data)
-                            if meta is not None:
-                                off, cmd_id, app_seq, alen = meta
-                                logger.debug(
-                                    f"🧩 ARTEMIS(meta reassembled) from={addr[0]}:{addr[1]} off=0x{off:x} cmd_id={cmd_id} app_seq={app_seq} alen={alen}"
-                                )
                     else:
                         if self.debug:
                             logger.debug("FRAG ohne ARTEMIS-Signatur (vermutlich LBCS/Discovery); skip reassembly/ack")
 
-            # Token buffer: store Cmd=3 during handshake/stabilization
+            # Token buffer: store MsgType=3 responses (raw) while buffering is active
             if self._buffering_active:
-                cmd_id = self.get_cmd_id(data)
-                if cmd_id == 3:
+                msg_type = self._get_artemis_msg_type(data)
+                if msg_type == ARTEMIS_MSG_RESPONSE:
                     self._token_packet_buffer.append(data)
                     if self.debug:
-                        logger.debug(f"🔓 Cmd=3 Paket gepuffert (Buffer: {len(self._token_packet_buffer)} Pakete)")
+                        logger.debug(
+                            f"🔓 MsgType=3 Paket gepuffert (Buffer: {len(self._token_packet_buffer)} Pakete)"
+                        )
 
-            # Events: ACKed above but routed to separate queue; optionally filtered from main flow
             if evt is not None:
                 self._event_queue.append(evt)
                 self._log_evt_rate_limited(evt)
@@ -823,20 +783,26 @@ class Session:
             if accept_cmd is None:
                 return data
 
-            cmd_id = self.get_cmd_id(data)
-            if cmd_id is None:
+            # accept_cmd is cmdId inside decrypted JSON (NOT ARTEMIS header field)
+            # Decrypt only likely responses to save time.
+            msg_type = self._get_artemis_msg_type(data)
+            if msg_type != ARTEMIS_MSG_RESPONSE:
+                continue
+
+            json_cmd_id = self._get_json_cmd_id(data)
+            if json_cmd_id is None:
                 continue
 
             if isinstance(accept_cmd, int):
-                if cmd_id == accept_cmd:
+                if json_cmd_id == accept_cmd:
                     return data
                 if self.debug:
-                    logger.debug(f"⚠️ Ignore Cmd {cmd_id} (warte auf {accept_cmd})")
+                    logger.debug(f"⚠️ Ignore cmdId {json_cmd_id} (warte auf {accept_cmd})")
             else:
-                if cmd_id in accept_cmd:
+                if json_cmd_id in accept_cmd:
                     return data
                 if self.debug:
-                    logger.debug(f"⚠️ Ignore Cmd {cmd_id} (warte auf {sorted(list(accept_cmd))})")
+                    logger.debug(f"⚠️ Ignore cmdId {json_cmd_id} (warte auf {sorted(list(accept_cmd))})")
 
         return None
 
@@ -854,7 +820,7 @@ class Session:
             return None
 
         try:
-            _cmd_id, _app_seq, blen = struct.unpack("<III", self._frag_buf[8:20])
+            _field1, _app_seq, blen = struct.unpack("<III", self._frag_buf[8:20])
         except Exception:
             del self._frag_buf[:1]
             return None
@@ -866,16 +832,14 @@ class Session:
         payload = bytes(self._frag_buf[:total])
         del self._frag_buf[:total]
 
-        # künstlicher RUDP Header
         rudp_hdr = bytes([0xF1, 0xD0, 0x00, 0x00, 0xD1, 0x00, 0x00, 0x00])
         return rudp_hdr + payload
 
     def hello_handshake(self) -> bool:
         logger.info(">>> Handshake Step 1: Hello (force seq 0)")
 
-        # dynamische AppSeq, damit Hello nicht mit späteren Requests kollidiert
         self.app_seq += 1
-        hello_body = build_artemis_frame(2, self.app_seq, ARTEMIS_HELLO_B64 + b"\x00")
+        hello_body = build_artemis_frame(ARTEMIS_MSG_REQUEST, self.app_seq, ARTEMIS_HELLO_B64 + b"\x00")
         hello_pkt, _ = self.build_packet(0xD0, hello_body, force_seq=0)
 
         def hello_ok(pkt: bytes) -> bool:
@@ -906,7 +870,6 @@ class Session:
         if not self.discovery():
             return
 
-        # Enable token buffering BEFORE PreLogin
         self.enable_token_buffering()
 
         self.send_prelogin()
@@ -935,53 +898,55 @@ class Session:
             logger.info(f">>> Warte {LOGIN_DELAY_AFTER_STABILIZATION:.1f}s vor Login…")
             time.sleep(LOGIN_DELAY_AFTER_STABILIZATION)
 
-        # Prefer token after login, but still check buffer once in case token arrived early
-        logger.info(">>> Token-Check (nur Buffer) vor Login…")
-        if self._check_buffered_tokens():
-            logger.info(">>> Token bereits vorhanden; überspringe Login-Request.")
-        else:
-            logger.info(">>> Login…")
-            self.app_seq += 1
-            login_data = {
-                "cmdId": 0,
-                "usrName": "admin",
-                "password": "admin",
-                "needVideo": 0,
-                "needAudio": 0,
-                "utcTime": int(time.time()),
-                "supportHeartBeat": True,
-            }
-            b64_body = base64.b64encode(self.encrypt_json(login_data)) + b"\x00"
-            art = build_artemis_frame(0, self.app_seq, b64_body)
+        # --- Login (cmdId=0 inside encrypted JSON) ---
+        logger.info(">>> Login…")
+        self.app_seq += 1
+        login_app_seq = int(self.app_seq)
 
-            pkt, _ = self.build_packet(0xD0, art)
-            self.send_raw(pkt, desc="Login")
+        login_data = {
+            "cmdId": 0,
+            "usrName": "admin",
+            "password": "admin",
+            "needVideo": 0,
+            "needAudio": 0,
+            "utcTime": int(time.time()),
+            "supportHeartBeat": True,
+        }
+        b64_body = base64.b64encode(self.encrypt_json(login_data)) + b"\x00"
 
-            if self.debug and self.raw_rx_dump:
-                self.enable_raw_rx_dump()
+        # IMPORTANT: ARTEMIS header field1 is MsgType=2 (request)
+        art = build_artemis_frame(ARTEMIS_MSG_REQUEST, login_app_seq, b64_body)
 
-            logger.info("⏳ Warte auf Token (Login-Response)…")
-            if not self.wait_for_token(timeout=max(8.0, self.raw_rx_window_seconds), phase="login"):
-                logger.error("❌ Login Timeout (kein Token empfangen)")
-                return
+        pkt, _ = self.build_packet(0xD0, art)
+        self.send_raw(pkt, desc="Login")
 
-        # Disable buffering after successful login
+        if self.debug and self.raw_rx_dump:
+            self.enable_raw_rx_dump()
+
+        logger.info("⏳ Warte auf Token (Login-Response)…")
+        if not self.wait_for_login_token(timeout=max(8.0, self.raw_rx_window_seconds), expected_app_seq=login_app_seq):
+            logger.error("❌ Login Timeout (kein Token empfangen)")
+            return
+
         self.disable_token_buffering()
 
-        logger.info(">>> Request file list (Cmd 768)…")
+        # --- Example operation: request file list (cmdId=768) ---
+        logger.info(">>> Request file list (cmdId 768)…")
         self.app_seq += 1
         req = {"cmdId": 768, "itemCntPerPage": 45, "pageNo": 0, "token": str(self.token)}
         b64_body = base64.b64encode(self.encrypt_json(req)) + b"\x00"
-        art = build_artemis_frame(768, self.app_seq, b64_body)
-        pkt, _ = self.build_packet(0xD0, art)
-        self.send_raw(pkt, desc="Cmd768")
 
-        pkt = self.pump(timeout=10.0, accept_cmd=768, filter_evt=True)
-        if pkt:
-            files = self.decrypt_payload(pkt)
-            logger.info(f"Cmd768 response (preview): {str(files)[:200]}")
+        # IMPORTANT: MsgType=2 request
+        art = build_artemis_frame(ARTEMIS_MSG_REQUEST, int(self.app_seq), b64_body)
+        pkt, _ = self.build_packet(0xD0, art)
+        self.send_raw(pkt, desc="cmdId=768")
+
+        resp = self.pump(timeout=10.0, accept_cmd=768, filter_evt=True)
+        if resp:
+            files = self.decrypt_payload(resp)
+            logger.info(f"cmdId=768 response (preview): {str(files)[:200]}")
         else:
-            logger.warning("Keine Cmd768 Antwort (Timeout).")
+            logger.warning("Keine cmdId=768 Antwort (Timeout).")
 
 
 if __name__ == "__main__":
