@@ -586,16 +586,24 @@ class Session:
         obj, _field1, _app_seq, _magic = r
         return obj
 
-    def _extract_token_from_login_response(self, pkt: bytes, expected_app_seq: int) -> Optional[str]:
+    def _extract_token_from_login_response(self, pkt: bytes, expected_app_seq: int, strict_appseq: bool = True) -> Optional[str]:
         """Accept token only from login responses (MsgType=3) matching expected AppSeq."""
 
         msg_type = self._get_artemis_msg_type(pkt)
         app_seq = self._get_artemis_app_seq(pkt)
-        if msg_type != ARTEMIS_MSG_RESPONSE or app_seq != int(expected_app_seq):
+        
+        if msg_type != ARTEMIS_MSG_RESPONSE:
+            return None
+        
+        if strict_appseq and app_seq != int(expected_app_seq):
+            if self.debug:
+                logger.debug(f"⚠️ MsgType=3 mit falschem AppSeq: erwartet={expected_app_seq}, empfangen={app_seq}")
             return None
 
         r = self._decrypt_artemis_json_any(pkt)
         if r is None:
+            if self.debug:
+                logger.debug(f"⚠️ MsgType=3 konnte nicht entschlüsselt werden (AppSeq={app_seq})")
             return None
 
         obj, _field1, _app_seq2, magic = r
@@ -606,14 +614,21 @@ class Session:
         try:
             cmd_id = obj.get("cmdId")
             if cmd_id is None or int(cmd_id) != 0:
+                if self.debug:
+                    logger.debug(f"⚠️ MsgType=3 ist kein Login (cmdId={cmd_id}, AppSeq={app_seq})")
                 return None
         except Exception:
             return None
 
         tok = obj.get("token")
         if tok is None:
+            if self.debug:
+                logger.debug(f"⚠️ MsgType=3 Login-Response ohne Token (AppSeq={app_seq})")
             return None
 
+        if not strict_appseq and app_seq != int(expected_app_seq):
+            logger.warning(f"✅ TOKEN mit falschem AppSeq akzeptiert: erwartet={expected_app_seq}, empfangen={app_seq}")
+        
         return str(tok)
 
     def _check_buffered_login_token(self, expected_app_seq: int) -> bool:
@@ -625,11 +640,21 @@ class Session:
                 f"🔍 Prüfe {len(self._token_packet_buffer)} gepufferte Pakete auf Login-Token (AppSeq={expected_app_seq})…"
             )
 
+        # First try with strict AppSeq matching
         for pkt in list(self._token_packet_buffer):
-            tok = self._extract_token_from_login_response(pkt, expected_app_seq=expected_app_seq)
+            tok = self._extract_token_from_login_response(pkt, expected_app_seq=expected_app_seq, strict_appseq=True)
             if tok:
                 self.token = tok
                 logger.info(f"✅ TOKEN aus Puffer extrahiert (login AppSeq={expected_app_seq}, len={len(self.token)})")
+                return True
+
+        # Fallback: try without strict AppSeq if nothing was found
+        logger.warning(f"⚠️ Kein Token mit AppSeq={expected_app_seq} gefunden, versuche Fallback ohne AppSeq-Prüfung…")
+        for pkt in list(self._token_packet_buffer):
+            tok = self._extract_token_from_login_response(pkt, expected_app_seq=expected_app_seq, strict_appseq=False)
+            if tok:
+                self.token = tok
+                logger.info(f"✅ TOKEN aus Puffer extrahiert (Fallback, len={len(self.token)})")
                 return True
 
         return False
@@ -641,18 +666,27 @@ class Session:
         found: Dict[str, Any] = {"token": None}
 
         def tok_ok(pkt: bytes) -> bool:
-            tok = self._extract_token_from_login_response(pkt, expected_app_seq=expected_app_seq)
-            if not tok:
-                return False
-            found["token"] = tok
-            return True
+            # Try strict matching first
+            tok = self._extract_token_from_login_response(pkt, expected_app_seq=expected_app_seq, strict_appseq=True)
+            if tok:
+                found["token"] = tok
+                found["strict"] = True
+                return True
+            # Try relaxed matching as fallback
+            tok = self._extract_token_from_login_response(pkt, expected_app_seq=expected_app_seq, strict_appseq=False)
+            if tok:
+                found["token"] = tok
+                found["strict"] = False
+                return True
+            return False
 
         _ = self.pump(timeout=timeout, accept_predicate=tok_ok, filter_evt=True)
         if not found["token"]:
             return False
 
         self.token = str(found["token"])
-        logger.info(f"✅ TOKEN OK (login) app_seq={expected_app_seq} token_len={len(self.token)}")
+        strict_msg = "strict" if found.get("strict") else "relaxed"
+        logger.info(f"✅ TOKEN OK (login, {strict_msg}) app_seq={expected_app_seq} token_len={len(self.token)}")
         return True
 
     def send_heartbeat(self):
@@ -767,10 +801,11 @@ class Session:
             if self._buffering_active:
                 msg_type = self._get_artemis_msg_type(data)
                 if msg_type == ARTEMIS_MSG_RESPONSE:
+                    app_seq = self._get_artemis_app_seq(data)
                     self._token_packet_buffer.append(data)
                     if self.debug:
                         logger.debug(
-                            f"🔓 MsgType=3 Paket gepuffert (Buffer: {len(self._token_packet_buffer)} Pakete)"
+                            f"🔓 MsgType=3 Paket gepuffert (AppSeq={app_seq}, Buffer: {len(self._token_packet_buffer)} Pakete)"
                         )
 
             if evt is not None:
@@ -913,7 +948,12 @@ class Session:
 
         logger.info(f"⏳ Warte auf Token (Login-Response, AppSeq={login_app_seq})…")
         if not self.wait_for_login_token(timeout=max(8.0, self.raw_rx_window_seconds), expected_app_seq=login_app_seq):
-            logger.error("❌ Login Timeout (kein Token empfangen)")
+            logger.error(f"❌ Login Timeout (kein Token empfangen, {len(self._token_packet_buffer)} MsgType=3 Pakete gepuffert)")
+            if self.debug and self._token_packet_buffer:
+                logger.debug(f"Gepufferte MsgType=3 Pakete:")
+                for i, pkt in enumerate(list(self._token_packet_buffer)):
+                    app_seq = self._get_artemis_app_seq(pkt)
+                    logger.debug(f"  Paket {i+1}: AppSeq={app_seq}, len={len(pkt)}")
             return
 
         self.disable_token_buffering()
