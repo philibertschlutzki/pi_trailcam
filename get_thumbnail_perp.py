@@ -931,14 +931,18 @@ class Session:
         self.send_raw(m2, desc="Magic2")
         time.sleep(0.05)
 
+        # Give camera time to send login response after Magic packets
+        logger.info(">>> Warte auf Login-Response nach Magic-Paketen…")
+        self.pump(timeout=1.0, accept_predicate=lambda _d: False)
+
         logger.info(">>> Stabilisierung…")
         for _ in range(2):
             self.send_heartbeat()
             self.pump(timeout=0.5, accept_predicate=lambda _d: False)
 
         if LOGIN_DELAY_AFTER_STABILIZATION > 0:
-            logger.info(f">>> Warte {LOGIN_DELAY_AFTER_STABILIZATION:.1f}s vor Login…")
-            time.sleep(LOGIN_DELAY_AFTER_STABILIZATION)
+            logger.info(f">>> Warte {LOGIN_DELAY_AFTER_STABILIZATION:.1f}s nach Stabilisierung (pump)…")
+            self.pump(timeout=LOGIN_DELAY_AFTER_STABILIZATION, accept_predicate=lambda _d: False)
 
         # --- Login token (response to the initial Hello/Login request) ---
         login_app_seq = int(self.app_seq)
