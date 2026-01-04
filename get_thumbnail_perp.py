@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.13
+"""Wildkamera Thumbnail Downloader - consolidated v4.14
 
-Changes in this version (v4.13):
-- Login handshake fix: ARTEMIS ("ARTEMIS\x00") header field1 is MsgType (2=request, 3=response), not cmdId.
+Changes in this version (v4.14):
+- Login/AppSeq fix: The first "Hello" packet (ARTEMIS_HELLO_B64) is the actual Login (cmdId=0) request.
+  It uses AppSeq=1, and the Login Response (MsgType=3) returns the token with the same AppSeq.
+  The script no longer sends a second, generated Login request (which previously incremented AppSeq and caused a token timeout).
+
+Keeps from v4.13:
+- ARTEMIS ("ARTEMIS\x00") header field1 is MsgType (2=request, 3=response), not cmdId.
   Requests are now sent with MsgType=2 and the real cmdId stays inside the encrypted JSON.
 - Response matching: cmdId filtering is now based on decrypted JSON (cmdId), not on the ARTEMIS header field.
 - Token extraction: token is accepted only from MsgType=3 responses that match the expected AppSeq of the login request.
@@ -616,7 +621,9 @@ class Session:
             return False
 
         if self.debug:
-            logger.debug(f"🔍 Prüfe {len(self._token_packet_buffer)} gepufferte Pakete auf Login-Token (AppSeq={expected_app_seq})…")
+            logger.debug(
+                f"🔍 Prüfe {len(self._token_packet_buffer)} gepufferte Pakete auf Login-Token (AppSeq={expected_app_seq})…"
+            )
 
         for pkt in list(self._token_packet_buffer):
             tok = self._extract_token_from_login_response(pkt, expected_app_seq=expected_app_seq)
@@ -898,32 +905,13 @@ class Session:
             logger.info(f">>> Warte {LOGIN_DELAY_AFTER_STABILIZATION:.1f}s vor Login…")
             time.sleep(LOGIN_DELAY_AFTER_STABILIZATION)
 
-        # --- Login (cmdId=0 inside encrypted JSON) ---
-        logger.info(">>> Login…")
-        self.app_seq += 1
+        # --- Login token (response to the initial Hello/Login request) ---
         login_app_seq = int(self.app_seq)
-
-        login_data = {
-            "cmdId": 0,
-            "usrName": "admin",
-            "password": "admin",
-            "needVideo": 0,
-            "needAudio": 0,
-            "utcTime": int(time.time()),
-            "supportHeartBeat": True,
-        }
-        b64_body = base64.b64encode(self.encrypt_json(login_data)) + b"\x00"
-
-        # IMPORTANT: ARTEMIS header field1 is MsgType=2 (request)
-        art = build_artemis_frame(ARTEMIS_MSG_REQUEST, login_app_seq, b64_body)
-
-        pkt, _ = self.build_packet(0xD0, art)
-        self.send_raw(pkt, desc="Login")
 
         if self.debug and self.raw_rx_dump:
             self.enable_raw_rx_dump()
 
-        logger.info("⏳ Warte auf Token (Login-Response)…")
+        logger.info(f"⏳ Warte auf Token (Login-Response, AppSeq={login_app_seq})…")
         if not self.wait_for_login_token(timeout=max(8.0, self.raw_rx_window_seconds), expected_app_seq=login_app_seq):
             logger.error("❌ Login Timeout (kein Token empfangen)")
             return
