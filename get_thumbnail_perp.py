@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.8
+"""Wildkamera Thumbnail Downloader - consolidated v4.9
 
-Fixes / Improvements:
-- Robust Login (Token-based):
-  * Hello-AppSeq wird nicht mehr hartcodiert (AppSeq=1), sondern dynamisch inkrementiert.
-  * Token kann auch schon VOR dem Login-Request eintreffen (z.B. während Stabilisierung); wird daher vorab „gesnifft“.
-  * Login akzeptiert Response nicht nur über Cmd==3, sondern über erfolgreiches Decrypt + JSON enthält "token" (cmd_id egal).
-  * AES/JSON Decrypt ist robuster: ARTEMIS Header wird an beliebigem Offset erkannt (auch bei FRAG-Reassembly).
-
-- Netzwerk:
-  * UDP-Bind auf FIXED_LOCAL_PORT (35281). Wenn belegt, Fallback auf Ephemeral-Port (0) statt Crash.
-
-Hinweis: Das Script ist auf Python 3.8+ kompatibel (kein PEP604 "bytes | None").
+Optimizations in this version (v4.9):
+- Token buffering: Cmd=3 packets received during handshake/stabilization are now buffered
+- Pre-scan check: Before starting 3-second token scan, check if token already arrived
+- Event filtering: Cmd=9 (evtId=4) packets are explicitly ignored to prevent buffer pollution
+- Improved timing: Token can arrive at any point after PreLogin and will be captured
 """
 
 import argparse
@@ -25,7 +19,8 @@ import struct
 import subprocess
 import sys
 import time
-from typing import Optional, Union, Set, Tuple, Callable, Any, Dict
+from typing import Optional, Union, Set, Tuple, Callable, Any, Dict, List
+from collections import deque
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
@@ -228,6 +223,23 @@ class Session:
         # --- Event spam control (Debug) ---
         self._evt_last_log_ts: float = 0.0
         self._evt_suppressed: int = 0
+
+        # --- NEW: Token buffer (v4.9) ---
+        self._token_packet_buffer: deque = deque(maxlen=10)  # Buffer for potential token packets
+        self._buffering_active = False
+
+    def enable_token_buffering(self):
+        """Aktiviert Token-Pufferung (sollte vor PreLogin gestartet werden)."""
+        self._buffering_active = True
+        self._token_packet_buffer.clear()
+        if self.debug:
+            logger.debug("🔓 Token-Pufferung aktiviert")
+
+    def disable_token_buffering(self):
+        """Deaktiviert Token-Pufferung."""
+        self._buffering_active = False
+        if self.debug:
+            logger.debug("🔒 Token-Pufferung deaktiviert")
 
     def enable_raw_rx_dump(self, seconds: Optional[float] = None):
         secs = self.raw_rx_window_seconds if seconds is None else float(seconds)
@@ -515,8 +527,31 @@ class Session:
         except Exception:
             return None
 
+    def _check_buffered_tokens(self) -> bool:
+        """Prüft gepufferte Pakete auf Token (v4.9)."""
+        if not self._token_packet_buffer:
+            return False
+
+        if self.debug:
+            logger.debug(f"🔍 Prüfe {len(self._token_packet_buffer)} gepufferte Pakete auf Token…")
+
+        for pkt in list(self._token_packet_buffer):
+            t = self._extract_token_any(pkt)
+            if t is not None:
+                tok, cmd_id, app_seq = t
+                self.token = str(tok)
+                logger.info(f"✅ TOKEN aus Puffer extrahiert (Cmd={cmd_id}, AppSeq={app_seq}): {self.token}")
+                return True
+
+        return False
+
     def wait_for_token(self, timeout: float, phase: str) -> bool:
         """Wartet bis ein gültiges token empfangen wurde und speichert es in self.token."""
+
+        # NEW (v4.9): Check buffer first
+        if self._check_buffered_tokens():
+            logger.info(f">>> Token bereits im Puffer vorhanden ({phase})")
+            return True
 
         found: Dict[str, Any] = {"token": None, "cmd_id": None, "app_seq": None}
 
@@ -616,6 +651,14 @@ class Session:
             if not data or len(data) < 2:
                 continue
 
+            # NEW (v4.9): Buffer potential token packets (Cmd=3) if buffering is active
+            if self._buffering_active:
+                cmd_id = self.get_cmd_id(data)
+                if cmd_id == 3:  # Cmd=3 usually contains token
+                    self._token_packet_buffer.append(data)
+                    if self.debug:
+                        logger.debug(f"🔓 Cmd=3 Paket gepuffert (Buffer: {len(self._token_packet_buffer)} Pakete)")
+
             looks_artemis_frag = False
             if len(data) >= 8 and data[0] == 0xF1:
                 pkt_type = data[1]
@@ -650,11 +693,12 @@ class Session:
                         if self.debug:
                             logger.debug("FRAG ohne ARTEMIS-Signatur (vermutlich LBCS/Discovery); skip reassembly/ack")
 
+            # NEW (v4.9): Filter Cmd=9 (evtId=4) explicitly to prevent buffer pollution
             evt = self._try_parse_evt(data)
             if evt is not None:
                 self._log_evt_rate_limited(evt)
                 if filter_evt:
-                    continue
+                    continue  # Ignore event packets
 
             if accept_predicate is not None:
                 try:
@@ -750,6 +794,9 @@ class Session:
         if not self.discovery():
             return
 
+        # NEW (v4.9): Enable token buffering BEFORE PreLogin
+        self.enable_token_buffering()
+
         self.send_prelogin()
         time.sleep(0.25)
 
@@ -772,8 +819,8 @@ class Session:
             self.send_heartbeat()
             self.pump(timeout=0.5, accept_predicate=lambda _d: False)
 
-        # Token kann bei manchen Kameras schon VOR dem Login-Request kommen (z.B. als Cmd=3 während Stabilisierung).
-        logger.info(">>> Token-Scan vor Login…")
+        # NEW (v4.9): Check buffer BEFORE starting token scan
+        logger.info(">>> Token-Scan vor Login (check buffer first)…")
         if self.debug and self.raw_rx_dump:
             self.enable_raw_rx_dump(seconds=3.0)
 
@@ -804,6 +851,9 @@ class Session:
                 return
         else:
             logger.info(">>> Token bereits vorhanden; überspringe Login-Request.")
+
+        # Disable buffering after successful login
+        self.disable_token_buffering()
 
         logger.info(">>> Request file list (Cmd 768)…")
         self.app_seq += 1
