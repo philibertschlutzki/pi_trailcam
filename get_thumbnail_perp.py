@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.10
+"""Wildkamera Thumbnail Downloader - consolidated v4.11
 
-Optimizations in this version (v4.10):
-- Token buffering: Cmd=3 packets received during handshake/stabilization are buffered.
-- Buffer validation debug: For buffered Cmd=3 packets, log full Base64 payload and decode/decrypt errors.
-- Event handling: Cmd=9 (ARTEMISw events) are ACKed but routed into a separate event queue and can be filtered from the main flow.
-- Login timing: Prefer waiting for token after sending Login (token may arrive only after Login request).
+Optimizations in this version (v4.11):
+- Robust Decryption: Implements manual padding removal if standard unpad fails.
+  (Solves 'Padding is incorrect' error when camera sends non-standard padded blocks).
+- Inherits v4.10 fixes:
+  - Token buffering & debug
+  - Event queueing
+  - Login timing optimizations
 """
 
 import argparse
@@ -297,6 +299,28 @@ class Session:
             b64_part += b"=" * (4 - (len(b64_part) % 4))
         return b64_part
 
+    @staticmethod
+    def _manual_unpad_utf8_json(decrypted: bytes) -> Optional[Dict[str, Any]]:
+        """Versucht, JSON aus einem decrypted Byte-String zu extrahieren, auch bei kaputtem Padding."""
+        # Strategie: Wir suchen das letzte '}', da JSON mit '}' enden muss.
+        # Alles danach ignorieren wir als Padding.
+        
+        try:
+            # 1. Versuch: Dekodieren mit 'replace' um Fehler zu sehen, aber 'ignore' für Parsing besser
+            s = decrypted.decode("utf-8", errors="ignore")
+            
+            # Suche nach letztem '}'
+            end_idx = s.rfind("}")
+            if end_idx == -1:
+                return None
+            
+            # JSON-String bis inkl. '}'
+            json_str = s[:end_idx+1]
+            obj = json.loads(json_str)
+            return obj
+        except Exception:
+            return None
+
     def _decrypt_artemis_json_any(self, data: bytes) -> Optional[Tuple[Dict[str, Any], int, int]]:
         """Robustes Decrypt: findet ARTEMIS Header an beliebigem Offset und entschlüsselt Base64(AES-ECB(JSON))."""
 
@@ -320,35 +344,28 @@ class Session:
                     "❌ base64.b64decode failed "
                     f"(Cmd={cmd_id}, AppSeq={app_seq}, b64_len={len(b64_part)}): {e!r}"
                 )
-                try:
-                    logger.debug(f"🧾 b64(full)={b64_part.decode('ascii', errors='replace')}")
-                except Exception:
-                    pass
             return None
 
-        try:
-            dec = unpad(AES.new(PHASE2_KEY, AES.MODE_ECB).decrypt(raw), AES.block_size)
-        except Exception as e:
-            if self.debug:
-                logger.debug(
-                    "❌ AES decrypt/unpad failed "
-                    f"(Cmd={cmd_id}, AppSeq={app_seq}, raw_len={len(raw)}): {e!r}"
-                )
-            return None
+        # 1. Versuch: Standard unpad
+        dec = AES.new(PHASE2_KEY, AES.MODE_ECB).decrypt(raw)
+        obj = None
 
         try:
-            obj = json.loads(dec.decode("utf-8"))
-        except Exception as e:
+            unpadded = unpad(dec, AES.block_size)
+            obj = json.loads(unpadded.decode("utf-8"))
+        except Exception:
+            # 2. Versuch: Manuelles Ent-Padden / JSON Extract (Fallback)
             if self.debug:
-                logger.debug(
-                    "❌ JSON decode failed "
-                    f"(Cmd={cmd_id}, AppSeq={app_seq}, dec_len={len(dec)}): {e!r}"
-                )
-                logger.debug(f"🧾 dec(hex)={hexdump(dec, max_len=256)}")
-            return None
+                 logger.debug(f"⚠️ Standard unpad/json failed (Cmd={cmd_id}), trying fallback...")
+            
+            obj = self._manual_unpad_utf8_json(dec)
+            if obj is not None and self.debug:
+                logger.debug(f"✅ Fallback decryption success (Cmd={cmd_id})")
 
         if not isinstance(obj, dict):
-            return None
+             if self.debug and obj is None:
+                 logger.debug(f"❌ Decryption completely failed (Cmd={cmd_id})")
+             return None
 
         return obj, cmd_id, app_seq
 
@@ -592,26 +609,6 @@ class Session:
             f"b64_len={len(b64_part_padded)} b64='{b64_str}'"
         )
 
-        try:
-            raw = base64.b64decode(b64_part_padded)
-            logger.debug(f"✅ Buffer[{idx}] base64 decode ok raw_len={len(raw)}")
-        except Exception as e:
-            logger.debug(f"❌ Buffer[{idx}] base64 decode failed: {e!r}")
-            return
-
-        try:
-            dec = unpad(AES.new(PHASE2_KEY, AES.MODE_ECB).decrypt(raw), AES.block_size)
-            logger.debug(f"✅ Buffer[{idx}] AES decrypt ok dec_len={len(dec)}")
-        except Exception as e:
-            logger.debug(f"❌ Buffer[{idx}] AES decrypt/unpad failed: {e!r}")
-            return
-
-        try:
-            j = dec.decode("utf-8")
-            logger.debug(f"🧾 Buffer[{idx}] json(raw)={j}")
-        except Exception as e:
-            logger.debug(f"❌ Buffer[{idx}] utf-8 decode failed: {e!r}")
-
     def _check_buffered_tokens(self) -> bool:
         """Prüft gepufferte Pakete auf Token."""
         if not self._token_packet_buffer:
@@ -621,7 +618,7 @@ class Session:
             logger.debug(f"🔍 Prüfe {len(self._token_packet_buffer)} gepufferte Pakete auf Token…")
 
         for i, pkt in enumerate(list(self._token_packet_buffer)):
-            # v4.10: Debug the buffered payload end-to-end
+            # Debug the buffered payload end-to-end
             self._debug_dump_buffered_cmd3(pkt, i)
 
             t = self._extract_token_any(pkt)
