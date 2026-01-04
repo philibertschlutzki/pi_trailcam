@@ -1,26 +1,14 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.7
+"""Wildkamera Thumbnail Downloader - consolidated v4.8
 
 Fixes / Improvements:
-- Issue #134: Login Timeout
-  * Login wartet auf Cmd 3 (Result) und extrahiert token.
-  * FRAG-Reassembly für ARTEMIS Frames (Pkt 0x42) vorhanden.
+- Robust Login (Token-based):
+  * Hello-AppSeq wird nicht mehr hartcodiert (AppSeq=1), sondern dynamisch inkrementiert.
+  * Login akzeptiert Response nicht nur über Cmd==3, sondern über erfolgreiches Decrypt + JSON enthält "token".
+  * AES/JSON Decrypt ist robuster: ARTEMIS Header wird an beliebigem Offset erkannt (auch bei FRAG-Reassembly).
 
-- Issue #135 / #138: Hello nicht bestätigt/keine Antwort
-  * Pre-Login (F9) wird an ALLE bekannten Zielports gesendet (TARGET_PORTS), damit kein Port-Mismatch den Handshake blockiert.
-  * Hello wird primär an active_port gesendet; bei fehlender Antwort wird ein Fallback-Versuch auf dem alternativen Port gemacht.
-  * Hello gilt nur dann als "bestätigt", wenn innerhalb des Timeouts eine sinnvolle RX-Reaktion kommt
-    (ACK-Payload oder irgendein ARTEMIS-Frame). Reine LBCS/Discovery-FRAGs werden ignoriert.
-
-- Debug/Logging:
-  * Mit --debug werden alle TX/RX Frames inkl. Pkt-Typ (D0/42/43/...), Seq, BodyLen und (wenn vorhanden) ARTEMIS Cmd/AppSeq/Len geloggt.
-  * Zusätzlich wird ein Logfile get_thumbnail_perp_debug.log geschrieben (unbuffered flush+fsync), damit Logs bei Crash nicht verloren gehen.
-  * Optionaler "RAW RX window" nach Login-Request (Default: 20s). In diesem Zeitfenster werden alle empfangenen UDP-Pakete roh geloggt
-    (src_ip, src_port, len, vollständiger Hexdump), plus ARTEMIS-Metadaten (cmd_id/app_seq/alen), auch wenn es nicht das erwartete Cmd ist.
-
-- Event-Frames (ARTEMISw / evtId)
-  * Manche Geräte schicken sehr viele ARTEMISw-Events (z.B. JSON {"evtId":4}).
-  * Diese Frames werden erkannt/geparsed und beim Warten auf konkrete Cmds (z.B. Login Cmd=3) gefiltert, damit die Session nicht "zugespammt" wird.
+- Netzwerk:
+  * UDP-Bind auf FIXED_LOCAL_PORT (35281). Wenn belegt, Fallback auf Ephemeral-Port (0) statt Crash.
 
 Hinweis: Das Script ist auf Python 3.8+ kompatibel (kein PEP604 "bytes | None").
 """
@@ -79,7 +67,7 @@ PHASE2_STATIC_HEADER = bytes.fromhex(
 ARTEMIS_NULL = b"ARTEMIS\x00"
 ARTEMIS_W = b"ARTEMISw"
 
-# Hello base64 blob (wie vorher)
+# Hello base64 blob
 ARTEMIS_HELLO_B64 = (
     b"J8WWuQDPmYSLfu/gXAG+UqbBy55KP2iE25QPNofzn040+NI9g7zeXLkIpXpC07SXvosr"
     b"Wsc1m8mxnq6hMiKwePbKJUwvSvqZb6s0sl1sfziRb4nrHS3IjLjRVw2lxAUfPMOkSEVk"
@@ -146,9 +134,6 @@ def hexdump_full(data: bytes, width: int = 16) -> str:
 
 def build_artemis_frame(cmd_id: int, app_seq: int, body: bytes) -> bytes:
     return ARTEMIS_NULL + struct.pack("<III", cmd_id, app_seq, len(body)) + body
-
-
-ARTEMIS_HELLO_BODY = build_artemis_frame(2, 1, ARTEMIS_HELLO_B64 + b"\x00")
 
 
 class BLEWorker:
@@ -287,6 +272,29 @@ class Session:
             return b""
         return data[start:end]
 
+    def _decrypt_artemis_json_any(self, data: bytes) -> Optional[Tuple[Dict[str, Any], int, int]]:
+        """Robustes Decrypt: findet ARTEMIS Header an beliebigem Offset und entschlüsselt Base64(AES-ECB(JSON))."""
+
+        hdr = self._parse_artemis_header_any(data)
+        if hdr is None:
+            return None
+
+        off, _magic, cmd_id, app_seq, alen = hdr
+        payload = self._extract_artemis_payload(data, off, alen)
+        b64_part = payload.split(b"\x00")[0]
+        if not b64_part:
+            return None
+
+        if len(b64_part) % 4 != 0:
+            b64_part += b"=" * (4 - (len(b64_part) % 4))
+
+        raw = base64.b64decode(b64_part)
+        dec = unpad(AES.new(PHASE2_KEY, AES.MODE_ECB).decrypt(raw), AES.block_size)
+        obj = json.loads(dec.decode("utf-8"))
+        if not isinstance(obj, dict):
+            return None
+        return obj, cmd_id, app_seq
+
     def _try_parse_evt(self, data: bytes) -> Optional[Dict[str, Any]]:
         """Parst ARTEMISw-Events (z.B. {"evtId":4})."""
 
@@ -303,7 +311,6 @@ class Session:
         if not raw:
             return None
 
-        # In Logs wurde JSON gesehen (evtId=4)
         try:
             s = raw.decode("utf-8", errors="strict")
             obj = json.loads(s)
@@ -348,7 +355,6 @@ class Session:
         pkt_type = data[1]
         tname = self.TYPE_NAMES.get(pkt_type, f"0x{pkt_type:02X}")
 
-        # Pre-Login Antworten sind manchmal kein "voller" RUDP-Header.
         if len(data) < 8:
             return f"F1 {tname} (short,len={len(data)}) {hexdump(data, 48)}"
 
@@ -356,16 +362,11 @@ class Session:
         seq = data[7]
         info = f"RUDP {tname} Seq={seq} BodyLen={body_len}"
 
-        # ARTEMIS decode @ offset 8
-        if len(data) >= 28 and (data[8:16] == ARTEMIS_NULL or data[8:16] == ARTEMIS_W):
-            try:
-                cmd_id = struct.unpack("<I", data[16:20])[0]
-                app_seq = struct.unpack("<I", data[20:24])[0]
-                alen = struct.unpack("<I", data[24:28])[0]
-                tag = "ARTEMISw" if data[8:16] == ARTEMIS_W else "ARTEMIS"
-                info += f" | {tag} Cmd={cmd_id} AppSeq={app_seq} ALen={alen}"
-            except Exception:
-                pass
+        hdr = self._parse_artemis_header_any(data)
+        if hdr is not None:
+            _off, magic, cmd_id, app_seq, alen = hdr
+            tag = "ARTEMISw" if magic == ARTEMIS_W else "ARTEMIS"
+            info += f" | {tag} Cmd={cmd_id} AppSeq={app_seq} ALen={alen}"
 
         return info
 
@@ -390,9 +391,16 @@ class Session:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 * 1024 * 1024)
-        self.sock.bind((local_ip, FIXED_LOCAL_PORT))
+
+        try:
+            self.sock.bind((local_ip, FIXED_LOCAL_PORT))
+            logger.info(f"Socket: {local_ip}:{FIXED_LOCAL_PORT}")
+        except OSError as e:
+            logger.warning(f"FIXED_LOCAL_PORT {FIXED_LOCAL_PORT} belegt ({e}); Fallback auf Ephemeral-Port…")
+            self.sock.bind((local_ip, 0))
+            logger.info(f"Socket: {self.sock.getsockname()[0]}:{self.sock.getsockname()[1]}")
+
         self.sock.settimeout(0.15)
-        logger.info(f"Socket: {local_ip}:{FIXED_LOCAL_PORT}")
         return True
 
     def send_to(self, pkt: bytes, port: int, desc: str = ""):
@@ -467,26 +475,22 @@ class Session:
 
     def decrypt_payload(self, data: bytes):
         try:
-            if len(data) < 28:
+            r = self._decrypt_artemis_json_any(data)
+            if r is None:
                 return None
-            b64_part = data[28:].split(b"\x00")[0]
-            if len(b64_part) % 4 != 0:
-                b64_part += b"=" * (4 - len(b64_part) % 4)
-            raw = base64.b64decode(b64_part)
-            dec = unpad(AES.new(PHASE2_KEY, AES.MODE_ECB).decrypt(raw), AES.block_size)
-            return json.loads(dec.decode("utf-8"))
+            obj, _cmd_id, _app_seq = r
+            return obj
         except Exception as e:
             if self.debug:
                 logger.debug(f"Decrypt failed: {e}")
             return None
 
     def get_cmd_id(self, data: bytes) -> Optional[int]:
-        if len(data) >= 28 and (data[8:16] == ARTEMIS_NULL or data[8:16] == ARTEMIS_W):
-            try:
-                return struct.unpack("<I", data[16:20])[0]
-            except Exception:
-                return None
-        return None
+        hdr = self._parse_artemis_header_any(data)
+        if hdr is None:
+            return None
+        _off, _magic, cmd_id, _app_seq, _alen = hdr
+        return cmd_id
 
     def send_heartbeat(self):
         if time.time() - self.last_heartbeat_time < 2.0:
@@ -504,7 +508,8 @@ class Session:
         enc = AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(
             pad(json.dumps(payload, separators=(",", ":")).encode("utf-8"), AES.block_size)
         )
-        pkt = struct.pack(">BBH", 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)) + PHASE2_STATIC_HEADER + enc
+        pkt = struct.pack(">BBH", 0xF1, 0xF9, len(PHASE2_STATIC_HEADER + enc)
+        ) + PHASE2_STATIC_HEADER + enc
 
         for p in TARGET_PORTS:
             self.send_to(pkt, p, desc="PreLogin")
@@ -536,18 +541,7 @@ class Session:
         accept_predicate: Optional[Callable[[bytes], bool]] = None,
         filter_evt: bool = True,
     ) -> Optional[bytes]:
-        """Empfängt Pakete, ack't wenn nötig und loggt in --debug alle Frames.
-
-        accept_cmd:
-          - None: keine Cmd-Filterung
-          - int/set: wartet bis Cmd matcht (ARTEMIS/ARTEMISw)
-
-        accept_predicate:
-          - optionaler Matcher; wenn gesetzt, wird bei True zurückgegeben
-
-        filter_evt:
-          - wenn True: ARTEMISw evtId-Frames werden (nach ACK/Logging) ignoriert, damit Cmd-Waits nicht zugespammt werden.
-        """
+        """Empfängt Pakete, ack't wenn nötig und loggt in --debug alle Frames."""
 
         start = time.time()
         while time.time() - start < timeout:
@@ -561,7 +555,6 @@ class Session:
             except Exception:
                 continue
 
-            # RAW RX dump (ohne Filter), aber nur wenn explizit aktiviert
             if self.raw_rx_dump and self._raw_window_active():
                 logger.debug(f"🧾 RAW RX from={addr[0]}:{addr[1]} len={len(data)}\n{hexdump_full(data)}")
 
@@ -577,7 +570,6 @@ class Session:
             if not data or len(data) < 2:
                 continue
 
-            # ACK nur für "voll" RUDP (>=8)
             looks_artemis_frag = False
             if len(data) >= 8 and data[0] == 0xF1:
                 pkt_type = data[1]
@@ -585,8 +577,6 @@ class Session:
 
                 if pkt_type == 0x42:
                     frag_payload = data[8:]
-                    # Nur dann als ARTEMIS-FRAG behandeln, wenn ARTEMIS-Signatur sichtbar ist
-                    # oder wir bereits ARTEMIS im Buffer haben. (Fix für Issue #138)
                     looks_artemis_frag = (ARTEMIS_NULL in frag_payload) or (ARTEMIS_NULL in self._frag_buf)
 
                 if pkt_type == 0xD0 or (pkt_type == 0x42 and looks_artemis_frag):
@@ -595,7 +585,6 @@ class Session:
                         ack = self.build_ack_10(rx_seq)
                         self.send_raw(ack, desc=f"ACK(rx_seq={rx_seq})")
 
-                # FRAG-Reassembly
                 if pkt_type == 0x42:
                     if looks_artemis_frag:
                         self._frag_buf += data[8:]
@@ -604,7 +593,6 @@ class Session:
                             continue
                         data = re
 
-                        # Nach Reassembly nochmals Meta loggen (deckt "ARTEMIS" über Fragmentgrenzen ab)
                         if self.raw_rx_dump and self._raw_window_active():
                             meta = self._parse_artemis_meta_any(data)
                             if meta is not None:
@@ -616,14 +604,12 @@ class Session:
                         if self.debug:
                             logger.debug("FRAG ohne ARTEMIS-Signatur (vermutlich LBCS/Discovery); skip reassembly/ack")
 
-            # Event spam: parsen und (optional) filtern
             evt = self._try_parse_evt(data)
             if evt is not None:
                 self._log_evt_rate_limited(evt)
                 if filter_evt:
                     continue
 
-            # Predicate hat Vorrang (z.B. Hello-Verifikation)
             if accept_predicate is not None:
                 try:
                     if accept_predicate(data):
@@ -678,27 +664,28 @@ class Session:
         payload = bytes(self._frag_buf[:total])
         del self._frag_buf[:total]
 
-        # künstlicher RUDP Header, damit Offsets in decrypt_payload passen
+        # künstlicher RUDP Header
         rudp_hdr = bytes([0xF1, 0xD0, 0x00, 0x00, 0xD1, 0x00, 0x00, 0x00])
         return rudp_hdr + payload
 
     def hello_handshake(self) -> bool:
         logger.info(">>> Handshake Step 1: Hello (force seq 0)")
-        hello_pkt, _ = self.build_packet(0xD0, ARTEMIS_HELLO_BODY, force_seq=0)
+
+        # dynamische AppSeq, damit Hello nicht mit späteren Requests kollidiert
+        self.app_seq += 1
+        hello_body = build_artemis_frame(2, self.app_seq, ARTEMIS_HELLO_B64 + b"\x00")
+        hello_pkt, _ = self.build_packet(0xD0, hello_body, force_seq=0)
 
         def hello_ok(pkt: bytes) -> bool:
             if self._is_simple_ack_payload(pkt):
                 return True
-            # Irgendein ARTEMIS Frame gilt als "Reaktion" (inkl. ARTEMISw Events)
             return self._parse_artemis_header_any(pkt) is not None
 
-        # 1) primär an active_port
         self.send_raw(hello_pkt, desc="Hello")
         r = self.pump(timeout=2.2, accept_predicate=hello_ok, filter_evt=False)
         if r is not None:
             return True
 
-        # 2) Fallback: wenn active_port nicht der "Handshake-Port" ist
         alt_ports = [p for p in TARGET_PORTS if p != self.active_port]
         if alt_ports:
             logger.warning("Keine Hello-Bestätigung via active_port; Fallback auf alternativen Port…")
@@ -759,22 +746,38 @@ class Session:
         if self.debug and self.raw_rx_dump:
             self.enable_raw_rx_dump()
 
-        logger.info("⏳ Warte auf Login-Response (Cmd 3)…")
+        logger.info("⏳ Warte auf Login-Response (Cmd 3, token-basiert)…")
+
+        def login_ok(pkt2: bytes) -> bool:
+            try:
+                r = self._decrypt_artemis_json_any(pkt2)
+                if r is None:
+                    return False
+                obj, cmd_id, _app_seq = r
+                return bool(cmd_id == 3 and "token" in obj)
+            except Exception:
+                return False
+
         resp_pkt = self.pump(
             timeout=max(8.0, self.raw_rx_window_seconds),
-            accept_cmd=3,
+            accept_predicate=login_ok,
             filter_evt=True,
         )
         if not resp_pkt:
             logger.error("❌ Login Timeout")
             return
 
-        resp = self.decrypt_payload(resp_pkt)
-        if not resp or "token" not in resp:
-            logger.error(f"❌ Login Antwort ungültig: {resp}")
+        dec = self._decrypt_artemis_json_any(resp_pkt)
+        if dec is None:
+            logger.error("❌ Login Antwort ungültig (Decrypt fehlgeschlagen)")
             return
 
-        self.token = resp["token"]
+        resp, cmd_id, app_seq = dec
+        if cmd_id != 3 or "token" not in resp:
+            logger.error(f"❌ Login Antwort ungültig: cmd_id={cmd_id} app_seq={app_seq} resp={resp}")
+            return
+
+        self.token = str(resp["token"])
         logger.info(f"✅ LOGIN OK! Token: {self.token}")
 
         logger.info(">>> Request file list (Cmd 768)…")
