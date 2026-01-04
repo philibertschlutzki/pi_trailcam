@@ -3,6 +3,7 @@
 A complete, ready-to-run Python automation project for the KJK230 Trail Camera (and similar Tuya/Artemis-based clones) on Raspberry Pi.
 
 <img width="440" height="487" alt="image" src="https://github.com/user-attachments/assets/140db893-2e28-41f1-bbde-465088706415" />
+
 **Temu Product ID:** KL2870699
 **Firmware:** V2.3.0.4
 **Bluetooth:** V3.3.5
