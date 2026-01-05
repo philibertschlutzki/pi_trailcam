@@ -53,6 +53,7 @@ DEFAULT_PASS = "85087127"
 BLE_MAC = "C6:1E:0D:E0:32:E8"
 
 LOGIN_DELAY_AFTER_STABILIZATION = 2.0
+MAGIC1_PROCESSING_DELAY = 0.1  # Brief pause after Magic1 to allow camera to process handshake
 
 
 # --- CONSTANTS / PAYLOADS ---
@@ -1134,13 +1135,15 @@ class Session:
         
         # Step 1b: Send Magic1 packet (per Protocol_analysis.md §5 and ble_udp_1.log line 393)
         # This is a critical handshake packet that the camera expects after login
-        # The sequence number jumps to 3 as per the MITM capture
+        # NOTE: The sequence number jumps from 0 to 3. This is not a bug - the MITM capture
+        # shows the working app does this intentionally. The camera firmware expects this
+        # specific sequence jump as part of the handshake protocol (see Protocol_analysis.md §5).
         logger.info(">>> Login Handshake Step 1b: Send Magic1 packet")
         magic1_pkt, _ = self.build_packet(0xD1, MAGIC_BODY_1, force_seq=3)
         self.send_raw(magic1_pkt, desc="Magic1")
         
-        # Brief pause to allow camera to process
-        time.sleep(0.1)
+        # Brief pause to allow camera to process handshake
+        time.sleep(MAGIC1_PROCESSING_DELAY)
         
         # Step 2: Wait for and ACK the login response (MsgType=3, AppSeq=1)
         logger.info(">>> Login Handshake Step 2: Wait for Login Response (MsgType=3, AppSeq=1)")
