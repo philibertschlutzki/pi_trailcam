@@ -1,7 +1,26 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.16
+"""Wildkamera Thumbnail Downloader - consolidated v4.17
 
-Changes in this version (v4.16):
+Changes in this version (v4.17):
+- CRITICAL FIX for Issue #159: Suppress heartbeat during login handshake.
+  Root cause: An unwanted heartbeat (AppSeq=2) was sent between Magic1 and login retransmissions,
+  breaking the expected AppSeq=1 sequence. The camera firmware expects either:
+  (a) Login response (MsgType=3, AppSeq=1), OR
+  (b) Login retransmission (MsgType=2, AppSeq=1)
+  
+  The heartbeat with AppSeq=2 confused the camera's state machine, causing it to ignore
+  subsequent login retransmissions. 
+  
+  Fix: Added no_heartbeat parameter to pump() and set it to True during login handshake:
+  - Line 1188: After Magic1, pump without heartbeat to ACK responses
+  - Line 1220: While waiting for login response, pump without heartbeat
+  
+  This ensures the AppSeq sequence remains clean: AppSeq=1 (login) -> AppSeq=1 (retrans) ->
+  AppSeq=1 (retrans) -> MsgType=3 AppSeq=1 (response).
+  
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "FINALER ROOT CAUSE" section for detailed analysis.
+
+Changes in v4.16:
 - CRITICAL FIX for Issue #157: Implemented triple login request transmission.
   Analysis of MITM captures (ble_udp_1.log lines 378-475) reveals that the working app sends
   the login request THREE times (lines 378, 402, 417) before the camera responds (line 463).
@@ -905,10 +924,11 @@ class Session:
         accept_cmd: Optional[Union[int, Set[int]]] = None,
         accept_predicate: Optional[Callable[[bytes], bool]] = None,
         filter_evt: bool = True,
+        no_heartbeat: bool = False,
     ) -> Optional[bytes]:
         start = time.time()
         while time.time() - start < timeout:
-            if self.active_port and self.global_seq > 1:
+            if self.active_port and self.global_seq > 1 and not no_heartbeat:
                 self.send_heartbeat()
 
             try:
@@ -1164,25 +1184,29 @@ class Session:
         
         # Step 1c: ACK/pump any immediate responses from camera
         # This matches MITM behavior where camera sends ACK before we retransmit (line 396)
-        self.pump(timeout=0.1, accept_predicate=lambda _: False, filter_evt=False)
+        # CRITICAL: no_heartbeat=True prevents heartbeat from incrementing AppSeq, which would
+        # break the camera's expectation of seeing AppSeq=1 for login retransmissions
+        self.pump(timeout=0.1, accept_predicate=lambda _: False, filter_evt=False, no_heartbeat=True)
         
         # Step 1d: Retransmit login request #2 (per MITM capture ble_udp_1.log line 402)
         # CRITICAL: The working app sends the login request THREE times total.
         # This is not error handling - it's part of the expected protocol flow.
         # The camera firmware appears to require multiple transmissions before responding.
         # IMPORTANT: Use same Seq=0 and same login_body (it's a retransmission, not a new request)
-        logger.info(">>> Login Handshake Step 1c: Retransmit Login #2")
+        logger.info(">>> Login Handshake Step 1d: Retransmit Login #2")
         login_pkt2, _ = self.build_packet(0xD0, login_body, force_seq=0)
         self.send_raw(login_pkt2, desc=f"Login#2(cmdId=0,AppSeq={login_app_seq})")
         
         # Step 1e: Retransmit login request #3 (per MITM capture ble_udp_1.log line 417)
         # The camera typically responds after the third transmission
-        logger.info(">>> Login Handshake Step 1d: Retransmit Login #3")
+        logger.info(">>> Login Handshake Step 1e: Retransmit Login #3")
         login_pkt3, _ = self.build_packet(0xD0, login_body, force_seq=0)
         self.send_raw(login_pkt3, desc=f"Login#3(cmdId=0,AppSeq={login_app_seq})")
         
         # Step 2: Wait for and ACK the login response (MsgType=3, AppSeq=1)
         # After the triple transmission, the camera should now respond (MITM line 463)
+        # CRITICAL: no_heartbeat=True prevents heartbeat from incrementing AppSeq during wait,
+        # ensuring clean AppSeq sequence for login response matching
         logger.info(">>> Login Handshake Step 2: Wait for Login Response (MsgType=3, AppSeq=1)")
         
         def is_login_response(pkt: bytes) -> bool:
@@ -1195,7 +1219,7 @@ class Session:
                 return True
             return False
         
-        login_response = self.pump(timeout=3.0, accept_predicate=is_login_response, filter_evt=False)
+        login_response = self.pump(timeout=3.0, accept_predicate=is_login_response, filter_evt=False, no_heartbeat=True)
         
         if login_response:
             logger.info("✅ Login Response received (MsgType=3)")
