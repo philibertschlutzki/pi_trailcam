@@ -19,6 +19,7 @@ Keeps from v4.14:
 import argparse
 import asyncio
 import base64
+import calendar
 import json
 import logging
 import os
@@ -77,13 +78,10 @@ ARTEMIS_W = b"ARTEMISw"
 ARTEMIS_MSG_REQUEST = 2
 ARTEMIS_MSG_RESPONSE = 3
 
-# Legacy: Static HELLO blob (no longer used - replaced with dynamic JSON login in v4.15)
-# Kept for reference only
-ARTEMIS_HELLO_B64_LEGACY = (
-    b"J8WWuQDPmYSLfu/gXAG+UqbBy55KP2iE25QPNofzn040+NI9g7zeXLkIpXpC07SXvosr"
-    b"Wsc1m8mxnq6hMiKwePbKJUwvSvqZb6s0sl1sfziRb4nrHS3IjLjRVw2lxAUfPMOkSEVk"
-    b"sh4L234p6VLtbnd4iq+8YcQJdk05GSR0cM4="
-)
+# Note: The legacy static HELLO blob (ARTEMIS_HELLO_B64) has been removed in v4.15.
+# It was replaced with proper dynamic JSON login requests per Protocol_analysis.md.
+# The blob was: J8WWuQDPmYSLfu/gXAG+UqbBy55KP2iE25QPNofzn040+NI9g7ze... (172 chars)
+# but could not be decrypted as valid JSON, suggesting it was not a proper login format.
 
 
 logger = logging.getLogger("CamClient")
@@ -998,22 +996,27 @@ class Session:
         rudp_hdr = bytes([0xF1, 0xD0, 0x00, 0x00, 0xD1, 0x00, 0x00, 0x00])
         return rudp_hdr + payload
 
-    def send_login_request(self) -> bool:
+    def send_login_request(self) -> Tuple[bool, int]:
         """Send proper login JSON (cmdId=0) with current utcTime as the initial request.
         
         This replaces the static ARTEMIS_HELLO_B64 blob with a dynamically generated
         login request matching the protocol specification and app behavior.
+        
+        Returns:
+            Tuple of (success: bool, app_seq: int) where app_seq is the AppSeq used for login
         """
         logger.info(">>> Login Request (cmdId=0) with AppSeq=1")
 
         self.app_seq += 1
+        login_app_seq = int(self.app_seq)  # Capture the AppSeq being used for this login
+        
         login_json = {
             "cmdId": 0,
             "usrName": "admin",
             "password": "admin",
             "needVideo": 0,
             "needAudio": 0,
-            "utcTime": int(time.time()),
+            "utcTime": calendar.timegm(time.gmtime()),  # True UTC timestamp
             "supportHeartBeat": True
         }
         
@@ -1022,7 +1025,7 @@ class Session:
         b64_payload = base64.b64encode(encrypted) + b"\x00"
         
         # Build ARTEMIS frame (MsgType=2 for request)
-        login_body = build_artemis_frame(ARTEMIS_MSG_REQUEST, self.app_seq, b64_payload)
+        login_body = build_artemis_frame(ARTEMIS_MSG_REQUEST, login_app_seq, b64_payload)
         login_pkt, _ = self.build_packet(0xD0, login_body, force_seq=0)
 
         def login_ack_ok(pkt: bytes) -> bool:
@@ -1035,7 +1038,7 @@ class Session:
         r = self.pump(timeout=2.5, accept_predicate=login_ack_ok, filter_evt=False)
         if r is not None:
             logger.info("✅ Login request acknowledged")
-            return True
+            return True, login_app_seq
 
         # Try alternate port as fallback
         alt_ports = [p for p in TARGET_PORTS if p != self.active_port]
@@ -1046,9 +1049,9 @@ class Session:
             if r is not None:
                 self.active_port = alt_ports[0]
                 logger.info(f"✅ active_port auf {self.active_port} umgestellt (Login-Fallback).")
-                return True
+                return True, login_app_seq
 
-        return False
+        return False, login_app_seq
 
     def run(self):
         if not self.setup_network():
@@ -1061,13 +1064,11 @@ class Session:
         self.send_prelogin()
         time.sleep(0.25)
 
-        # Send proper login request (cmdId=0) instead of static HELLO blob
-        if not self.send_login_request():
+        # Send proper login request (cmdId=0) and capture the AppSeq used
+        success, login_app_seq = self.send_login_request()
+        if not success:
             logger.error("❌ Login request nicht bestätigt/keine Antwort")
             return
-
-        # Store the AppSeq used for login to match against the response
-        login_app_seq = int(self.app_seq)
 
         logger.info(">>> Handshake Step 2: Magic 1 (force seq 3)")
         m1, _ = self.build_packet(0xD1, MAGIC_BODY_1, force_seq=3)

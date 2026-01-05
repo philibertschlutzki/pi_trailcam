@@ -2,8 +2,10 @@
 """Unit tests for login token extraction using known MITM captures."""
 
 import base64
+import calendar
 import json
 import struct
+import time
 import unittest
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
@@ -40,15 +42,13 @@ class TestLoginDecryption(unittest.TestCase):
 
     def test_encrypt_login_request(self):
         """Test that we can create a valid encrypted login request."""
-        import time
-        
         login_json = {
             "cmdId": 0,
             "usrName": "admin",
             "password": "admin",
             "needVideo": 0,
             "needAudio": 0,
-            "utcTime": int(time.time()),
+            "utcTime": calendar.timegm(time.gmtime()),  # True UTC timestamp
             "supportHeartBeat": True
         }
         
