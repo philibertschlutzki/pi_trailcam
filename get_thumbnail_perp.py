@@ -1102,6 +1102,7 @@ class Session:
 
         # === LOGIN HANDSHAKE (following MITM spec) ===
         # Step 1: Build and send login request (cmdId=0, AppSeq=1)
+        # CRITICAL: Must use RUDP Seq=0 per MITM captures (ble_udp_1.log line 378)
         logger.info(">>> Login Handshake Step 1: Send Login Request (cmdId=0, AppSeq=1)")
         self.app_seq += 1  # app_seq becomes 1
         login_app_seq = int(self.app_seq)
@@ -1122,12 +1123,24 @@ class Session:
         encrypted = self.encrypt_json(login_json)
         b64_payload = base64.b64encode(encrypted) + b"\x00"
         login_body = build_artemis_frame(ARTEMIS_MSG_REQUEST, login_app_seq, b64_payload)
-        login_pkt, login_rudp_seq = self.build_packet(0xD0, login_body)
+        
+        # CRITICAL FIX: Use force_seq=0 for login request (per MITM capture)
+        login_pkt, login_rudp_seq = self.build_packet(0xD0, login_body, force_seq=0)
         
         if self.debug:
             logger.debug(f"📊 Login packet: RUDP seq={login_rudp_seq}, ARTEMIS MsgType=2, AppSeq={login_app_seq}")
         
         self.send_raw(login_pkt, desc=f"Login(cmdId=0,AppSeq={login_app_seq})")
+        
+        # Step 1b: Send Magic1 packet (per Protocol_analysis.md §5 and ble_udp_1.log line 393)
+        # This is a critical handshake packet that the camera expects after login
+        # The sequence number jumps to 3 as per the MITM capture
+        logger.info(">>> Login Handshake Step 1b: Send Magic1 packet")
+        magic1_pkt, _ = self.build_packet(0xD1, MAGIC_BODY_1, force_seq=3)
+        self.send_raw(magic1_pkt, desc="Magic1")
+        
+        # Brief pause to allow camera to process
+        time.sleep(0.1)
         
         # Step 2: Wait for and ACK the login response (MsgType=3, AppSeq=1)
         logger.info(">>> Login Handshake Step 2: Wait for Login Response (MsgType=3, AppSeq=1)")
