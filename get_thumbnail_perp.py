@@ -12,8 +12,8 @@ Changes in this version (v4.17):
   subsequent login retransmissions. 
   
   Fix: Added no_heartbeat parameter to pump() and set it to True during login handshake:
-  - Line 1169: After Magic1, pump without heartbeat to ACK responses
-  - Line 1202: While waiting for login response, pump without heartbeat
+  - Line 1188: After Magic1, pump without heartbeat to ACK responses
+  - Line 1220: While waiting for login response, pump without heartbeat
   
   This ensures the AppSeq sequence remains clean: AppSeq=1 (login) -> AppSeq=1 (retrans) ->
   AppSeq=1 (retrans) -> MsgType=3 AppSeq=1 (response).
@@ -1184,7 +1184,8 @@ class Session:
         
         # Step 1c: ACK/pump any immediate responses from camera
         # This matches MITM behavior where camera sends ACK before we retransmit (line 396)
-        # CRITICAL: no_heartbeat=True to prevent AppSeq increment that would break login sequence
+        # CRITICAL: no_heartbeat=True prevents heartbeat from incrementing AppSeq, which would
+        # break the camera's expectation of seeing AppSeq=1 for login retransmissions
         self.pump(timeout=0.1, accept_predicate=lambda _: False, filter_evt=False, no_heartbeat=True)
         
         # Step 1d: Retransmit login request #2 (per MITM capture ble_udp_1.log line 402)
@@ -1192,19 +1193,20 @@ class Session:
         # This is not error handling - it's part of the expected protocol flow.
         # The camera firmware appears to require multiple transmissions before responding.
         # IMPORTANT: Use same Seq=0 and same login_body (it's a retransmission, not a new request)
-        logger.info(">>> Login Handshake Step 1c: Retransmit Login #2")
+        logger.info(">>> Login Handshake Step 1d: Retransmit Login #2")
         login_pkt2, _ = self.build_packet(0xD0, login_body, force_seq=0)
         self.send_raw(login_pkt2, desc=f"Login#2(cmdId=0,AppSeq={login_app_seq})")
         
         # Step 1e: Retransmit login request #3 (per MITM capture ble_udp_1.log line 417)
         # The camera typically responds after the third transmission
-        logger.info(">>> Login Handshake Step 1d: Retransmit Login #3")
+        logger.info(">>> Login Handshake Step 1e: Retransmit Login #3")
         login_pkt3, _ = self.build_packet(0xD0, login_body, force_seq=0)
         self.send_raw(login_pkt3, desc=f"Login#3(cmdId=0,AppSeq={login_app_seq})")
         
         # Step 2: Wait for and ACK the login response (MsgType=3, AppSeq=1)
         # After the triple transmission, the camera should now respond (MITM line 463)
-        # CRITICAL: no_heartbeat=True to avoid interfering while camera processes login
+        # CRITICAL: no_heartbeat=True prevents heartbeat from incrementing AppSeq during wait,
+        # ensuring clean AppSeq sequence for login response matching
         logger.info(">>> Login Handshake Step 2: Wait for Login Response (MsgType=3, AppSeq=1)")
         
         def is_login_response(pkt: bytes) -> bool:
