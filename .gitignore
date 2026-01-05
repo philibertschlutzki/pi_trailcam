@@ -8,3 +8,5 @@ venv/
 .env
 .DS_Store
 downloads/
+*.log
+get_thumbnail_perp_debug.log

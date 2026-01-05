@@ -707,6 +707,20 @@ class Session:
         if r is None:
             if self.debug:
                 logger.debug(f"⚠️ MsgType=3 konnte nicht entschlüsselt werden (AppSeq={app_seq})")
+                # Provide additional diagnostic information
+                hdr = self._parse_artemis_header_any(pkt)
+                if hdr:
+                    off, magic, field1, _aseq, alen = hdr
+                    payload = self._extract_artemis_payload(pkt, off, alen)
+                    b64_part = payload.split(b"\x00")[0]
+                    logger.debug(f"   Payload length: {alen}, Base64 length: {len(b64_part)}")
+                    logger.debug(f"   Base64 (first 40 chars): {b64_part[:40]}")
+                    try:
+                        raw = base64.b64decode(self._pad_b64(b64_part))
+                        logger.debug(f"   Decoded raw length: {len(raw)} (16-aligned: {len(raw) % 16 == 0})")
+                        logger.debug(f"   Raw hex (first 32 bytes): {raw[:32].hex()}")
+                    except Exception as e:
+                        logger.debug(f"   Base64 decode failed: {e}")
             return None
 
         obj, _field1, _app_seq2, magic = r
@@ -1088,7 +1102,14 @@ class Session:
                 logger.debug(f"Gepufferte MsgType=3 Pakete:")
                 for i, pkt in enumerate(list(self._token_packet_buffer)):
                     app_seq = self._get_artemis_app_seq(pkt)
-                    logger.debug(f"  Paket {i+1}: AppSeq={app_seq}, len={len(pkt)}")
+                    cmd_id = self._get_json_cmd_id(pkt)
+                    logger.debug(f"  Paket {i+1}: AppSeq={app_seq}, cmdId={cmd_id}, len={len(pkt)}")
+                    # Try to decrypt and show what we got
+                    r = self._decrypt_artemis_json_any(pkt)
+                    if r:
+                        obj, _f1, _a2, _m = r
+                        json_preview = json.dumps(obj, ensure_ascii=False)[:150]
+                        logger.debug(f"    Decrypted: {json_preview}...")
             return
 
         self.disable_token_buffering()
