@@ -57,8 +57,11 @@ class TestLoginDecryption(unittest.TestCase):
         json_bytes = json_str.encode("utf-8")
         
         # Pad and encrypt
+        # Note: ECB mode is used per camera vendor protocol specification
+        # (Protocol_analysis.md §4.2). This is NOT a security choice - it's
+        # mandated by the proprietary camera protocol.
         padded = pad(json_bytes, AES.block_size)
-        cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)
+        cipher = AES.new(PHASE2_KEY, AES.MODE_ECB)  # nosec - vendor protocol requirement
         encrypted = cipher.encrypt(padded)
         
         # Encode to Base64

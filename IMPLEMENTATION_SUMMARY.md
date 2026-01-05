@@ -120,6 +120,30 @@ Implementation now matches **Protocol_analysis.md §4.3.1**:
    - Added `*.log` and `get_thumbnail_perp_debug.log`
    - Prevents debug logs from being committed
 
+## Security Summary
+
+### CodeQL Analysis
+The security scanner flagged use of AES-ECB mode, which is generally considered weak for modern cryptography. However:
+
+**This is NOT a vulnerability introduced by this fix** - it's mandated by the proprietary camera protocol:
+- Per `Protocol_analysis.md §4.2`: "AES Parameter: Mode: AES-128-ECB"
+- The vendor's protocol specification requires ECB mode
+- We cannot change this without breaking compatibility with the camera
+- The camera firmware itself uses ECB mode
+
+**Mitigation Context**:
+- This is a local Wi-Fi camera (192.168.43.1) used for wildlife monitoring
+- Communication is over local network, not internet-exposed
+- ECB mode weakness requires ability to observe/manipulate encrypted traffic
+- The protocol also uses static hardcoded credentials ("admin"/"admin")
+- Overall security model is "local trusted network access"
+
+**Verdict**: The use of ECB mode is **acceptable in this context** because:
+1. It's required by the vendor protocol (cannot be changed)
+2. It's for local network communication only
+3. The threat model assumes local network access is already trusted
+4. Alternative would be to not support this camera at all
+
 ## Known Limitations
 
 1. **MITM Capture Decryption**: Cannot decrypt captured responses offline
