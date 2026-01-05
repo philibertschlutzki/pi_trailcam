@@ -20,6 +20,8 @@ def test_ack_format():
     print("Testing ACK packet format...")
     
     # Spec requirement (Protocol_analysis.md §3.3):
+    # "Every incoming packet of type 0xD0 or 0x42 must be acknowledged with an ACK"
+    # ("Jedes eingehende Paket vom Typ 0xD0 oder 0x42 muss mit ACK bestätigt werden")
     # Header: F1 D1 00 06 D1 00 00 [RX_SEQ]
     # Payload: 00 [RX_SEQ]
     # Total: 10 bytes

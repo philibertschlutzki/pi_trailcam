@@ -897,6 +897,7 @@ class Session:
                 rx_seq = data[7]
 
                 # ACK all DATA and ALL FRAG packets (per spec: "Jedes eingehende Paket vom Typ 0xD0 oder 0x42")
+                # Note: We check _is_simple_ack_payload to avoid ACKing ACK packets (which would create an infinite loop)
                 if pkt_type == 0xD0 or pkt_type == 0x42:
                     if not self._is_simple_ack_payload(data) and self.active_port:
                         self.send_raw(self.build_ack_10(rx_seq), desc=f"ACK(rx_seq={rx_seq})")
@@ -914,7 +915,7 @@ class Session:
                         data = re
                     else:
                         if self.debug:
-                            logger.debug("FRAG ohne ARTEMIS-Signatur (vermutlich LBCS/Discovery); ACK gesendet")
+                            logger.debug("FRAG without ARTEMIS signature (likely LBCS/Discovery); ACK sent")
 
             # Token buffer: store MsgType=3 responses (raw) while buffering is active
             if self._buffering_active:
