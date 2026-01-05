@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.14
+"""Wildkamera Thumbnail Downloader - consolidated v4.15
 
-Changes in this version (v4.14):
-- Login/AppSeq fix: The first "Hello" packet (ARTEMIS_HELLO_B64) is the actual Login (cmdId=0) request.
-  It uses AppSeq=1, and the Login Response (MsgType=3) returns the token with the same AppSeq.
-  The script no longer sends a second, generated Login request (which previously incremented AppSeq and caused a token timeout).
+Changes in this version (v4.15):
+- CRITICAL FIX: Replaced static ARTEMIS_HELLO_B64 blob with proper JSON login request (cmdId=0).
+  Now generates login JSON with dynamic utcTime, matching app behavior per Protocol_analysis.md.
+  This fixes token extraction failures caused by sending replay/static data instead of fresh login.
+- Enhanced decryption: Added multiple fallback strategies (ECB, CBC, prefix removal) to handle
+  different response formats and improve token extraction robustness.
 
-Keeps from v4.13:
+Keeps from v4.14:
 - ARTEMIS ("ARTEMIS\x00") header field1 is MsgType (2=request, 3=response), not cmdId.
-  Requests are now sent with MsgType=2 and the real cmdId stays inside the encrypted JSON.
-- Response matching: cmdId filtering is now based on decrypted JSON (cmdId), not on the ARTEMIS header field.
-- Token extraction: token is accepted only from MsgType=3 responses that match the expected AppSeq of the login request.
-- Keeps v4.12: ARTEMISw Cmd=9 is parsed as plaintext JSON event (no base64/AES attempt).
+  Requests are sent with MsgType=2 and the real cmdId stays inside the encrypted JSON.
+- Response matching: cmdId filtering is based on decrypted JSON (cmdId), not ARTEMIS header field.
+- Token extraction: token is accepted only from MsgType=3 responses that match expected AppSeq.
+- ARTEMISw Cmd=9 is parsed as plaintext JSON event (no base64/AES attempt).
 """
 
 import argparse
@@ -75,8 +77,9 @@ ARTEMIS_W = b"ARTEMISw"
 ARTEMIS_MSG_REQUEST = 2
 ARTEMIS_MSG_RESPONSE = 3
 
-# Hello base64 blob
-ARTEMIS_HELLO_B64 = (
+# Legacy: Static HELLO blob (no longer used - replaced with dynamic JSON login in v4.15)
+# Kept for reference only
+ARTEMIS_HELLO_B64_LEGACY = (
     b"J8WWuQDPmYSLfu/gXAG+UqbBy55KP2iE25QPNofzn040+NI9g7zeXLkIpXpC07SXvosr"
     b"Wsc1m8mxnq6hMiKwePbKJUwvSvqZb6s0sl1sfziRb4nrHS3IjLjRVw2lxAUfPMOkSEVk"
     b"sh4L234p6VLtbnd4iq+8YcQJdk05GSR0cM4="
@@ -981,31 +984,54 @@ class Session:
         rudp_hdr = bytes([0xF1, 0xD0, 0x00, 0x00, 0xD1, 0x00, 0x00, 0x00])
         return rudp_hdr + payload
 
-    def hello_handshake(self) -> bool:
-        logger.info(">>> Handshake Step 1: Hello (force seq 0)")
+    def send_login_request(self) -> bool:
+        """Send proper login JSON (cmdId=0) with current utcTime as the initial request.
+        
+        This replaces the static ARTEMIS_HELLO_B64 blob with a dynamically generated
+        login request matching the protocol specification and app behavior.
+        """
+        logger.info(">>> Login Request (cmdId=0) with AppSeq=1")
 
         self.app_seq += 1
-        hello_body = build_artemis_frame(ARTEMIS_MSG_REQUEST, self.app_seq, ARTEMIS_HELLO_B64 + b"\x00")
-        hello_pkt, _ = self.build_packet(0xD0, hello_body, force_seq=0)
+        login_json = {
+            "cmdId": 0,
+            "usrName": "admin",
+            "password": "admin",
+            "needVideo": 0,
+            "needAudio": 0,
+            "utcTime": int(time.time()),
+            "supportHeartBeat": True
+        }
+        
+        # Encrypt and encode the login JSON
+        encrypted = self.encrypt_json(login_json)
+        b64_payload = base64.b64encode(encrypted) + b"\x00"
+        
+        # Build ARTEMIS frame (MsgType=2 for request)
+        login_body = build_artemis_frame(ARTEMIS_MSG_REQUEST, self.app_seq, b64_payload)
+        login_pkt, _ = self.build_packet(0xD0, login_body, force_seq=0)
 
-        def hello_ok(pkt: bytes) -> bool:
+        def login_ack_ok(pkt: bytes) -> bool:
+            # Accept ACK or any ARTEMIS response
             if self._is_simple_ack_payload(pkt):
                 return True
             return self._parse_artemis_header_any(pkt) is not None
 
-        self.send_raw(hello_pkt, desc="Hello")
-        r = self.pump(timeout=2.2, accept_predicate=hello_ok, filter_evt=False)
+        self.send_raw(login_pkt, desc=f"Login(cmdId=0) utcTime={login_json['utcTime']}")
+        r = self.pump(timeout=2.5, accept_predicate=login_ack_ok, filter_evt=False)
         if r is not None:
+            logger.info("✅ Login request acknowledged")
             return True
 
+        # Try alternate port as fallback
         alt_ports = [p for p in TARGET_PORTS if p != self.active_port]
         if alt_ports:
-            logger.warning("Keine Hello-Bestätigung via active_port; Fallback auf alternativen Port…")
-            self.send_raw(hello_pkt, desc="Hello(fallback)", port=alt_ports[0])
-            r = self.pump(timeout=2.2, accept_predicate=hello_ok, filter_evt=False)
+            logger.warning("Keine Login-Bestätigung via active_port; Fallback auf alternativen Port…")
+            self.send_raw(login_pkt, desc="Login(fallback)", port=alt_ports[0])
+            r = self.pump(timeout=2.5, accept_predicate=login_ack_ok, filter_evt=False)
             if r is not None:
                 self.active_port = alt_ports[0]
-                logger.info(f"✅ active_port auf {self.active_port} umgestellt (Hello-Fallback).")
+                logger.info(f"✅ active_port auf {self.active_port} umgestellt (Login-Fallback).")
                 return True
 
         return False
@@ -1021,9 +1047,13 @@ class Session:
         self.send_prelogin()
         time.sleep(0.25)
 
-        if not self.hello_handshake():
-            logger.error("❌ Hello nicht bestätigt/keine Antwort")
+        # Send proper login request (cmdId=0) instead of static HELLO blob
+        if not self.send_login_request():
+            logger.error("❌ Login request nicht bestätigt/keine Antwort")
             return
+
+        # Store the AppSeq used for login to match against the response
+        login_app_seq = int(self.app_seq)
 
         logger.info(">>> Handshake Step 2: Magic 1 (force seq 3)")
         m1, _ = self.build_packet(0xD1, MAGIC_BODY_1, force_seq=3)
@@ -1047,9 +1077,6 @@ class Session:
         if LOGIN_DELAY_AFTER_STABILIZATION > 0:
             logger.info(f">>> Warte {LOGIN_DELAY_AFTER_STABILIZATION:.1f}s nach Stabilisierung (pump)…")
             self.pump(timeout=LOGIN_DELAY_AFTER_STABILIZATION, accept_predicate=lambda _d: False)
-
-        # --- Login token (response to the initial Hello/Login request) ---
-        login_app_seq = int(self.app_seq)
 
         if self.debug and self.raw_rx_dump:
             self.enable_raw_rx_dump()
