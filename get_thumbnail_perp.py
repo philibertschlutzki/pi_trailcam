@@ -896,25 +896,25 @@ class Session:
                 pkt_type = data[1]
                 rx_seq = data[7]
 
-                if pkt_type == 0x42:
-                    frag_payload = data[8:]
-                    looks_artemis_frag = (ARTEMIS_NULL in frag_payload) or (ARTEMIS_NULL in self._frag_buf)
-
-                # ACK all DATA + relevant FRAG
-                if pkt_type == 0xD0 or (pkt_type == 0x42 and looks_artemis_frag):
+                # ACK all DATA and ALL FRAG packets (per spec: "Jedes eingehende Paket vom Typ 0xD0 oder 0x42")
+                if pkt_type == 0xD0 or pkt_type == 0x42:
                     if not self._is_simple_ack_payload(data) and self.active_port:
                         self.send_raw(self.build_ack_10(rx_seq), desc=f"ACK(rx_seq={rx_seq})")
 
+                # Handle FRAG reassembly for ARTEMIS packets
                 if pkt_type == 0x42:
+                    frag_payload = data[8:]
+                    looks_artemis_frag = (ARTEMIS_NULL in frag_payload) or (ARTEMIS_NULL in self._frag_buf)
+                    
                     if looks_artemis_frag:
-                        self._frag_buf += data[8:]
+                        self._frag_buf += frag_payload
                         re = self._try_reassemble_artemis()
                         if re is None:
                             continue
                         data = re
                     else:
                         if self.debug:
-                            logger.debug("FRAG ohne ARTEMIS-Signatur (vermutlich LBCS/Discovery); skip reassembly/ack")
+                            logger.debug("FRAG ohne ARTEMIS-Signatur (vermutlich LBCS/Discovery); ACK gesendet")
 
             # Token buffer: store MsgType=3 responses (raw) while buffering is active
             if self._buffering_active:
@@ -1064,25 +1064,52 @@ class Session:
         self.send_prelogin()
         time.sleep(0.25)
 
-        # Send proper login request (cmdId=0) and capture the AppSeq used
-        success, login_app_seq = self.send_login_request()
-        if not success:
-            logger.error("❌ Login request nicht bestätigt/keine Antwort")
-            return
+        # Step 1: Send initial login request (cmdId=0) and capture the AppSeq used
+        logger.info(">>> Login Request #1 (cmdId=0) with AppSeq=1")
+        self.app_seq += 1
+        login_app_seq = int(self.app_seq)
+        
+        login_json = {
+            "cmdId": 0,
+            "usrName": "admin",
+            "password": "admin",
+            "needVideo": 0,
+            "needAudio": 0,
+            "utcTime": calendar.timegm(time.gmtime()),
+            "supportHeartBeat": True
+        }
+        
+        encrypted = self.encrypt_json(login_json)
+        b64_payload = base64.b64encode(encrypted) + b"\x00"
+        login_body = build_artemis_frame(ARTEMIS_MSG_REQUEST, login_app_seq, b64_payload)
+        login_pkt, _ = self.build_packet(0xD0, login_body, force_seq=0)
+        
+        self.send_raw(login_pkt, desc=f"Login#1(cmdId=0) utcTime={login_json['utcTime']}")
+        # Don't wait for ACK here, just move on
+        time.sleep(0.05)
 
-        logger.info(">>> Handshake Step 2: Magic 1 (force seq 3)")
-        m1, _ = self.build_packet(0xD1, MAGIC_BODY_1, force_seq=3)
+        # Step 2: Send Magic1 packet (type 0xD1, seq=1, payload=00 00)
+        logger.info(">>> Handshake Step 2: Magic1 (0xD1 seq=1)")
+        m1, _ = self.build_packet(0xD1, MAGIC_BODY_2, force_seq=1)  # MAGIC_BODY_2 is the 00 00 payload
         self.send_raw(m1, desc="Magic1")
-        time.sleep(0.05)
-
-        logger.info(">>> Handshake Step 3: Magic 2 (force seq 1)")
-        m2, _ = self.build_packet(0xD1, MAGIC_BODY_2, force_seq=1)
-        self.send_raw(m2, desc="Magic2")
-        time.sleep(0.05)
-
-        # Give camera time to send login response after Magic packets
-        logger.info(">>> Warte auf Login-Response nach Magic-Paketen…")
-        self.pump(timeout=1.0, accept_predicate=lambda _d: False)
+        
+        # Step 3: Wait for Magic1 echo from camera
+        def is_magic1_echo(pkt: bytes) -> bool:
+            return pkt == m1
+        
+        r = self.pump(timeout=1.0, accept_predicate=is_magic1_echo, filter_evt=False)
+        if r is not None:
+            logger.info("✅ Magic1 echo received from camera")
+        else:
+            logger.warning("⚠️ Magic1 echo nicht empfangen")
+        
+        # Step 4: RE-SEND the same login request (critical!)
+        logger.info(">>> Login Request #2 (Re-send für Login-Response-Trigger)")
+        self.send_raw(login_pkt, desc=f"Login#2(cmdId=0) utcTime={login_json['utcTime']}")
+        
+        # Step 5: Wait a bit for login response to arrive
+        logger.info(">>> Warte auf Login-Response (MsgType=3)…")
+        self.pump(timeout=0.5, accept_predicate=lambda _d: False)
 
         logger.info(">>> Stabilisierung…")
         for _ in range(2):
