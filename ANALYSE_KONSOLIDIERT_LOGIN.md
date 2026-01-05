@@ -31,11 +31,25 @@ Das Login schlägt fehl, weil die Kamera die Login-Response nicht sendet. Die An
 - Magic1 fehlt komplett
 - **Status**: Fixes noch nicht vollständig angewendet
 
-### Version debug05012026_4.log (20:18 Uhr) - AKTUELL
+### Version debug05012026_4.log (20:18 Uhr)
 **Problem**: Korrekte Sequenznummern, aber keine Response
 - Zeile 27: Login mit Seq=0 ✅
 - Zeile 29: Magic1 mit Seq=3 ✅
 - **ABER**: Keine Login-Response von der Kamera!
+
+### Version debug05012026_5.log (20:58 Uhr) - AKTUELL
+**Problem**: Unerwarteter Heartbeat zwischen Magic1 und Login-Retransmissions
+- Zeile 27: Login #1 mit Seq=0, AppSeq=1 ✅
+- Zeile 29: Magic1 mit Seq=3 ✅
+- **Zeile 33: Heartbeat mit Seq=4, AppSeq=2** ❌ SOLLTE NICHT DA SEIN!
+- Zeile 34-37: Login #2 und #3 Retransmissions ✅
+- **ABER**: Keine Login-Response von der Kamera!
+
+**Root Cause**: Der Heartbeat mit AppSeq=2 zwischen Magic1 und den Login-Retransmissions verwirrt die Kamera. Die Kamera erwartet nach Login AppSeq=1 entweder:
+  - Die Login-Response (MsgType=3, AppSeq=1), ODER
+  - Eine Retransmission des Login-Requests (MsgType=2, AppSeq=1)
+  
+Aber NICHT ein Heartbeat mit AppSeq=2! Das bricht die erwartete Sequenz.
 
 ---
 
@@ -92,7 +106,7 @@ Das Login schlägt fehl, weil die Kamera die Login-Response nicht sendet. Die An
 - Magic1 mit `force_seq=3` und `MAGIC_BODY_1` (6 Nullbytes)
 - Zeile 29 (debug05012026_4.log) zeigt korrekten Magic1
 
-### 🆕 Hypothese 3: Login-Retransmission erforderlich (NEU!)
+### ✅ Hypothese 3: Login-Retransmission erforderlich (IMPLEMENTIERT, aber mit Bug)
 
 **Beobachtung**: Die funktionierende App sendet den Login-Request **dreimal**.
 
@@ -106,7 +120,47 @@ Das Login schlägt fehl, weil die Kamera die Login-Response nicht sendet. Die An
 - Sie "hört" erst beim zweiten oder dritten Versuch richtig zu
 - Die dreifache Übertragung ist ein **kritischer Teil des Protokolls**, nicht nur eine Fehlerbehandlung
 
-**Status**: ❌ NICHT IMPLEMENTIERT (Ursache des aktuellen Fehlers!)
+**Status**: ✅ IMPLEMENTIERT in v4.16 (Zeilen 1151, 1176, 1182 in get_thumbnail_perp.py)
+
+### 🆕 Hypothese 4: Heartbeat stört Login-Sequenz (NEU! - HAUPTPROBLEM)
+
+**Beobachtung**: debug05012026_5.log Zeile 33 zeigt einen Heartbeat (AppSeq=2) zwischen Magic1 und Login-Retransmissions.
+
+**MITM-Analyse (ble_udp_1.log)**:
+```
+Zeile 378: TX Login #1 (RUDP Seq=0, ARTEMIS MsgType=2, AppSeq=1)
+Zeile 393: TX Magic1 (RUDP Seq=3, ACK/CTRL)
+Zeile 396: RX ACK
+Zeile 399: TX ACK für empfangenen ACK
+Zeile 402: TX Login #2 (RUDP Seq=0, ARTEMIS MsgType=2, AppSeq=1) ← DIREKT nach ACK!
+Zeile 417: TX Login #3 (RUDP Seq=0, ARTEMIS MsgType=2, AppSeq=1)
+Zeile 435: RX Login Response (MsgType=3, AppSeq=1)
+```
+
+**Aktuelles Verhalten (debug05012026_5.log)**:
+```
+Zeile 27: TX Login #1 (Seq=0, AppSeq=1)
+Zeile 29: TX Magic1 (Seq=3)
+Zeile 33: TX Heartbeat (Seq=4, AppSeq=2) ← SOLLTE NICHT DA SEIN!
+Zeile 34: TX Login #2 (Seq=0, AppSeq=1)
+Zeile 37: TX Login #3 (Seq=0, AppSeq=1)
+Zeile 49: TIMEOUT - keine Response
+```
+
+**Problem**: 
+Die Kamera erwartet nach dem Login-Request (AppSeq=1) als nächstes ARTEMIS-Paket:
+- ENTWEDER: Login-Response (MsgType=3, AppSeq=1)
+- ODER: Login-Retransmission (MsgType=2, AppSeq=1)
+
+Der Heartbeat mit AppSeq=2 **bricht diese erwartete Sequenz**. Die Kamera-Firmware scheint einen Zustandsautomaten zu haben, der:
+1. Nach Login-Request (AppSeq=1) in einem "Warte auf Login-Verarbeitung" Zustand ist
+2. Nur Login-Retransmissions mit AppSeq=1 akzeptiert (um Robustheit zu garantieren)
+3. Durch den Heartbeat (AppSeq=2) verwirrt wird und die nachfolgenden Login-Retransmissions ignoriert
+
+**Root Cause**: 
+Der Aufruf `self.pump(timeout=0.1, ...)` in Zeile 1167 von get_thumbnail_perp.py triggert `send_heartbeat()` (pump Zeile 911-912), weil `self.global_seq > 1` (es ist 3 nach Magic1).
+
+**Status**: ❌ KRITISCHER BUG - Dies ist die wahrscheinliche Hauptursache des Login-Timeouts!
 
 ---
 
@@ -117,53 +171,69 @@ Das Login schlägt fehl, weil die Kamera die Login-Response nicht sendet. Die An
 1. Login (Seq=0, AppSeq=1)
 2. Magic1 (Seq=3)
 3. [Empfange ACK]
-4. Login (Seq=0, AppSeq=1)  ← WIEDERHOLUNG!
+4. [Sende ACK für empfangenen ACK]
 5. Login (Seq=0, AppSeq=1)  ← WIEDERHOLUNG!
-6. [Empfange Login-Response MsgType=3]
+6. Login (Seq=0, AppSeq=1)  ← WIEDERHOLUNG!
+7. [Empfange Login-Response MsgType=3, AppSeq=1] ✅
 ```
 
-### Aktuelle Implementierung (debug05012026_4.log):
+### Aktuelle Implementierung (debug05012026_5.log):
 ```
 1. Login (Seq=0, AppSeq=1)  ✅
 2. Magic1 (Seq=3)           ✅
-3. [Warten auf Response...]
-4. [TIMEOUT - keine Response] ❌
+3. Heartbeat (Seq=4, AppSeq=2) ❌ FEHLER!
+4. Login (Seq=0, AppSeq=1)  ✅ (aber zu spät/ignoriert)
+5. Login (Seq=0, AppSeq=1)  ✅ (aber zu spät/ignoriert)
+6. [TIMEOUT - keine Response] ❌
 ```
 
-**Fehlende Schritte**: Login-Wiederholungen (Zeilen 4-5)
+**Kritischer Unterschied**: Der Heartbeat mit AppSeq=2 in Schritt 3 stört die Login-Sequenz!
+
+**Fehlende Schritte**: 
+- Kein Heartbeat zwischen Magic1 und Login-Retransmissions
+- Die Login-Retransmissions müssen DIREKT nach dem ACK-Austausch erfolgen
 
 ---
 
 ## Lösungsansatz
 
-### Implementierung: Triple Login Transmission
+### FIX: Heartbeat zwischen Magic1 und Login-Retransmissions unterdrücken
 
+**Problem**: Der `pump()` Aufruf in Zeile 1167 triggert `send_heartbeat()`, weil `self.global_seq > 1`.
+
+**Lösung Option A - Heartbeat-Bedingung erweitern**:
 ```python
-# Step 1: Send login request #1
-login_pkt, login_rudp_seq = self.build_packet(0xD0, login_body, force_seq=0)
-self.send_raw(login_pkt, desc=f"Login#1(cmdId=0,AppSeq={login_app_seq})")
+# In pump() Funktion, Zeile 911-912:
+# Verhindere Heartbeat während kritischer Login-Phase
+if self.active_port and self.global_seq > 1 and not self._in_login_handshake:
+    self.send_heartbeat()
+```
 
-# Step 1b: Send Magic1 handshake
-magic1_pkt, _ = self.build_packet(0xD1, MAGIC_BODY_1, force_seq=3)
-self.send_raw(magic1_pkt, desc="Magic1")
+**Lösung Option B - pump() mit no_heartbeat Parameter** (EMPFOHLEN):
+```python
+def pump(self, timeout, accept_cmd=None, accept_predicate=None, filter_evt=True, no_heartbeat=False):
+    while time.time() - start < timeout:
+        if self.active_port and self.global_seq > 1 and not no_heartbeat:
+            self.send_heartbeat()
+        # ... rest of pump logic
+```
 
-# Brief pause to allow camera to process
-time.sleep(0.1)
+Dann in run():
+```python
+# Step 1c: ACK/pump any immediate responses from camera
+# CRITICAL: no_heartbeat=True to avoid interfering with login sequence
+self.pump(timeout=0.1, accept_predicate=lambda _: False, filter_evt=False, no_heartbeat=True)
+```
 
-# Step 1c: ACK any immediate response
-self.pump(timeout=0.5, accept_predicate=lambda _: False, filter_evt=False)
-
-# Step 1d: Retransmit login (matching MITM behavior - line 402)
-# CRITICAL: Use same Seq=0 and AppSeq (it's a retransmission, not a new request)
-login_pkt2, _ = self.build_packet(0xD0, login_body, force_seq=0)
-self.send_raw(login_pkt2, desc=f"Login#2(cmdId=0,AppSeq={login_app_seq})")
-
-# Step 1e: Second retransmit (matching MITM behavior - line 417)
-login_pkt3, _ = self.build_packet(0xD0, login_body, force_seq=0)
-self.send_raw(login_pkt3, desc=f"Login#3(cmdId=0,AppSeq={login_app_seq})")
-
-# Step 2: Now wait for login response
-# (nach den drei Übertragungen sollte die Kamera antworten)
+**Erwartetes Verhalten nach Fix**:
+```
+1. Login #1 (Seq=0, AppSeq=1)
+2. Magic1 (Seq=3)
+3. [Pump 0.1s ohne Heartbeat] ← FIX!
+4. Login #2 (Seq=0, AppSeq=1)
+5. Login #3 (Seq=0, AppSeq=1)
+6. [Warte auf Login Response]
+7. Login Response empfangen (MsgType=3, AppSeq=1) ← ERWARTET!
 ```
 
 ### Wichtige Details:
@@ -211,21 +281,80 @@ Nach Implementierung der Login-Retransmissions sollte der Debug-Log wie folgt au
 
 ## Weitere Hypothesen (geprüft und verworfen)
 
-### ❌ Hypothese 4: ACK-Verhalten
+### ❌ Hypothese 5: ACK-Verhalten
 **Status**: Widerlegt
 - ACKs werden in v4.15 korrekt gesendet
 - Debug-Logs zeigen korrekte ACK-Sequenzen
 
-### ❌ Hypothese 5: Verschlüsselung/Encoding
+### ❌ Hypothese 6: Verschlüsselung/Encoding
 **Status**: Widerlegt
 - Login-JSON wird korrekt verschlüsselt (AES-ECB mit PHASE2_KEY)
 - Base64-Encoding ist korrekt
 
-### ❌ Hypothese 6: Timing
+### ❌ Hypothese 7: Timing
 **Status**: Teilweise relevant
 - Timing ist wichtig für Stabilität
 - Aber nicht die Hauptursache des Fehlers
 - Die Retransmissions sind wichtiger als präzises Timing
+
+### ❌ Hypothese 8: RUDP-Sequenznummern
+**Status**: Widerlegt (bereits gefixt)
+- v4.15+ verwendet korrekt force_seq=0 für Login
+- v4.15+ verwendet korrekt force_seq=3 für Magic1
+- RUDP-Sequenzen sind korrekt implementiert
+
+---
+
+## 🎯 FINALER ROOT CAUSE (Issue #159)
+
+### Identifiziertes Problem
+
+**Symptom**: Login Timeout - keine Token-Response von der Kamera (0 MsgType=3 Pakete gepuffert)
+
+**Root Cause**: Ein unerwarteter Heartbeat (AppSeq=2) wird zwischen Magic1 und den Login-Retransmissions gesendet.
+
+**Technische Details**:
+1. Nach dem Login-Request (AppSeq=1) erwartet die Kamera-Firmware:
+   - Entweder eine Login-Response zu senden (MsgType=3, AppSeq=1)
+   - Oder weitere Login-Requests mit AppSeq=1 zu empfangen (Retransmissions)
+
+2. Der Heartbeat mit AppSeq=2 bricht diese Erwartung:
+   - Die Kamera befindet sich in einem Login-Verarbeitungszustand
+   - AppSeq=2 signalisiert "neue Operation", aber die Kamera ist noch nicht bereit
+   - Die nachfolgenden Login-Retransmissions werden ignoriert
+
+3. Der Heartbeat wird ausgelöst durch:
+   - `self.pump(timeout=0.1, ...)` in Zeile 1167
+   - pump() ruft `send_heartbeat()` wenn `self.global_seq > 1` (Zeilen 911-912)
+   - Nach Magic1 ist global_seq=3, daher wird Heartbeat gesendet
+
+### Beweis aus MITM-Capture
+
+**Funktionierende App (ble_udp_1.log)**:
+- Zeile 378: Login AppSeq=1
+- Zeile 393: Magic1
+- Zeile 402: Login AppSeq=1 (Retransmission) ← Kein Heartbeat dazwischen!
+- Zeile 417: Login AppSeq=1 (Retransmission)
+- Zeile 435: Login Response empfangen ✅
+
+**Fehlerhafte Implementierung (debug05012026_5.log)**:
+- Zeile 27: Login AppSeq=1
+- Zeile 29: Magic1
+- Zeile 33: **Heartbeat AppSeq=2** ← FEHLER!
+- Zeile 34: Login AppSeq=1 (ignoriert)
+- Zeile 37: Login AppSeq=1 (ignoriert)
+- Zeile 49: Timeout ❌
+
+### Fix-Strategie
+
+**Minimal Change**: Heartbeat während Login-Handshake unterdrücken
+
+Option 1: `no_heartbeat` Parameter für `pump()` (EMPFOHLEN)
+Option 2: Login-Flag `_in_login_handshake` einführen
+Option 3: pump() nur dort aufrufen, wo Heartbeat sicher ist
+
+**Erwartete Verbesserung**: 
+Nach dem Fix sollte die Login-Response erfolgreich empfangen werden, da die AppSeq-Sequenz nicht mehr unterbrochen wird.
 
 ---
 
