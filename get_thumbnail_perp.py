@@ -149,8 +149,8 @@ def build_artemis_frame(msg_type: int, app_seq: int, body: bytes) -> bytes:
     app_seq = int(app_seq)
     
     # Validate reasonable ranges
-    if msg_type not in [2, 3]:
-        logger.warning(f"⚠️ Unusual MsgType={msg_type} (expected 2 or 3)")
+    if msg_type not in [ARTEMIS_MSG_REQUEST, ARTEMIS_MSG_RESPONSE]:
+        logger.warning(f"⚠️ Unusual MsgType={msg_type} (expected {ARTEMIS_MSG_REQUEST} or {ARTEMIS_MSG_RESPONSE})")
     
     if app_seq < 0 or app_seq > 1000000:
         logger.warning(f"⚠️ AppSeq={app_seq} out of reasonable range")
@@ -1171,13 +1171,13 @@ class Session:
         # Step 5: Extract token from buffered responses
         logger.info(f">>> Extracting token from Login Response (AppSeq={login_app_seq})...")
         if not self.wait_for_login_token(timeout=max(8.0, self.raw_rx_window_seconds), expected_app_seq=login_app_seq):
-            logger.error(f"❌ Login Timeout (kein Token empfangen, {len(self._token_packet_buffer)} MsgType=3 Pakete gepuffert)")
+            logger.error(f"❌ Login Timeout (no token received, {len(self._token_packet_buffer)} MsgType=3 packets buffered)")
             if self.debug and self._token_packet_buffer:
-                logger.debug(f"Gepufferte MsgType=3 Pakete:")
+                logger.debug(f"Buffered MsgType=3 packets:")
                 for i, pkt in enumerate(list(self._token_packet_buffer)):
                     app_seq = self._get_artemis_app_seq(pkt)
                     cmd_id = self._get_json_cmd_id(pkt)
-                    logger.debug(f"  Paket {i+1}: AppSeq={app_seq}, cmdId={cmd_id}, len={len(pkt)}")
+                    logger.debug(f"  Packet {i+1}: AppSeq={app_seq}, cmdId={cmd_id}, len={len(pkt)}")
                     # Try to decrypt and show what we got
                     r = self._decrypt_artemis_json_any(pkt)
                     if r:

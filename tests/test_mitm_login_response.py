@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test decryption of the actual MITM login response.
 
-This test uses the real Base64 payload from traffic_port_get_pictures_thumpnail.log:
+This test uses the real Base64 payload from traffic_port_get_pictures_thumbnail.log:
 MsgType=3, AppSeq=1, Base64: 7sQ3+pH/khrx+xvDdflBdzBAUkj6M98fdmvH...
 """
 
@@ -12,7 +12,7 @@ from Crypto.Util.Padding import unpad
 
 PHASE2_KEY = b"a01bc23ed45fF56A"
 
-# From MITM capture: traffic_port_get_pictures_thumpnail.log
+# From MITM capture: traffic_port_get_pictures_thumbnail.log
 # ⚡ [RX] Empfange UDP (157 bytes)
 # 75116068c8  f1 d0 00 99 d1 00 00 01 41 52 54 45 4d 49 53 00  ........ARTEMIS.
 # 75116068d8  03 00 00 00 01 00 00 00 81 00 00 00 37 73 51 33  ............7sQ3
