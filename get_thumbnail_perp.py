@@ -144,8 +144,27 @@ def build_artemis_frame(msg_type: int, app_seq: int, body: bytes) -> bytes:
 
     field1 is MsgType (2=request, 3=response) according to Protocol_analysis.md.
     """
-
-    return ARTEMIS_NULL + struct.pack("<III", int(msg_type), int(app_seq), len(body)) + body
+    # Input validation
+    msg_type = int(msg_type)
+    app_seq = int(app_seq)
+    
+    # Validate reasonable ranges
+    if msg_type not in [ARTEMIS_MSG_REQUEST, ARTEMIS_MSG_RESPONSE]:
+        logger.warning(f"⚠️ Unusual MsgType={msg_type} (expected {ARTEMIS_MSG_REQUEST} or {ARTEMIS_MSG_RESPONSE})")
+    
+    if app_seq < 0 or app_seq > 1000000:
+        logger.warning(f"⚠️ AppSeq={app_seq} out of reasonable range")
+    
+    frame = ARTEMIS_NULL + struct.pack("<III", msg_type, app_seq, len(body)) + body
+    
+    # Debug logging
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"🔧 build_artemis_frame: MsgType={msg_type}, AppSeq={app_seq}, BodyLen={len(body)}")
+        # Show the actual bytes of the AppSeq field
+        appseq_bytes = struct.pack("<I", app_seq)
+        logger.debug(f"   AppSeq bytes (LE): {appseq_bytes.hex()}")
+    
+    return frame
 
 
 class BLEWorker:
@@ -812,10 +831,24 @@ class Session:
         if time.time() - self.last_heartbeat_time < 2.0:
             return
 
+        # Increment app_seq for each heartbeat (ARTEMIS request)
+        self.app_seq += 1
+        
+        # Heartbeat payload: Base64 encoded AES data (static for heartbeat)
+        # The Base64 string "MzlB36X/IVo8ZzI5rG9j1w==" is a static heartbeat payload
+        heartbeat_b64_payload = b"MzlB36X/IVo8ZzI5rG9j1w==\x00"
+        
+        # Build ARTEMIS frame with MsgType=2 (request) and incrementing app_seq
+        artemis_body = build_artemis_frame(ARTEMIS_MSG_REQUEST, self.app_seq, heartbeat_b64_payload)
+        
+        # Wrap in RUDP DATA packet
+        pkt, _ = self.build_packet(0xD0, artemis_body)
+        
         self.heartbeat_cnt = (self.heartbeat_cnt + 1) % 255
-        body = bytearray(HEARTBEAT_BODY_START) + bytearray([self.heartbeat_cnt]) + bytearray(HEARTBEAT_PAYLOAD_END)
-        pkt, _ = self.build_packet(0xD0, bytes(body))
-        self.send_raw(pkt, desc=f"Heartbeat cnt={self.heartbeat_cnt}")
+        if self.debug:
+            logger.debug(f"📊 Heartbeat AppSeq={self.app_seq}, cnt={self.heartbeat_cnt}")
+        
+        self.send_raw(pkt, desc=f"Heartbeat AppSeq={self.app_seq}")
         self.last_heartbeat_time = time.time()
 
     def send_prelogin(self):
@@ -1060,14 +1093,17 @@ class Session:
         if not self.discovery():
             return
 
+        # Enable token buffering to capture MsgType=3 responses
         self.enable_token_buffering()
 
+        # Pre-login phase
         self.send_prelogin()
         time.sleep(0.25)
 
-        # Step 1: Send initial login request (cmdId=0) and capture the AppSeq used
-        logger.info(">>> Login Request #1 (cmdId=0) with AppSeq=1")
-        self.app_seq += 1
+        # === LOGIN HANDSHAKE (following MITM spec) ===
+        # Step 1: Build and send login request (cmdId=0, AppSeq=1)
+        logger.info(">>> Login Handshake Step 1: Send Login Request (cmdId=0, AppSeq=1)")
+        self.app_seq += 1  # app_seq becomes 1
         login_app_seq = int(self.app_seq)
         
         login_json = {
@@ -1080,59 +1116,68 @@ class Session:
             "supportHeartBeat": True
         }
         
+        if self.debug:
+            logger.debug(f"🔐 Login JSON: {json.dumps(login_json, separators=(',', ':'))[:100]}...")
+        
         encrypted = self.encrypt_json(login_json)
         b64_payload = base64.b64encode(encrypted) + b"\x00"
         login_body = build_artemis_frame(ARTEMIS_MSG_REQUEST, login_app_seq, b64_payload)
-        login_pkt, _ = self.build_packet(0xD0, login_body, force_seq=0)
+        login_pkt, login_rudp_seq = self.build_packet(0xD0, login_body)
         
-        self.send_raw(login_pkt, desc=f"Login#1(cmdId=0) utcTime={login_json['utcTime']}")
-        # Don't wait for ACK here, just move on
-        time.sleep(0.05)
-
-        # Step 2: Send Magic1 packet (type 0xD1, seq=1, payload=00 00)
-        logger.info(">>> Handshake Step 2: Magic1 (0xD1 seq=1)")
-        m1, _ = self.build_packet(0xD1, MAGIC_BODY_2, force_seq=1)  # MAGIC_BODY_2 is the 00 00 payload
-        self.send_raw(m1, desc="Magic1")
+        if self.debug:
+            logger.debug(f"📊 Login packet: RUDP seq={login_rudp_seq}, ARTEMIS MsgType=2, AppSeq={login_app_seq}")
         
-        # Step 3: Wait for Magic1 echo from camera
-        def is_magic1_echo(pkt: bytes) -> bool:
-            return pkt == m1
+        self.send_raw(login_pkt, desc=f"Login(cmdId=0,AppSeq={login_app_seq})")
         
-        r = self.pump(timeout=1.0, accept_predicate=is_magic1_echo, filter_evt=False)
-        if r is not None:
-            logger.info("✅ Magic1 echo received from camera")
+        # Step 2: Wait for and ACK the login response (MsgType=3, AppSeq=1)
+        logger.info(">>> Login Handshake Step 2: Wait for Login Response (MsgType=3, AppSeq=1)")
+        
+        def is_login_response(pkt: bytes) -> bool:
+            """Accept MsgType=3 with AppSeq=1 (login response)."""
+            msg_type = self._get_artemis_msg_type(pkt)
+            app_seq = self._get_artemis_app_seq(pkt)
+            if msg_type == ARTEMIS_MSG_RESPONSE and app_seq == login_app_seq:
+                if self.debug:
+                    logger.debug(f"✅ Login Response detected: MsgType={msg_type}, AppSeq={app_seq}")
+                return True
+            return False
+        
+        login_response = self.pump(timeout=3.0, accept_predicate=is_login_response, filter_evt=False)
+        
+        if login_response:
+            logger.info("✅ Login Response received (MsgType=3)")
+            # The pump() function should have already sent ACK for 0xD0 packet
+            # But let's be explicit and give it a moment to process
+            time.sleep(0.1)
         else:
-            logger.warning("⚠️ Magic1 echo nicht empfangen")
+            logger.warning("⚠️ No Login Response received within timeout")
+            logger.info("Attempting to continue with stabilization and token wait...")
         
-        # Step 4: RE-SEND the same login request (critical!)
-        logger.info(">>> Login Request #2 (Re-send für Login-Response-Trigger)")
-        self.send_raw(login_pkt, desc=f"Login#2(cmdId=0) utcTime={login_json['utcTime']}")
-        
-        # Step 5: Wait a bit for login response to arrive
-        logger.info(">>> Warte auf Login-Response (MsgType=3)…")
-        self.pump(timeout=0.5, accept_predicate=lambda _d: False)
-
-        logger.info(">>> Stabilisierung…")
-        for _ in range(2):
+        # Step 3: Stabilization - send a few heartbeats to establish connection
+        logger.info(">>> Login Handshake Step 3: Stabilization (send heartbeats)")
+        for i in range(2):
             self.send_heartbeat()
-            self.pump(timeout=0.5, accept_predicate=lambda _d: False)
-
+            self.pump(timeout=0.5, accept_predicate=lambda _d: False, filter_evt=False)
+        
+        # Step 4: Extended wait for login token extraction
         if LOGIN_DELAY_AFTER_STABILIZATION > 0:
-            logger.info(f">>> Warte {LOGIN_DELAY_AFTER_STABILIZATION:.1f}s nach Stabilisierung (pump)…")
-            self.pump(timeout=LOGIN_DELAY_AFTER_STABILIZATION, accept_predicate=lambda _d: False)
+            logger.info(f">>> Waiting {LOGIN_DELAY_AFTER_STABILIZATION:.1f}s for additional responses...")
+            self.pump(timeout=LOGIN_DELAY_AFTER_STABILIZATION, accept_predicate=lambda _d: False, filter_evt=False)
 
+        # Enable raw RX dump if in debug mode
         if self.debug and self.raw_rx_dump:
             self.enable_raw_rx_dump()
 
-        logger.info(f"⏳ Warte auf Token (Login-Response, AppSeq={login_app_seq})…")
+        # Step 5: Extract token from buffered responses
+        logger.info(f">>> Extracting token from Login Response (AppSeq={login_app_seq})...")
         if not self.wait_for_login_token(timeout=max(8.0, self.raw_rx_window_seconds), expected_app_seq=login_app_seq):
-            logger.error(f"❌ Login Timeout (kein Token empfangen, {len(self._token_packet_buffer)} MsgType=3 Pakete gepuffert)")
+            logger.error(f"❌ Login Timeout (no token received, {len(self._token_packet_buffer)} MsgType=3 packets buffered)")
             if self.debug and self._token_packet_buffer:
-                logger.debug(f"Gepufferte MsgType=3 Pakete:")
+                logger.debug(f"Buffered MsgType=3 packets:")
                 for i, pkt in enumerate(list(self._token_packet_buffer)):
                     app_seq = self._get_artemis_app_seq(pkt)
                     cmd_id = self._get_json_cmd_id(pkt)
-                    logger.debug(f"  Paket {i+1}: AppSeq={app_seq}, cmdId={cmd_id}, len={len(pkt)}")
+                    logger.debug(f"  Packet {i+1}: AppSeq={app_seq}, cmdId={cmd_id}, len={len(pkt)}")
                     # Try to decrypt and show what we got
                     r = self._decrypt_artemis_json_any(pkt)
                     if r:
@@ -1143,7 +1188,8 @@ class Session:
 
         self.disable_token_buffering()
 
-        # --- Example operation: request file list (cmdId=768) ---
+        # === POST-LOGIN OPERATIONS ===
+        # Example operation: request file list (cmdId=768)
         logger.info(">>> Request file list (cmdId 768)…")
         self.app_seq += 1
         req = {"cmdId": 768, "itemCntPerPage": 45, "pageNo": 0, "token": str(self.token)}
