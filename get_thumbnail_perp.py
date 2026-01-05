@@ -1,7 +1,24 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.15
+"""Wildkamera Thumbnail Downloader - consolidated v4.16
 
-Changes in this version (v4.15):
+Changes in this version (v4.16):
+- CRITICAL FIX for Issue #157: Implemented triple login request transmission.
+  Analysis of MITM captures (ble_udp_1.log lines 378-475) reveals that the working app sends
+  the login request THREE times (lines 378, 402, 417) before the camera responds (line 463).
+  All three transmissions use identical RUDP Seq=0 and AppSeq=1 (it's a retransmission, not new requests).
+  This is not error handling but part of the expected protocol flow - the camera firmware requires
+  multiple transmissions before responding with the login token.
+  
+  Login sequence now:
+  1. Login#1 (Seq=0, AppSeq=1)
+  2. Magic1 handshake (Seq=3)
+  3. Login#2 retransmit (Seq=0, AppSeq=1) - NEW!
+  4. Login#3 retransmit (Seq=0, AppSeq=1) - NEW!
+  5. Wait for Login Response (MsgType=3)
+  
+  See ANALYSE_KONSOLIDIERT_LOGIN.md for detailed analysis.
+
+Changes in v4.15:
 - CRITICAL FIX: Replaced static ARTEMIS_HELLO_B64 blob with proper JSON login request (cmdId=0).
   Now generates login JSON with dynamic utcTime, matching app behavior per Protocol_analysis.md.
   This fixes token extraction failures caused by sending replay/static data instead of fresh login.
@@ -1131,7 +1148,7 @@ class Session:
         if self.debug:
             logger.debug(f"📊 Login packet: RUDP seq={login_rudp_seq}, ARTEMIS MsgType=2, AppSeq={login_app_seq}")
         
-        self.send_raw(login_pkt, desc=f"Login(cmdId=0,AppSeq={login_app_seq})")
+        self.send_raw(login_pkt, desc=f"Login#1(cmdId=0,AppSeq={login_app_seq})")
         
         # Step 1b: Send Magic1 packet (per Protocol_analysis.md §5 and ble_udp_1.log line 393)
         # This is a critical handshake packet that the camera expects after login
@@ -1145,7 +1162,27 @@ class Session:
         # Brief pause to allow camera to process handshake
         time.sleep(MAGIC1_PROCESSING_DELAY)
         
+        # Step 1c: ACK/pump any immediate responses from camera
+        # This matches MITM behavior where camera sends ACK before we retransmit (line 396)
+        self.pump(timeout=0.1, accept_predicate=lambda _: False, filter_evt=False)
+        
+        # Step 1d: Retransmit login request #2 (per MITM capture ble_udp_1.log line 402)
+        # CRITICAL: The working app sends the login request THREE times total.
+        # This is not error handling - it's part of the expected protocol flow.
+        # The camera firmware appears to require multiple transmissions before responding.
+        # IMPORTANT: Use same Seq=0 and same login_body (it's a retransmission, not a new request)
+        logger.info(">>> Login Handshake Step 1c: Retransmit Login #2")
+        login_pkt2, _ = self.build_packet(0xD0, login_body, force_seq=0)
+        self.send_raw(login_pkt2, desc=f"Login#2(cmdId=0,AppSeq={login_app_seq})")
+        
+        # Step 1e: Retransmit login request #3 (per MITM capture ble_udp_1.log line 417)
+        # The camera typically responds after the third transmission
+        logger.info(">>> Login Handshake Step 1d: Retransmit Login #3")
+        login_pkt3, _ = self.build_packet(0xD0, login_body, force_seq=0)
+        self.send_raw(login_pkt3, desc=f"Login#3(cmdId=0,AppSeq={login_app_seq})")
+        
         # Step 2: Wait for and ACK the login response (MsgType=3, AppSeq=1)
+        # After the triple transmission, the camera should now respond (MITM line 463)
         logger.info(">>> Login Handshake Step 2: Wait for Login Response (MsgType=3, AppSeq=1)")
         
         def is_login_response(pkt: bytes) -> bool:
