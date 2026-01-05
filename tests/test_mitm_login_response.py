@@ -3,6 +3,11 @@
 
 This test uses the real Base64 payload from traffic_port_get_pictures_thumbnail.log:
 MsgType=3, AppSeq=1, Base64: 7sQ3+pH/khrx+xvDdflBdzBAUkj6M98fdmvH...
+
+SECURITY NOTE: This test uses AES-ECB mode as specified by the camera vendor protocol
+(see Protocol_analysis.md §4.2). ECB mode is weak but required for compatibility with
+the proprietary camera protocol. This is not a vulnerability we introduced - it's part
+of the existing vendor specification.
 """
 
 import base64
@@ -10,6 +15,7 @@ import json
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 
+# Note: ECB mode is used per camera vendor protocol specification (Protocol_analysis.md §4.2)
 PHASE2_KEY = b"a01bc23ed45fF56A"
 
 # From MITM capture: traffic_port_get_pictures_thumbnail.log
