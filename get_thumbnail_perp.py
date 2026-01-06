@@ -110,7 +110,7 @@ DEFAULT_PASS = "85087127"
 BLE_MAC = "C6:1E:0D:E0:32:E8"
 
 LOGIN_DELAY_AFTER_STABILIZATION = 2.0
-# Note: MAGIC1_PROCESSING_DELAY removed in v4.18 - replaced with pump() call to receive ACK
+# Note: v4.18 uses pump() call after Magic1 to receive camera's ACK response (replaced sleep-based delay)
 
 
 
