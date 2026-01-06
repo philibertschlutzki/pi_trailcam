@@ -127,7 +127,8 @@ DEFAULT_PASS = "85087127"
 BLE_MAC = "C6:1E:0D:E0:32:E8"
 
 LOGIN_DELAY_AFTER_STABILIZATION = 2.0
-# Note: v4.18 uses pump() call after Magic1 to receive camera's ACK response (replaced sleep-based delay)
+# Timeout for waiting for camera's ACK after Magic1 handshake packet (per MITM analysis)
+MAGIC1_ACK_TIMEOUT = 0.3
 
 
 
@@ -1221,6 +1222,10 @@ class Session:
         # CRITICAL FIX (Issue #166): Reset global_seq to 0 after Magic1
         # This ensures the next ACK (for camera's ACK response) will have Seq=1, matching
         # MITM behavior (ble_udp_1.log line 399). Without this, sequence numbers are wrong.
+        # NOTE: build_packet() with force_seq=3 set global_seq=3, and we immediately reset it
+        # to 0 here. This is INTENTIONAL - it's part of the critical handshake sequence where
+        # the sequence number "jumps" from Login(Seq=0) to Magic1(Seq=3) then resets to 0
+        # for proper ACK synchronization. This matches the MITM-captured behavior exactly.
         if self.debug:
             logger.debug(f"🔄 Resetting global_seq from {self.global_seq} to 0 (post-Magic1 sync)")
         self.global_seq = 0
@@ -1233,7 +1238,7 @@ class Session:
         # the camera ignores login retransmissions.
         # NOTE: no_heartbeat=True prevents heartbeat interference (Issue #159).
         logger.info(">>> Login Handshake Step 1c: Wait for camera's ACK after Magic1")
-        self.pump(timeout=0.3, accept_predicate=lambda _: False, filter_evt=False, no_heartbeat=True)
+        self.pump(timeout=MAGIC1_ACK_TIMEOUT, accept_predicate=lambda _: False, filter_evt=False, no_heartbeat=True)
         
         # Step 1d: Retransmit login request #2 (per MITM capture ble_udp_1.log line 402)
         # CRITICAL: The working app sends the login request THREE times total.
