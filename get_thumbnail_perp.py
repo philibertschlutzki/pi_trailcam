@@ -629,6 +629,18 @@ class Session:
         return bool(len(data) >= 11 and data[0] == 0xF1 and data[1] == 0xD0 and data[8:11] == b"ACK")
 
     @staticmethod
+    def _is_disc_packet(data: bytes) -> bool:
+        """Check if packet is a DISC (disconnect) signal.
+        
+        DISC packets have type 0x41 or 0xF0 in the second byte.
+        Format: F1 [41 or F0] ...
+        
+        Returns:
+            True if packet is a DISC signal, False otherwise
+        """
+        return bool(len(data) >= 2 and data[0] == 0xF1 and (data[1] == 0x41 or data[1] == 0xF0))
+
+    @staticmethod
     def _parse_artemis_meta_any(data: bytes) -> Optional[Tuple[int, bytes, int, int, int]]:
         hdr = Session._parse_artemis_header_any(data)
         if hdr is None:
@@ -955,8 +967,11 @@ class Session:
     def send_prelogin(self) -> bool:
         """Send Pre-Login packet and wait for ACK response.
         
+        Handles disconnect signals (F1 DISC) during the Pre-Login phase.
+        If a DISC signal is received, returns False immediately.
+        
         Returns:
-            True if Pre-Login ACK was received, False otherwise
+            True if Pre-Login ACK was received, False otherwise (including DISC signals)
         """
         logger.info(">>> Pre-Login…")
         payload = {"utcTime": int(time.time()), "nonce": os.urandom(8).hex()}
@@ -972,10 +987,31 @@ class Session:
         # The camera sends a DATA packet with "ACK" payload (MITM ble_udp_1.log line 372)
         # to confirm Pre-Login was successful. Without this ACK, the camera is NOT ready
         # for login requests and will ignore all subsequent packets.
+        #
+        # CRITICAL (Issue #170): Handle DISC (disconnect) signals during Pre-Login
+        # If camera sends a disconnect signal (0x41 or 0xF0), we must abort immediately
+        # instead of waiting for timeout. This prevents wasting time on a failed connection.
         logger.info(">>> Waiting for Pre-Login ACK response...")
-        ack_received = self.pump(timeout=2.0, accept_predicate=self._is_simple_ack_payload, filter_evt=False)
         
-        if not ack_received:
+        # Track if we received DISC signal
+        disc_received = {"value": False}
+        
+        def accept_ack_or_detect_disc(pkt: bytes) -> bool:
+            """Accept ACK packets, but also detect DISC signals."""
+            if self._is_disc_packet(pkt):
+                disc_received["value"] = True
+                return True  # Return True to stop pump() immediately
+            return self._is_simple_ack_payload(pkt)
+        
+        response = self.pump(timeout=2.0, accept_predicate=accept_ack_or_detect_disc, filter_evt=False)
+        
+        # Check if we received a DISC signal
+        if disc_received["value"]:
+            logger.error("❌ Pre-Login DISC signal received - camera disconnected")
+            return False
+        
+        # Check if we received ACK
+        if not response or not self._is_simple_ack_payload(response):
             logger.warning("⚠️ Pre-Login ACK not received - camera may not be ready")
             return False
         
