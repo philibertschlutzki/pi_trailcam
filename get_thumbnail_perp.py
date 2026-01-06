@@ -993,30 +993,30 @@ class Session:
         # instead of waiting for timeout. This prevents wasting time on a failed connection.
         logger.info(">>> Waiting for Pre-Login ACK response...")
         
-        # Track if we received DISC signal
-        disc_received = {"value": False}
+        def accept_ack_or_disc(pkt: bytes) -> bool:
+            """Accept both ACK and DISC packets to avoid timeout."""
+            return self._is_simple_ack_payload(pkt) or self._is_disc_packet(pkt)
         
-        def accept_ack_or_detect_disc(pkt: bytes) -> bool:
-            """Accept ACK packets, but also detect DISC signals."""
-            if self._is_disc_packet(pkt):
-                disc_received["value"] = True
-                return True  # Return True to stop pump() immediately
-            return self._is_simple_ack_payload(pkt)
+        response = self.pump(timeout=2.0, accept_predicate=accept_ack_or_disc, filter_evt=False)
         
-        response = self.pump(timeout=2.0, accept_predicate=accept_ack_or_detect_disc, filter_evt=False)
+        # Check response type
+        if not response:
+            logger.warning("⚠️ Pre-Login ACK not received - camera may not be ready")
+            return False
         
         # Check if we received a DISC signal
-        if disc_received["value"]:
+        if self._is_disc_packet(response):
             logger.error("❌ Pre-Login DISC signal received - camera disconnected")
             return False
         
         # Check if we received ACK
-        if not response or not self._is_simple_ack_payload(response):
-            logger.warning("⚠️ Pre-Login ACK not received - camera may not be ready")
-            return False
+        if self._is_simple_ack_payload(response):
+            logger.info("✅ Pre-Login ACK received - camera ready for login")
+            return True
         
-        logger.info("✅ Pre-Login ACK received - camera ready for login")
-        return True
+        # Should not reach here, but handle it gracefully
+        logger.warning("⚠️ Pre-Login received unexpected response")
+        return False
     
     def send_prelogin_with_retry(self, max_retries: int = 3) -> bool:
         """Send Pre-Login with retry logic.
