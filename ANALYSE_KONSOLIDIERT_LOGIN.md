@@ -1100,6 +1100,287 @@ RX Login Response (MsgType=3, AppSeq=1) ✅
 
 1. ✅ Analyse Issue #166 abgeschlossen
 2. ✅ Root Cause identifiziert: v4.19 entfernte fälschlicherweise die pump() Wartezeit nach Magic1
-3. ⏳ Implementiere Fix: Restore pump() + global_seq reset nach Magic1
-4. ⏳ Test mit echter Hardware
+3. ✅ Implementiert: v4.20 mit pump() + global_seq reset nach Magic1
+4. ⏳ Test mit echter Hardware - PROBLEM BESTEHT WEITER (Issue #168)
 5. ⏳ Security-Scan
+
+---
+
+## 🎯 NEUER ROOT CAUSE (Issue #168 - 2026-01-06, 20:16 Uhr)
+
+### Zusammenfassung
+
+**Issue**: #168  
+**Symptom**: Login Timeout - keine Token-Response (0 MsgType=3 Pakete gepuffert)  
+**Status v4.20**: pump() + global_seq reset implementiert, aber Login scheitert weiterhin  
+**Zeitpunkt**: 2026-01-06 20:15:49 - 20:16:24 (35 Sekunden timeout)
+
+### Analyse debug06012026_4.log
+
+**Beobachtung**: Trotz korrekter Implementierung gemäß MITM-Spezifikation (pump() nach Magic1, global_seq reset) antwortet die Kamera NICHT auf die Login-Requests.
+
+**Aktueller Ablauf (debug06012026_4.log)**:
+```
+Zeile 27: TX Login #1 (Seq=0, AppSeq=1)                    20:15:57,140
+Zeile 29: TX Magic1 (Seq=3)                                20:15:57,160
+Zeile 30: 🔄 Resetting global_seq from 3 to 0              20:15:57,172
+Zeile 31: >>> Wait for camera's ACK after Magic1           20:15:57,178
+Zeile 32: >>> Retransmit Login #2                          20:15:57,487 (309ms später)
+Zeile 33: TX Login #2 (Seq=0, AppSeq=1)                    20:15:57,497
+Zeile 35: TX Login #3 (Seq=0, AppSeq=1)                    20:15:57,522
+Zeile 37: ⚠️ No Login Response received                    20:16:00,544
+Zeile 48: ❌ Login Timeout                                 20:16:24,079
+```
+
+**Wichtig**: In den 309ms Wartezeit nach Magic1 (Zeile 31-32) empfängt die Implementierung KEINE Pakete von der Kamera!
+
+### Vergleich: Erfolgreiche vs. Fehlgeschlagene Runs
+
+#### Erfolgreicher MITM-Run (ble_udp_1.log):
+```
+Zeile 372: RX DATA Seq=0 "ACK" payload        ← ACK #1 (VOR Login!)
+Zeile 378: TX Login #1 (Seq=0, AppSeq=1)
+Zeile 393: TX Magic1 (Seq=3)
+Zeile 396: RX DATA Seq=0 "ACK" payload        ← ACK #2 (NACH Magic1!)
+Zeile 399: TX ACK (Seq=1) für camera's ACK
+Zeile 402: TX Login #2 (Seq=0, AppSeq=1)
+Zeile 417: TX Login #3 (Seq=0, AppSeq=1)
+Zeile 435: RX Login Response ✅
+```
+
+#### Fehlgeschlagener Run debug06012026_1.log (v4.17):
+```
+Zeile 21: RX F1 DISC (short, 4 bytes)         ← Kein "ACK" vor Login!
+Zeile 27: TX Login #1 (Seq=0, AppSeq=1)
+Zeile 29: TX Magic1 (Seq=3)
+Zeile 30: TX Login #2 (Seq=0, AppSeq=1)       ← Sofort, kein wait
+Zeile 33: TX Login #3 (Seq=0, AppSeq=1)
+Zeile 45: ❌ Login Timeout
+```
+
+#### Fehlgeschlagener Run debug06012026_2.log (v4.18):
+```
+Zeile 21: RX DATA Seq=0 "ACK" payload         ← ACK VOR Login! ✅
+Zeile 22: RX F1 DISC (short, 4 bytes)
+Zeile 28: TX Login #1 (Seq=0, AppSeq=1)
+Zeile 30: TX Magic1 (Seq=3)
+Zeile 31: >>> Wait for Magic1 ACK             ← 309ms pump
+[KEINE RX während pump!]                      ← Kein ACK NACH Magic1! ❌
+Zeile 33: TX Login #2 (Seq=0, AppSeq=1)
+Zeile 35: TX Login #3 (Seq=0, AppSeq=1)
+Zeile 47: ❌ Login Timeout
+```
+
+#### Fehlgeschlagener Run debug06012026_3.log (v4.19):
+```
+Zeile 21: RX DATA Seq=0 "ACK" payload         ← ACK VOR Login! ✅
+Zeile 22: RX F1 DISC (short, 4 bytes)
+Zeile 28: TX Login #1 (Seq=0, AppSeq=1)
+Zeile 30: TX Magic1 (Seq=3)
+Zeile 32: TX Login #2 (Seq=0, AppSeq=1)       ← 24ms später, kein wait
+Zeile 34: TX Login #3 (Seq=0, AppSeq=1)
+Zeile 46: ❌ Login Timeout
+```
+
+#### Fehlgeschlagener Run debug06012026_4.log (v4.20):
+```
+Zeile 21: RX F1 DISC (short, 4 bytes)         ← Kein "ACK" vor Login! ❌
+Zeile 27: TX Login #1 (Seq=0, AppSeq=1)
+Zeile 29: TX Magic1 (Seq=3)
+Zeile 30: 🔄 Reset global_seq to 0
+Zeile 31: >>> Wait for camera's ACK
+[KEINE RX während pump!]                      ← Kein ACK NACH Magic1! ❌
+Zeile 33: TX Login #2 (Seq=0, AppSeq=1)
+Zeile 35: TX Login #3 (Seq=0, AppSeq=1)
+Zeile 48: ❌ Login Timeout
+```
+
+### Kritische Erkenntnisse
+
+#### Hypothese A: Fehlende Pre-Login ACK-Bestätigung ist das Problem
+
+**Beobachtung**: Die MITM-Capture zeigt ZWEI "ACK" Pakete:
+1. **ACK #1** (Zeile 372): Kommt VOR dem Login-Request - vermutlich Bestätigung der Pre-Login Phase
+2. **ACK #2** (Zeile 396): Kommt NACH Magic1 - signalisiert Bereitschaft für Login-Retransmissions
+
+**Problem**: In den aktuellen debug06012026_4.log gibt es:
+- Zeile 21: Nur ein F1 DISC Paket, KEIN "ACK" vor Login
+- Nach Magic1: KEIN "ACK" empfangen
+
+**Theorie**:
+Die Kamera sendet das "ACK #2" Paket (nach Magic1) NUR DANN, wenn sie das "ACK #1" Paket (nach Pre-Login) bereits gesendet hat. Das "ACK #1" ist eine Bestätigung, dass die Pre-Login Phase erfolgreich war.
+
+Wenn "ACK #1" fehlt (wie in debug06012026_4.log), dann ist die Pre-Login Phase fehlgeschlagen, und die Kamera ist nicht bereit für Login-Requests. Sie ignoriert alle nachfolgenden Pakete.
+
+**Vergleich**:
+- debug06012026_2.log: Hat "ACK #1" (Zeile 21) ✅, aber trotzdem kein "ACK #2" → Andere Ursache?
+- debug06012026_3.log: Hat "ACK #1" (Zeile 21) ✅, aber trotzdem kein "ACK #2" → Andere Ursache?
+- debug06012026_4.log: KEIN "ACK #1" (Zeile 21) ❌, kein "ACK #2" → Pre-Login fehlgeschlagen!
+
+#### Hypothese B: Pre-Login Payload ist inkorrekt oder wird ignoriert
+
+**Beobachtung aus Pre-Login Payloads**:
+
+**MITM ble_udp_1.log**: Keine Pre-Login Phase sichtbar (möglicherweise über BLE gehandhabt)
+
+**debug06012026_4.log (Zeile 10)**:
+```
+f1f9005c0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5
+d9af3a99e06416395c3b8dee022ea0436e5734224546f86985b1204f4294bbd3
+9d22993580da15eb70d3b60b61a4d648b5bf6a9b2c788ca83a287290e4a4e98f
+```
+
+**debug06012026_2.log (Zeile 10)** - HAT "ACK #1":
+```
+f1f9005c0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5
+d9af3a99e06416395c3b8dee022ea043307d21091bce7c608150524e0b15c643
+20ddb6b9fa41eeb665987a79912dc253b5bf6a9b2c788ca83a287290e4a4e98f
+```
+
+**Unterschiede**:
+- Beide haben denselben statischen Header: `0ccb9a2b5f951eb669dfaa375a6bbe3e76202e13c9d1aa3631be74e5d9af3a99e06416395c3b8dee022ea043`
+- Der verschlüsselte Teil ist unterschiedlich (enthält `utcTime` und `nonce`)
+- debug06012026_4.log: `6e5734224546f86985b1204f4294bbd39d22993580da15eb70d3b60b61a4d648`
+- debug06012026_2.log: `307d21091bce7c608150524e0b15c64320ddb6b9fa41eeb665987a79912dc253`
+
+**Mögliche Ursachen**:
+1. Die `utcTime` in debug06012026_4.log (1767726957) ist außerhalb eines akzeptablen Bereichs
+2. Die Kamera hat einen internen Zustand, der manchmal Pre-Login akzeptiert, manchmal nicht
+3. Ein Timing-Problem: Pre-Login wird zu früh oder zu spät gesendet
+
+#### Hypothese C: Kamera ist in einem schlechten Zustand
+
+**Beobachtung**: Die Kamera verhält sich nicht konsistent:
+- Manchmal sendet sie "ACK #1" nach Pre-Login (debug06012026_2.log, debug06012026_3.log)
+- Manchmal nicht (debug06012026_1.log, debug06012026_4.log)
+
+**Mögliche Ursachen**:
+1. Die Kamera wurde nicht korrekt per BLE geweckt
+2. Die Kamera ist in einem fehlerhaften Zustand nach vorherigen Verbindungsversuchen
+3. Die Kamera benötigt einen Power-Cycle oder Reset
+4. Die Wi-Fi Verbindung ist nicht stabil genug
+
+#### Hypothese D: Timing der Pre-Login Phase ist kritisch
+
+**Beobachtung aus debug-Logs**:
+- debug06012026_2.log: 1.25s zwischen "Pre-Login" und "Login Handshake Step 1" → Hat "ACK #1"
+- debug06012026_3.log: 1.31s Pause → Hat "ACK #1"
+- debug06012026_4.log: 1.29s Pause → KEIN "ACK #1"
+
+**Theorie**: Die Pause zwischen Pre-Login und Login ist NICHT der entscheidende Faktor (alle ~1.2-1.3s).
+
+**Alternative**: Die Kamera sendet "ACK #1" asynchron, und wir müssen aktiv darauf warten (mit pump), bevor wir Login senden.
+
+#### Hypothese E: ACK für Pre-Login fehlt
+
+**Beobachtung**: Die aktuelle Implementierung sendet Pre-Login, macht dann `pump(timeout=1.0, accept_predicate=lambda _d: False)` und wartet.
+
+**Problem**: `accept_predicate=lambda _d: False` bedeutet, dass pump() ALLE Pakete verwirft und nur die internen ACKs sendet. Aber wir prüfen nicht explizit, ob die Kamera ein "ACK" Paket sendet.
+
+**Test**: Nach Pre-Login sollten wir explizit auf ein "ACK" Paket warten und nur dann fortfahren:
+```python
+def is_prelogin_ack(pkt: bytes) -> bool:
+    return self._is_simple_ack_payload(pkt)
+
+ack_received = self.pump(timeout=2.0, accept_predicate=is_prelogin_ack, filter_evt=False)
+if not ack_received:
+    logger.warning("⚠️ Pre-Login ACK nicht empfangen - Kamera möglicherweise nicht bereit")
+    # Retry oder Fehler
+```
+
+### Empfohlene Nächste Schritte
+
+#### Option 1: Pre-Login ACK explizit abwarten (EMPFOHLEN)
+
+**Rationale**: Die Inkonsistenz beim Empfang von "ACK #1" deutet darauf hin, dass wir nicht lange genug warten oder das ACK nicht korrekt erkennen.
+
+**Änderung**:
+```python
+def send_prelogin(self):
+    logger.info(">>> Pre-Login…")
+    # ... (bestehender Code zum Senden)
+    
+    # CRITICAL: Wait explicitly for Pre-Login ACK response
+    logger.info(">>> Waiting for Pre-Login ACK...")
+    ack_received = self.pump(timeout=2.0, accept_predicate=self._is_simple_ack_payload, filter_evt=False)
+    
+    if not ack_received:
+        logger.error("❌ Pre-Login ACK nicht empfangen - Kamera nicht bereit für Login")
+        return False
+    
+    logger.info("✅ Pre-Login ACK empfangen - Kamera bereit")
+    return True
+```
+
+**Erwartetes Verhalten**:
+- Wenn "ACK #1" empfangen wird → Login kann fortfahren
+- Wenn kein "ACK #1" → Fehler frühzeitig erkennen, Retry oder Abbruch
+
+#### Option 2: BLE Wakeup erzwingen
+
+**Rationale**: Die Inkonsistenz könnte bedeuten, dass die Kamera nicht immer korrekt per BLE geweckt wurde.
+
+**Test**: Immer `--ble` Flag verwenden und mindestens 20-30s nach BLE-Wakeup warten.
+
+#### Option 3: Pre-Login wiederholen bei fehlendem ACK
+
+**Rationale**: Die Pre-Login Phase könnte manchmal fehlschlagen, Retry könnte helfen.
+
+**Änderung**:
+```python
+def send_prelogin_with_retry(self, max_retries=3):
+    for attempt in range(max_retries):
+        logger.info(f">>> Pre-Login Attempt {attempt+1}/{max_retries}...")
+        self.send_prelogin()
+        
+        ack_received = self.pump(timeout=2.0, accept_predicate=self._is_simple_ack_payload, filter_evt=False)
+        if ack_received:
+            logger.info("✅ Pre-Login ACK empfangen")
+            return True
+        
+        logger.warning(f"⚠️ Pre-Login Attempt {attempt+1} fehlgeschlagen, retry...")
+        time.sleep(1.0)
+    
+    logger.error("❌ Pre-Login fehlgeschlagen nach {max_retries} Versuchen")
+    return False
+```
+
+### Status-Update
+
+**v4.15**: Login mit dynamischem JSON, falsche Seq  
+**v4.16**: Dreifache Login-Transmission implementiert  
+**v4.17**: Heartbeat während Login unterdrückt (Issue #159)  
+**v4.18**: pump() nach Magic1 (Issue #162)  
+**v4.19**: pump() entfernt (FALSCH, Issue #164)  
+**v4.20**: pump() + global_seq reset (Issue #166) - **ABER Pre-Login ACK fehlt (Issue #168)!**  
+**v4.21** (TODO): Pre-Login ACK explizit abwarten (Issue #168)
+
+### Technische Details zu Pre-Login ACK
+
+**Format des erwarteten ACK-Pakets** (aus MITM Zeile 372):
+```
+f1 d0 00 07 d1 00 00 00 41 43 4b
+^^    ^^       ^^       ^^^^^^^^
+F1    D0       Seq=0    "ACK"
+      DATA
+```
+
+**Identifikation**:
+- RUDP Type: 0xD0 (DATA)
+- Payload: "ACK" (ASCII bytes 41 43 4b)
+- Dies wird bereits von `_is_simple_ack_payload()` erkannt
+
+**Aktuelles Problem**: Die Funktion pump() mit `accept_predicate=lambda _d: False` verwirft das ACK-Paket, ohne es zu beachten.
+
+### Debugging-Empfehlungen
+
+1. **Logging erweitern**: Nach Pre-Login ALLE empfangenen Pakete loggen (RAW dump)
+2. **Prüfen**: Wird "ACK" empfangen aber verworfen?
+3. **Timing**: Wie lange dauert es, bis "ACK #1" kommt?
+4. **Konsistenz**: Unter welchen Bedingungen wird "ACK #1" gesendet vs. nicht gesendet?
+
+### Zusammenfassung
+
+**Root Cause (Issue #168)**: Die Pre-Login Phase schlägt manchmal fehl, erkennbar am fehlenden "ACK" Paket nach Pre-Login. Ohne dieses "ACK #1" ist die Kamera nicht bereit für Login-Requests und ignoriert alle nachfolgenden Pakete einschließlich des Login-Requests und Magic1.
+
+**Fix**: Pre-Login ACK explizit abwarten und bei Fehlen Retry oder Abbruch.
