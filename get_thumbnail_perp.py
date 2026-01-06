@@ -1,7 +1,31 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.20
+"""Wildkamera Thumbnail Downloader - consolidated v4.21
 
-Changes in this version (v4.20) - FIX for Issue #166:
+Changes in this version (v4.21) - FIX for Issue #168:
+- CRITICAL FIX: Pre-Login ACK must be explicitly awaited before proceeding to login.
+  Analysis of debug06012026_4.log and comparison with MITM captures reveals that the
+  working app receives TWO "ACK" packets during the handshake:
+  
+  ACK #1 (MITM line 372): Sent by camera AFTER Pre-Login, BEFORE login request
+  ACK #2 (MITM line 396): Sent by camera AFTER Magic1 handshake packet
+  
+  The current implementation sends Pre-Login but doesn't explicitly wait for ACK #1.
+  This causes inconsistent behavior:
+  - Sometimes camera sends ACK #1 (debug06012026_2.log line 21, debug06012026_3.log line 21)
+  - Sometimes camera doesn't send ACK #1 (debug06012026_4.log, debug06012026_1.log)
+  
+  When ACK #1 is missing, the camera is NOT ready for login and ignores all subsequent
+  packets (Login, Magic1, retransmissions). This is the root cause of Issue #168.
+  
+  Fix:
+  1. After sending Pre-Login, explicitly pump() for ACK packet with timeout
+  2. Only proceed to login if ACK #1 is received
+  3. If ACK #1 not received, retry Pre-Login up to 3 times
+  4. If all retries fail, abort with clear error message
+  
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "NEUER ROOT CAUSE (Issue #168)" for detailed analysis.
+
+Changes in v4.20 - FIX for Issue #166:
 - CRITICAL FIX: Restored pump() wait after Magic1 + added global_seq reset. Analysis of 
   debug06012026_3.log shows that v4.19 (which removed the pump() wait) was WRONG.
   
@@ -928,7 +952,12 @@ class Session:
         self.send_raw(pkt, desc=f"Heartbeat AppSeq={self.app_seq}")
         self.last_heartbeat_time = time.time()
 
-    def send_prelogin(self):
+    def send_prelogin(self) -> bool:
+        """Send Pre-Login packet and wait for ACK response.
+        
+        Returns:
+            True if Pre-Login ACK was received, False otherwise
+        """
         logger.info(">>> Pre-Login…")
         payload = {"utcTime": int(time.time()), "nonce": os.urandom(8).hex()}
         enc = AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(
@@ -939,7 +968,39 @@ class Session:
         for p in TARGET_PORTS:
             self.send_to(pkt, p, desc="PreLogin")
 
-        self.pump(timeout=1.0, accept_predicate=lambda _d: False)
+        # CRITICAL (Issue #168): Explicitly wait for Pre-Login ACK response
+        # The camera sends a DATA packet with "ACK" payload (MITM ble_udp_1.log line 372)
+        # to confirm Pre-Login was successful. Without this ACK, the camera is NOT ready
+        # for login requests and will ignore all subsequent packets.
+        logger.info(">>> Waiting for Pre-Login ACK response...")
+        ack_received = self.pump(timeout=2.0, accept_predicate=self._is_simple_ack_payload, filter_evt=False)
+        
+        if not ack_received:
+            logger.warning("⚠️ Pre-Login ACK not received - camera may not be ready")
+            return False
+        
+        logger.info("✅ Pre-Login ACK received - camera ready for login")
+        return True
+    
+    def send_prelogin_with_retry(self, max_retries: int = 3) -> bool:
+        """Send Pre-Login with retry logic.
+        
+        Args:
+            max_retries: Maximum number of Pre-Login attempts
+            
+        Returns:
+            True if Pre-Login ACK was received, False if all retries failed
+        """
+        for attempt in range(max_retries):
+            if attempt > 0:
+                logger.info(f">>> Pre-Login Retry {attempt}/{max_retries}...")
+                time.sleep(1.0)  # Brief pause between retries
+            
+            if self.send_prelogin():
+                return True
+        
+        logger.error(f"❌ Pre-Login failed after {max_retries} attempts")
+        return False
 
     def _log_evt_rate_limited(self, evt: Dict[str, Any]):
         if not self.debug:
@@ -1174,8 +1235,14 @@ class Session:
         # Enable token buffering to capture MsgType=3 responses
         self.enable_token_buffering()
 
-        # Pre-login phase
-        self.send_prelogin()
+        # Pre-login phase with retry (Issue #168 fix)
+        # CRITICAL: Pre-Login ACK must be received before proceeding to login.
+        # Without ACK, the camera is not ready and will ignore login requests.
+        if not self.send_prelogin_with_retry(max_retries=3):
+            logger.error("❌ Pre-Login failed - cannot proceed to login")
+            return
+        
+        # Brief pause after successful Pre-Login to allow camera to stabilize
         time.sleep(0.25)
 
         # === LOGIN HANDSHAKE (following MITM spec) ===
