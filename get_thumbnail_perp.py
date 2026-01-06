@@ -1,26 +1,37 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.18
+"""Wildkamera Thumbnail Downloader - consolidated v4.19
 
-Changes in this version (v4.18):
-- CRITICAL FIX for Issue #162: Wait for camera's ACK after Magic1 before sending login retransmissions.
-  Root cause: The code was sending login retransmissions immediately after Magic1, without waiting
-  for the camera's ACK response first. MITM analysis (ble_udp_1.log lines 370-480) shows:
+Changes in this version (v4.19) - FIX for Issue #164:
+- CRITICAL FIX: Removed pump() delay after Magic1. Analysis of debug06012026_2.log shows that the
+  v4.18 fix (waiting for camera ACK after Magic1) didn't work - the camera never sends anything
+  during that wait period. 
   
-  Working sequence:
+  Detailed MITM analysis reveals the actual sequence:
   1. TX Login #1 (Seq=0, AppSeq=1)
   2. TX Magic1 (Seq=3)
-  3. RX ACK from camera (contains "ACK" payload)
-  4. TX ACK for the camera's ACK
-  5. TX Login #2 (Seq=0, AppSeq=1)
+  3. RX ACK from camera (Seq=0, payload "ACK") ← This is the ACK for Login #1, NOT Magic1!
+  4. TX ACK for camera's ACK (Seq=1)
+  5. TX Login #2 (Seq=0, AppSeq=1) - IMMEDIATELY after step 4
   6. TX Login #3 (Seq=0, AppSeq=1)
   7. RX Login Response (MsgType=3, AppSeq=1) ✅
   
-  The Magic1 handshake is bidirectional - the camera must acknowledge it before accepting login requests.
+  Key insight: The camera's "ACK" packet (step 3) has Seq=0, which means it's acknowledging the
+  Login packet, not Magic1. Magic1 is a control packet (0xD1) that doesn't require its own ACK.
+  The camera processes Login asynchronously and sends its ACK AFTER receiving Magic1.
   
-  Fix: Added pump() call after Magic1 with 0.3s timeout to receive and ACK the camera's response.
-  This ensures the camera is ready before we send login retransmissions.
+  The v4.18 approach of waiting 0.3s after Magic1 was wrong because:
+  - The camera doesn't send anything in response to Magic1 itself
+  - The wait only delays the login retransmissions unnecessarily
+  - The ACK will arrive asynchronously and be processed by pump() automatically
   
-  See ANALYSE_KONSOLIDIERT_LOGIN.md "NEUER ROOT CAUSE (Issue #162)" for detailed analysis.
+  Fix: Remove the pump() call after Magic1. Send Login retransmissions immediately, matching
+  the MITM timing. The pump() mechanism will automatically receive and ACK any responses from
+  the camera when they arrive.
+  
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "NEUER ROOT CAUSE (Issue #164)" for detailed analysis.
+
+Changes in v4.18 (REVERTED IN v4.19):
+- Added pump() call after Magic1 - this turned out to be incorrect based on Issue #164 analysis.
 
 Changes in v4.17:
 - CRITICAL FIX for Issue #159: Suppress heartbeat during login handshake.
@@ -1201,30 +1212,18 @@ class Session:
         magic1_pkt, _ = self.build_packet(0xD1, MAGIC_BODY_1, force_seq=3)
         self.send_raw(magic1_pkt, desc="Magic1")
         
-        # Step 1c: Wait for camera's ACK response to Magic1
-        # CRITICAL FIX for Issue #162: The camera sends an ACK (with "ACK" payload) after receiving Magic1.
-        # We MUST receive and acknowledge this before sending login retransmissions.
-        # MITM capture (ble_udp_1.log) shows:
-        #   - After Magic1 TX, camera sends ACK with payload "ACK" (3 bytes)
-        #   - App ACKs this response
-        #   - Only THEN are login retransmissions sent
-        # This is a bidirectional handshake - Magic1 signals readiness, camera confirms.
-        logger.info(">>> Login Handshake Step 1c: Wait for camera's ACK response to Magic1")
-        # CRITICAL: no_heartbeat=True prevents heartbeat from incrementing AppSeq (Issue #159 fix)
-        self.pump(timeout=0.3, accept_predicate=lambda _: False, filter_evt=False, no_heartbeat=True)
-        
-        # Step 1d: Retransmit login request #2 (per MITM capture ble_udp_1.log line 402)
+        # Step 1c: Retransmit login request #2 (per MITM capture ble_udp_1.log line 402)
         # CRITICAL: The working app sends the login request THREE times total.
         # This is not error handling - it's part of the expected protocol flow.
         # The camera firmware appears to require multiple transmissions before responding.
         # IMPORTANT: Use same Seq=0 and same login_body (it's a retransmission, not a new request)
-        logger.info(">>> Login Handshake Step 1d: Retransmit Login #2")
+        logger.info(">>> Login Handshake Step 1c: Retransmit Login #2")
         login_pkt2, _ = self.build_packet(0xD0, login_body, force_seq=0)
         self.send_raw(login_pkt2, desc=f"Login#2(cmdId=0,AppSeq={login_app_seq})")
         
-        # Step 1e: Retransmit login request #3 (per MITM capture ble_udp_1.log line 417)
+        # Step 1d: Retransmit login request #3 (per MITM capture ble_udp_1.log line 417)
         # The camera typically responds after the third transmission
-        logger.info(">>> Login Handshake Step 1e: Retransmit Login #3")
+        logger.info(">>> Login Handshake Step 1d: Retransmit Login #3")
         login_pkt3, _ = self.build_packet(0xD0, login_body, force_seq=0)
         self.send_raw(login_pkt3, desc=f"Login#3(cmdId=0,AppSeq={login_app_seq})")
         

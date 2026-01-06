@@ -602,14 +602,236 @@ Nach der Implementierung sollte der Debug-Log wie folgt aussehen:
   - `tests/debug05012026.log` bis `debug05012026_4.log` (iterative Fixes)
   - `tests/debug05012026_5.log` (Heartbeat-Bug identifiziert - Issue #159)
   - `tests/debug06012026_1.log` (Heartbeat gefixt, aber ACK-Austausch fehlt - Issue #162)
-- **Implementierung**: `get_thumbnail_perp.py` (aktuell v4.17)
+- **Implementierung**: `get_thumbnail_perp.py` (aktuell v4.18)
 
 ---
 
-## Nächste Schritte (aktualisiert)
+## 🎯 NEUER ROOT CAUSE (Issue #164 - 2026-01-06, 19:22 Uhr)
 
-1. ✅ Analyse Issue #162 abgeschlossen
-2. ⏳ Implementierung ACK-Austausch nach Magic1 (v4.18)
-3. ⏳ Test mit echter Hardware
-4. ⏳ Validierung der Token-Extraktion
-5. ⏳ Security-Scan
+### Zusammenfassung
+
+**Issue**: #164  
+**Symptom**: Login Timeout - keine Token-Response (0 MsgType=3 Pakete gepuffert)  
+**Status v4.18**: ACK-Wartezeit nach Magic1 implementiert, aber Kamera antwortet trotzdem nicht
+
+### Analyse debug06012026_2.log
+
+**Beobachtung**: Nach dem Fix in v4.18 wird eine 0.3s Wartezeit nach Magic1 eingebaut (Step 1c), aber die Kamera sendet trotzdem keine ACK-Response.
+
+**Aktueller Ablauf (debug06012026_2.log)**:
+```
+Zeile 28: TX Login #1 (Seq=0, AppSeq=1)                    19:22:34,135
+Zeile 30: TX Magic1 (Seq=3)                                19:22:34,161
+Zeile 31: >>> Login Handshake Step 1c: Wait for Magic1 ACK 19:22:34,168
+          [PAUSE 309ms - KEIN RX!]                         
+Zeile 32: >>> Login Handshake Step 1d: Retransmit Login #2 19:22:34,477
+Zeile 33: TX Login #2 (Seq=0, AppSeq=1)                    19:22:34,489
+Zeile 34: >>> Login Handshake Step 1e: Retransmit Login #3 19:22:34,503
+Zeile 35: TX Login #3 (Seq=0, AppSeq=1)                    19:22:34,510
+Zeile 37: ⚠️ No Login Response received                    19:22:37,532
+Zeile 48: ❌ Login Timeout (0 MsgType=3 packets)           19:23:01,078
+```
+
+### Detaillierte MITM-Vergleichsanalyse
+
+**Funktionierender Ablauf der Original-App (ble_udp_1.log Zeilen 373-435)**:
+```
+1. TX Login #1 (Seq=0, AppSeq=1)
+   f1 d0 00 c5 d1 00 00 00 41 52 54 45 4d 49 53...
+   
+2. TX Magic1 (Seq=3)
+   f1 d1 00 0a d1 00 00 03 00 00 00 00 00 00
+   
+3. RX ACK from camera (Seq=0, payload "ACK")
+   f1 d0 00 07 d1 00 00 00 41 43 4b
+   ^^^^^^^^^^^^^^^^^^^^^^ Dies ist das ACK für Login#1, NICHT für Magic1!
+   
+4. TX ACK for camera's ACK (Seq=1)
+   f1 d1 00 06 d1 00 00 01 00 00
+   
+5. TX Login #2 (Seq=0, AppSeq=1)
+   f1 d0 00 c5 d1 00 00 00 41 52 54 45 4d 49 53...
+   
+6. TX Login #3 (Seq=0, AppSeq=1)
+   f1 d0 00 c5 d1 00 00 00 41 52 54 45 4d 49 53...
+   
+7. RX ACK (Seq=1)
+   f1 d1 00 06 d1 00 00 01 00 01
+   
+8. RX Login Response (MsgType=3, AppSeq=1, Seq=1)
+   f1 d0 00 99 d1 00 00 01 41 52 54 45 4d 49 53 00
+   03 00 00 00 01 00 00 00 81 00 00 00...
+   ^^              ^^
+   MsgType=3       AppSeq=1
+   
+   ✅ SUCCESS!
+```
+
+### Kritische Erkenntnis
+
+**Das fehlende Puzzleteil - WICHTIGE KORREKTUR**:
+
+Die Analyse von debug06012026_1.log (Issue #162) ging davon aus, dass nach Magic1 ein ACK von der Kamera kommen müsste. ABER: Die MITM-Analyse zeigt etwas anderes!
+
+Das empfangene ACK (Schritt 3 oben) hat **Seq=0**, nicht Seq=3. Das bedeutet:
+- **Es ist das ACK für das Login-Paket (Seq=0), NICHT für Magic1 (Seq=3)!**
+- Die Kamera sendet dieses ACK NACH dem Empfang von Magic1, aber es bezieht sich auf das Login-Paket
+- Magic1 selbst benötigt kein eigenes ACK (es ist ein 0xD1 Kontrollpaket, kein 0xD0 Datenpaket)
+
+**Warum ist das wichtig?**
+
+Dies ändert das Verständnis der Sequenz fundamental:
+1. Die Kamera empfängt Login #1, beginnt mit der Verarbeitung
+2. Sie empfängt Magic1 als Kontrollsignal
+3. Erst DANN sendet sie das ACK für Login #1 (mit dem "ACK" String als Payload)
+4. Dies signalisiert: "Login empfangen und Magic1 bestätigt, du kannst fortfahren"
+
+### Neue Hypothese: Warum sendet die Kamera kein ACK?
+
+**Vergleich der Implementierungen**:
+
+#### v4.17 (debug06012026_1.log):
+```
+TX Login#1 (Seq=0)          ← 19:03:54,086
+TX Magic1 (Seq=3)           ← 19:03:54,107
+[NO WAIT - code continues immediately]
+TX Login#2 (Seq=0)          ← 19:03:54,378  (271ms später)
+TX Login#3 (Seq=0)          ← 19:03:54,400
+[Timeout - keine Response]
+```
+
+#### v4.18 (debug06012026_2.log):
+```
+TX Login#1 (Seq=0)          ← 19:22:34,135
+TX Magic1 (Seq=3)           ← 19:22:34,161
+[WAIT 0.3s with pump]       ← 19:22:34,168-19:22:34,477 (309ms)
+TX Login#2 (Seq=0)          ← 19:22:34,489
+TX Login#3 (Seq=0)          ← 19:22:34,510
+[Timeout - keine Response]
+```
+
+**Beobachtung**: In BEIDEN Versionen sendet die Kamera KEIN ACK (mit "ACK" Payload).
+
+### Mögliche Root Causes
+
+#### Hypothese A: Pre-Login Phase inkorrekt
+**Symptom**: Die Kamera antwortet überhaupt nicht auf die Login-Anfrage
+
+**Mögliche Ursachen**:
+1. Die Pre-Login Initialisierung (Zeile 9-22 in debug06012026_2.log) könnte falsch sein
+2. Die Kamera könnte in einem schlechten Zustand sein
+3. Die verschlüsselte Pre-Login Nachricht könnte nicht korrekt sein
+
+**Beweismittel**:
+- Pre-Login wird gesendet (Zeile 9-11)
+- FRAG-Pakete werden empfangen und ge-ACKt (Zeilen 12-20)
+- Ein "ACK" Paket (Zeile 21) und ein kurzes F1-DISC Paket (Zeile 22) werden empfangen
+- ABER: Keine weitere Reaktion von der Kamera auf die Login-Anfrage
+
+**Test**: Vergleiche die Pre-Login Hex-Daten zwischen MITM und aktuellem Log
+
+#### Hypothese B: Login-JSON inkorrekt verschlüsselt
+**Symptom**: Die Kamera ignoriert die Login-Anfrage, weil sie den Inhalt nicht entschlüsseln kann
+
+**Mögliche Ursachen**:
+1. Der `utcTime` Wert könnte außerhalb eines akzeptablen Bereichs liegen
+2. Die AES-Verschlüsselung könnte fehlerhaft sein
+3. Die Base64-Kodierung könnte falsch sein
+
+**Beweismittel**:
+- Login JSON wird generiert mit utcTime=1767723754 (Zeile 24)
+- Dies entspricht: 2026-01-06 19:22:34 UTC ✅ (korrekt)
+- Die verschlüsselte Payload ist 173 Bytes (Zeile 25) ✅ (wie MITM)
+
+**Gegenargument**: Der Login-Payload sollte korrekt sein, da die Länge übereinstimmt
+
+#### Hypothese C: Netzwerk/Timing-Problem
+**Symptom**: Pakete gehen verloren oder kommen nicht an
+
+**Mögliche Ursachen**:
+1. Wi-Fi Verbindung ist instabil
+2. Die Kamera ist überlastet oder reagiert langsam
+3. UDP-Pakete werden vom Netzwerk verworfen
+
+**Beweismittel**:
+- Discovery funktioniert (Zeile 7: "Discovery OK")
+- Active port wird korrekt erkannt (40611)
+- FRAG-Pakete werden empfangen (Zeilen 12-20)
+- Socket ist korrekt konfiguriert (Zeile 2)
+
+**Gegenargument**: Das Netzwerk scheint zu funktionieren, da andere Pakete ankommen
+
+#### Hypothese D: Race Condition / Timing-sensitiv
+**Symptom**: Die Kamera benötigt eine spezifische Timing-Sequenz
+
+**Mögliche Ursachen**:
+1. Die Kamera erwartet eine bestimmte Verzögerung zwischen Login und Magic1
+2. Die Login-Retransmissions kommen zu früh oder zu spät
+3. Der pump() Call zwischen Magic1 und Login#2 verwirrt die Kamera
+
+**Beweismittel**:
+- MITM zeigt: Login TX -> Magic1 TX -> ACK RX -> ACK TX -> Login#2 TX
+- Aktuell: Login TX -> Magic1 TX -> [pump 309ms] -> Login#2 TX
+- **Der pump() Call könnte zu lang sein oder zur falschen Zeit kommen**
+
+**Test**: Entferne den pump() Call nach Magic1 und sende Login#2 sofort
+
+#### Hypothese E: Kamera-Firmware-Version oder -Zustand
+**Symptom**: Die Kamera verhält sich anders als erwartet
+
+**Mögliche Ursachen**:
+1. Die Kamera hat eine andere Firmware-Version als die MITM-Captures
+2. Die Kamera ist in einem fehlerhaften Zustand
+3. Die Kamera benötigt einen Reset oder Power-Cycle
+
+**Test**: Power-Cycle der Kamera und erneuter Versuch
+
+### Empfohlener Nächster Schritt
+
+**Immediate Action**: Analysiere die Pre-Login Phase genauer
+
+1. Vergleiche die Pre-Login Hex-Daten zwischen MITM und debug06012026_2.log
+2. Überprüfe, ob die "ACK" und "F1 DISC" Pakete in Zeilen 21-22 erwartete Antworten sind
+3. Prüfe, ob die Kamera eventuell eine andere Response sendet, die wir filtern
+
+**Alternative Action**: Vereinfache die Login-Sequenz
+
+1. Entferne den pump() Call nach Magic1 (Rückfall zu v4.17 Timing)
+2. Sende Login#2 und Login#3 SOFORT nach Magic1 (wie in MITM)
+3. Warte erst DANN auf die Response
+
+**Debugging-Verbesserung**:
+
+Füge zusätzliches Logging hinzu:
+1. Log alle RX-Pakete während der kritischen Phase (bereits vorhanden)
+2. Log die Anzahl der socket.recvfrom() Aufrufe während pump()
+3. Log, wenn pump() endet ohne ein Paket zu empfangen
+
+### Vergleich: v4.17 vs v4.18 Unterschiede
+
+| Aspekt | v4.17 | v4.18 | Ergebnis |
+|--------|-------|-------|----------|
+| pump() nach Magic1 | Nein | Ja (0.3s) | Beide scheitern |
+| Login#2 Timing | 271ms nach Magic1 | 316ms nach Magic1 | Kein Unterschied |
+| ACK empfangen | Nein | Nein | Gleiches Problem |
+
+**Fazit**: Die Änderung in v4.18 hat das Problem nicht gelöst. Das deutet darauf hin, dass die Hypothese von Issue #162 (fehlende ACK-Wartezeit) nicht die Root Cause war.
+
+### Status-Update
+
+**v4.15**: Login mit statischer Blob, falsche Seq  
+**v4.16**: Dreifache Login-Transmission implementiert  
+**v4.17**: Heartbeat während Login unterdrückt (Issue #159 gefixt)  
+**v4.18**: ACK-Wartezeit nach Magic1 implementiert (Issue #162) - **ABER Problem besteht weiter!**  
+**v4.19** (TODO): Root Cause von Issue #164 identifizieren und fixen
+
+---
+
+## Nächste Schritte (aktualisiert für Issue #164)
+
+1. ✅ Analyse Issue #164 abgeschlossen
+2. ⏳ Vergleich Pre-Login Phase MITM vs. aktuell
+3. ⏳ Test: Entferne pump() nach Magic1 (Timing-Test)
+4. ⏳ Test: Prüfe alternative Login-Sequenzen
+5. ⏳ Test mit echter Hardware
+6. ⏳ Security-Scan
