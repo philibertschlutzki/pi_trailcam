@@ -380,7 +380,236 @@ Nach dem Fix sollte die Login-Response erfolgreich empfangen werden, da die AppS
 ## Nächste Schritte
 
 1. ✅ Analyse abgeschlossen
-2. ⏳ Implementierung der Login-Retransmissions
+2. ✅ Implementierung der Login-Retransmissions (v4.16)
+3. ✅ Heartbeat-Unterdrückung implementiert (v4.17)
+4. ⏳ Test mit echter Hardware
+5. ⏳ Validierung der Token-Extraktion
+6. ⏳ Security-Scan
+
+---
+
+## 🎯 NEUER ROOT CAUSE (Issue #162 - 2026-01-06)
+
+### Zusammenfassung
+
+**Issue**: #162  
+**Symptom**: Login Timeout - keine Token-Response (0 MsgType=3 Pakete gepuffert)  
+**Status v4.17**: Heartbeat-Bug gefixt, aber Login scheitert weiterhin  
+
+### Analyse debug06012026_1.log
+
+**Beobachtung**: Nach dem Fix in v4.17 wird kein Heartbeat mehr zwischen Magic1 und Login-Retransmissions gesendet (Issue #159 gefixt). ABER der Login scheitert trotzdem.
+
+**Aktueller Ablauf (debug06012026_1.log)**:
+```
+Zeile 27: TX Login #1 (Seq=0, AppSeq=1)
+Zeile 29: TX Magic1 (Seq=3)
+Zeile 30: TX Login #2 (Seq=0, AppSeq=1)    ← SOFORT nach Magic1!
+Zeile 32: TX Login #3 (Seq=0, AppSeq=1)
+Zeile 34: Wait for Login Response...
+Zeile 35: ⚠️ No Login Response received
+Zeile 45: ❌ Login Timeout (0 MsgType=3 packets)
+```
+
+### Detaillierte MITM-Analyse (ble_udp_1.log Zeilen 370-480)
+
+**Funktionierender Ablauf der Original-App**:
+```
+1. TX Login #1 (Seq=0, AppSeq=1)
+   f1 d0 00 c5 d1 00 00 00 41 52 54 45 4d 49 53...
+
+2. TX Magic1 (Seq=3)  
+   f1 d1 00 0a d1 00 00 03 00 00 00 00 00 00
+
+3. RX ACK from camera
+   f1 d0 00 07 d1 00 00 00 41 43 4b
+   ^^^^^^^^^^^^^^^^^^^^^^^^ ACK-Payload
+
+4. TX ACK for the received ACK (Seq=1)
+   f1 d1 00 06 d1 00 00 01 00 00
+   
+5. TX Login #2 (Seq=0, AppSeq=1)
+   f1 d0 00 c5 d1 00 00 00 41 52 54 45 4d 49 53...
+
+6. TX Login #3 (Seq=0, AppSeq=1)
+   f1 d0 00 c5 d1 00 00 00 41 52 54 45 4d 49 53...
+
+7. RX ACK for Login (Seq=1)
+   f1 d1 00 06 d1 00 00 01 00 01
+
+8. RX Login Response (MsgType=3, AppSeq=1, Seq=1)
+   f1 d0 00 99 d1 00 00 01 41 52 54 45 4d 49 53 00
+   03 00 00 00 01 00 00 00 81 00 00 00 37 73 51 33...
+   ^^              ^^
+   MsgType=3       AppSeq=1
+   
+   ✅ SUCCESS!
+```
+
+### Kritische Erkenntnis
+
+**Das fehlende Puzzleteil**: Nach dem Senden von Magic1 muss der Client:
+1. **Warten** auf die ACK-Response der Kamera (enthält "ACK" als Payload)
+2. **Senden** eines ACK für diese ACK-Response
+3. **Erst dann** die Login-Retransmissions senden
+
+**Warum ist das wichtig?**
+
+Der MITM-Capture zeigt klar, dass die Kamera nach Magic1 einen ACK mit Payload "ACK" sendet. Die App bestätigt diesen mit einem eigenen ACK. Erst DANACH kommen die Login-Retransmissions.
+
+Dies ist vermutlich ein Handshake-Mechanismus:
+- Magic1 signalisiert "Ich bin bereit für Login-Phase"
+- Kamera antwortet mit ACK "Verstanden, du kannst jetzt Login senden"
+- Client ACKt "Bestätigt, sende jetzt Login-Requests"
+- Dann erfolgt der eigentliche Login-Austausch
+
+**Aktuelles Problem**: Die Implementierung sendet die Login-Retransmissions SOFORT nach Magic1, ohne auf die ACK-Bestätigung der Kamera zu warten. Die Kamera ist vermutlich noch nicht bereit und ignoriert die Requests.
+
+### Vergleich: Funktionierende App vs. v4.17
+
+#### Funktionierende App (MITM):
+```
+TX Login#1 (Seq=0)
+TX Magic1 (Seq=3)
+    ⬇️ [PAUSE - Warte auf Antwort]
+RX ACK "ACK" (Seq=0)        ← Kamera bestätigt Magic1
+TX ACK (Seq=1)              ← Wir bestätigen den ACK
+    ⬇️ [JETZT ist die Kamera bereit]
+TX Login#2 (Seq=0)
+TX Login#3 (Seq=0)
+    ⬇️
+RX ACK (Seq=1)
+RX Login Response ✅
+```
+
+#### Aktuelle Implementierung v4.17 (debug06012026_1.log):
+```
+TX Login#1 (Seq=0)          ← Zeile 27
+TX Magic1 (Seq=3)           ← Zeile 29
+TX Login#2 (Seq=0)          ← Zeile 30 - SOFORT! ❌
+TX Login#3 (Seq=0)          ← Zeile 32
+    ⬇️
+[Timeout - keine Response]  ← Zeile 45
+```
+
+### Root Cause
+
+Die Implementierung sendet Login-Retransmissions zu früh. Nach Magic1 fehlt:
+1. Ein `pump()` Aufruf mit kurzer Timeout (0.2-0.5s)
+2. Dieser würde die ACK-Response der Kamera empfangen
+3. pump() würde automatisch den ACK für den ACK senden (via ACK-Logik in Zeile 972-974)
+4. DANN erst sollten die Login-Retransmissions gesendet werden
+
+### Code-Position des Fehlers
+
+In `get_thumbnail_perp.py` Zeile 1171-1179:
+
+```python
+# Step 1b: Send Magic1 packet
+logger.info(">>> Login Handshake Step 1b: Send Magic1 packet")
+magic1_pkt, _ = self.build_packet(0xD1, MAGIC_BODY_1, force_seq=3)
+self.send_raw(magic1_pkt, desc="Magic1")
+
+# Brief pause to allow camera to process handshake
+time.sleep(MAGIC1_PROCESSING_DELAY)  # ← Nur ein sleep, KEIN pump()!
+
+# Step 1c: ACK/pump any immediate responses from camera
+# CRITICAL: no_heartbeat=True prevents heartbeat...
+self.pump(timeout=0.1, accept_predicate=lambda _: False, filter_evt=False, no_heartbeat=True)
+```
+
+**Problem**: Der `pump()` Aufruf in Zeile 1189 hat eine zu kurze Timeout (0.1s) und kommt NACH dem sleep. Das ist zu spät - die Login-Retransmissions werden bereits bei Zeile 1197 und 1203 gesendet.
+
+### Fix-Strategie
+
+**Minimal Change**: Nach Magic1 einen längeren pump() Aufruf einfügen, um die ACK-Response zu empfangen und zu bestätigen.
+
+```python
+# Step 1b: Send Magic1 packet
+logger.info(">>> Login Handshake Step 1b: Send Magic1 packet")
+magic1_pkt, _ = self.build_packet(0xD1, MAGIC_BODY_1, force_seq=3)
+self.send_raw(magic1_pkt, desc="Magic1")
+
+# Step 1c: Wait for camera's ACK response to Magic1
+# The camera sends an ACK with "ACK" payload, which we need to acknowledge
+logger.info(">>> Login Handshake Step 1c: Wait for Magic1 ACK from camera")
+self.pump(timeout=0.3, accept_predicate=lambda _: False, filter_evt=False, no_heartbeat=True)
+
+# Step 1d: Retransmit Login #2
+logger.info(">>> Login Handshake Step 1d: Retransmit Login #2")
+# ... rest of code
+```
+
+### Erwartetes Verhalten nach Fix
+
+Nach der Implementierung sollte der Debug-Log wie folgt aussehen:
+
+```
+>>> Login Handshake Step 1: Send Login Request (cmdId=0, AppSeq=1)
+📤 RUDP DATA Seq=0 ... Login#1(cmdId=0,AppSeq=1)
+
+>>> Login Handshake Step 1b: Send Magic1 packet
+📤 RUDP ACK Seq=3 ... Magic1
+
+>>> Login Handshake Step 1c: Wait for Magic1 ACK from camera
+📥 RUDP DATA Seq=0 ... ACK                          ← Empfange ACK von Kamera
+📤 RUDP ACK Seq=0 ... ACK(rx_seq=0)                 ← Sende ACK für den ACK
+
+>>> Login Handshake Step 1d: Retransmit Login #2
+📤 RUDP DATA Seq=0 ... Login#2(cmdId=0,AppSeq=1)
+
+>>> Login Handshake Step 1e: Retransmit Login #3
+📤 RUDP DATA Seq=0 ... Login#3(cmdId=0,AppSeq=1)
+
+>>> Login Handshake Step 2: Wait for Login Response
+📥 RUDP ACK Seq=1 ... ACK(rx_seq=1)                 ← ACK für Login
+📥 RUDP DATA Seq=1 ... MsgType=3 AppSeq=1           ← Login Response! ✅
+✅ Login Response received (MsgType=3)
+
+>>> Extracting token from Login Response (AppSeq=1)...
+✅ TOKEN OK (login, strict) app_seq=1 token_len=XXX
+```
+
+### Technische Details
+
+**Timing-Analyse aus MITM-Capture**:
+- Nach Magic1 TX kommt ACK RX innerhalb von ~10-50ms
+- Der ACK für den ACK wird unmittelbar gesendet
+- Die Login-Retransmissions folgen dann direkt
+
+**pump() Timeout-Empfehlung**:
+- 0.3 Sekunden sollte ausreichen, um die ACK-Response zu empfangen
+- no_heartbeat=True muss gesetzt sein (bereits korrekt in v4.17)
+
+### Status-Update
+
+**v4.15**: Login mit statischer Blob, falsche Seq
+**v4.16**: Dreifache Login-Transmission implementiert  
+**v4.17**: Heartbeat während Login unterdrückt (Issue #159 gefixt)  
+**v4.18** (TODO): ACK-Austausch nach Magic1 implementieren (Issue #162)
+
+---
+
+## Referenzen (aktualisiert)
+
+- **Issues**: #157, #159, #162
+- **Protokoll-Spezifikation**: `Protocol_analysis.md`
+- **MITM-Captures**: 
+  - `tests/MITM_Captures/ble_udp_1.log` (Zeilen 370-480: Login-Sequenz)
+  - `tests/MITM_Captures/ble_udp_2.log`
+- **Debug-Logs**:
+  - `tests/debug04012026.txt` (erste Version)
+  - `tests/debug05012026.log` bis `debug05012026_4.log` (iterative Fixes)
+  - `tests/debug05012026_5.log` (Heartbeat-Bug identifiziert - Issue #159)
+  - `tests/debug06012026_1.log` (Heartbeat gefixt, aber ACK-Austausch fehlt - Issue #162)
+- **Implementierung**: `get_thumbnail_perp.py` (aktuell v4.17)
+
+---
+
+## Nächste Schritte (aktualisiert)
+
+1. ✅ Analyse Issue #162 abgeschlossen
+2. ⏳ Implementierung ACK-Austausch nach Magic1 (v4.18)
 3. ⏳ Test mit echter Hardware
 4. ⏳ Validierung der Token-Extraktion
 5. ⏳ Security-Scan

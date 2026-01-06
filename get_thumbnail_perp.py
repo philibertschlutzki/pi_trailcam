@@ -1,7 +1,28 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.17
+"""Wildkamera Thumbnail Downloader - consolidated v4.18
 
-Changes in this version (v4.17):
+Changes in this version (v4.18):
+- CRITICAL FIX for Issue #162: Wait for camera's ACK after Magic1 before sending login retransmissions.
+  Root cause: The code was sending login retransmissions immediately after Magic1, without waiting
+  for the camera's ACK response first. MITM analysis (ble_udp_1.log lines 370-480) shows:
+  
+  Working sequence:
+  1. TX Login #1 (Seq=0, AppSeq=1)
+  2. TX Magic1 (Seq=3)
+  3. RX ACK from camera (contains "ACK" payload)
+  4. TX ACK for the camera's ACK
+  5. TX Login #2 (Seq=0, AppSeq=1)
+  6. TX Login #3 (Seq=0, AppSeq=1)
+  7. RX Login Response (MsgType=3, AppSeq=1) ✅
+  
+  The Magic1 handshake is bidirectional - the camera must acknowledge it before accepting login requests.
+  
+  Fix: Added pump() call after Magic1 with 0.3s timeout to receive and ACK the camera's response.
+  This ensures the camera is ready before we send login retransmissions.
+  
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "NEUER ROOT CAUSE (Issue #162)" for detailed analysis.
+
+Changes in v4.17:
 - CRITICAL FIX for Issue #159: Suppress heartbeat during login handshake.
   Root cause: An unwanted heartbeat (AppSeq=2) was sent between Magic1 and login retransmissions,
   breaking the expected AppSeq=1 sequence. The camera firmware expects either:
@@ -12,13 +33,13 @@ Changes in this version (v4.17):
   subsequent login retransmissions. 
   
   Fix: Added no_heartbeat parameter to pump() and set it to True during login handshake:
-  - Line 1188: After Magic1, pump without heartbeat to ACK responses
-  - Line 1220: While waiting for login response, pump without heartbeat
+  - After Magic1, pump without heartbeat to ACK responses
+  - While waiting for login response, pump without heartbeat
   
   This ensures the AppSeq sequence remains clean: AppSeq=1 (login) -> AppSeq=1 (retrans) ->
   AppSeq=1 (retrans) -> MsgType=3 AppSeq=1 (response).
   
-  See ANALYSE_KONSOLIDIERT_LOGIN.md "FINALER ROOT CAUSE" section for detailed analysis.
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "FINALER ROOT CAUSE (Issue #159)" section for detailed analysis.
 
 Changes in v4.16:
 - CRITICAL FIX for Issue #157: Implemented triple login request transmission.
@@ -89,7 +110,8 @@ DEFAULT_PASS = "85087127"
 BLE_MAC = "C6:1E:0D:E0:32:E8"
 
 LOGIN_DELAY_AFTER_STABILIZATION = 2.0
-MAGIC1_PROCESSING_DELAY = 0.1  # Brief pause after Magic1 to allow camera to process handshake
+# Note: MAGIC1_PROCESSING_DELAY removed in v4.18 - replaced with pump() call to receive ACK
+
 
 
 # --- CONSTANTS / PAYLOADS ---
@@ -1179,14 +1201,17 @@ class Session:
         magic1_pkt, _ = self.build_packet(0xD1, MAGIC_BODY_1, force_seq=3)
         self.send_raw(magic1_pkt, desc="Magic1")
         
-        # Brief pause to allow camera to process handshake
-        time.sleep(MAGIC1_PROCESSING_DELAY)
-        
-        # Step 1c: ACK/pump any immediate responses from camera
-        # This matches MITM behavior where camera sends ACK before we retransmit (line 396)
-        # CRITICAL: no_heartbeat=True prevents heartbeat from incrementing AppSeq, which would
-        # break the camera's expectation of seeing AppSeq=1 for login retransmissions
-        self.pump(timeout=0.1, accept_predicate=lambda _: False, filter_evt=False, no_heartbeat=True)
+        # Step 1c: Wait for camera's ACK response to Magic1
+        # CRITICAL FIX for Issue #162: The camera sends an ACK (with "ACK" payload) after receiving Magic1.
+        # We MUST receive and acknowledge this before sending login retransmissions.
+        # MITM capture (ble_udp_1.log) shows:
+        #   - After Magic1 TX, camera sends ACK with payload "ACK" (3 bytes)
+        #   - App ACKs this response
+        #   - Only THEN are login retransmissions sent
+        # This is a bidirectional handshake - Magic1 signals readiness, camera confirms.
+        logger.info(">>> Login Handshake Step 1c: Wait for camera's ACK response to Magic1")
+        # CRITICAL: no_heartbeat=True prevents heartbeat from incrementing AppSeq (Issue #159 fix)
+        self.pump(timeout=0.3, accept_predicate=lambda _: False, filter_evt=False, no_heartbeat=True)
         
         # Step 1d: Retransmit login request #2 (per MITM capture ble_udp_1.log line 402)
         # CRITICAL: The working app sends the login request THREE times total.
