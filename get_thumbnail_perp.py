@@ -995,12 +995,29 @@ class Session:
     def send_prelogin(self) -> bool:
         """Send Pre-Login packet and wait for ACK response.
         
+        DEPRECATED (Issue #172): This function is no longer used.
+        Pre-Login (0xF9) via UDP causes camera to send DISC signal.
+        The working app does NOT send Pre-Login via UDP - encryption
+        initialization happens via BLE instead.
+        
+        This function is kept for historical reference only.
+        DO NOT USE in new code.
+        
         Handles disconnect signals (F1 DISC) during the Pre-Login phase.
         If a DISC signal is received, returns False immediately.
         
         Returns:
             True if Pre-Login ACK was received, False otherwise (including DISC signals)
         """
+        import warnings
+        warnings.warn(
+            "send_prelogin() is deprecated and should not be used. "
+            "Pre-Login via UDP causes camera DISC signal (Issue #172). "
+            "Proceed directly to login handshake instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         logger.info(">>> Pre-Login…")
         payload = {"utcTime": int(time.time()), "nonce": os.urandom(8).hex()}
         enc = AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(
@@ -1049,12 +1066,29 @@ class Session:
     def send_prelogin_with_retry(self, max_retries: int = 3) -> bool:
         """Send Pre-Login with retry logic.
         
+        DEPRECATED (Issue #172): This function is no longer used.
+        Pre-Login (0xF9) via UDP causes camera to send DISC signal.
+        The working app does NOT send Pre-Login via UDP - encryption
+        initialization happens via BLE instead.
+        
+        This function is kept for historical reference only.
+        DO NOT USE in new code.
+        
         Args:
             max_retries: Maximum number of Pre-Login attempts
             
         Returns:
             True if Pre-Login ACK was received, False if all retries failed
         """
+        import warnings
+        warnings.warn(
+            "send_prelogin_with_retry() is deprecated and should not be used. "
+            "Pre-Login via UDP causes camera DISC signal (Issue #172). "
+            "Proceed directly to login handshake instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         for attempt in range(max_retries):
             if attempt > 0:
                 logger.info(f">>> Pre-Login Retry {attempt}/{max_retries}...")
