@@ -1,7 +1,35 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.21
+"""Wildkamera Thumbnail Downloader - consolidated v4.22
 
-Changes in this version (v4.21) - FIX for Issue #168:
+Changes in this version (v4.22) - FIX for Issue #172:
+- CRITICAL FIX: Removed Pre-Login (0xF9) phase entirely.
+  Analysis of ALL MITM captures (ble_udp_1.log, ble_udp_2.log, traffic_port_get_pictures_thumpnail.log)
+  reveals that the working app NEVER sends Pre-Login (0xF9) packets via UDP.
+  
+  Problem with v4.21:
+  - Pre-Login was sent via UDP (lines 9-11 in debug07012026_1.log)
+  - Camera ACKed Pre-Login (line 22)
+  - BUT: Camera sent DISC signal (0xF0) after Magic1 instead of expected ACK (line 34)
+  - This indicates Pre-Login puts camera in wrong state, causing session rejection
+  
+  Root Cause:
+  Pre-Login (encryption initialization) happens via BLE, NOT UDP. The working app shows
+  BLE credential exchange (ble_udp_2.log lines 20-36) but NO Pre-Login in UDP traffic.
+  
+  PHASE2_KEY ("a01bc23ed45fF56A") is static and doesn't require runtime initialization.
+  The Pre-Login step was a misunderstanding based on incomplete protocol analysis.
+  
+  Fix:
+  - Removed send_prelogin(), send_prelogin_with_retry() calls from run()
+  - Proceed directly from discovery() to login handshake
+  - Camera should now respond with ACK after Magic1 instead of DISC
+  
+  Expected behavior after fix:
+  Discovery → Login#1 → Magic1 → RX ACK (not DISC!) → Login#2 → Login#3 → Login Response ✅
+  
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "FINALER ROOT CAUSE (Issue #172)" for detailed analysis.
+
+Changes in v4.21 - FIX for Issue #168 (REVERTED in v4.22):
 - CRITICAL FIX: Pre-Login ACK must be explicitly awaited before proceeding to login.
   Analysis of debug06012026_4.log and comparison with MITM captures reveals that the
   working app receives TWO "ACK" packets during the handshake:
@@ -967,12 +995,29 @@ class Session:
     def send_prelogin(self) -> bool:
         """Send Pre-Login packet and wait for ACK response.
         
+        DEPRECATED (Issue #172): This function is no longer used.
+        Pre-Login (0xF9) via UDP causes camera to send DISC signal.
+        The working app does NOT send Pre-Login via UDP - encryption
+        initialization happens via BLE instead.
+        
+        This function is kept for historical reference only.
+        DO NOT USE in new code.
+        
         Handles disconnect signals (F1 DISC) during the Pre-Login phase.
         If a DISC signal is received, returns False immediately.
         
         Returns:
             True if Pre-Login ACK was received, False otherwise (including DISC signals)
         """
+        import warnings
+        warnings.warn(
+            "send_prelogin() is deprecated and should not be used. "
+            "Pre-Login via UDP causes camera DISC signal (Issue #172). "
+            "Proceed directly to login handshake instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         logger.info(">>> Pre-Login…")
         payload = {"utcTime": int(time.time()), "nonce": os.urandom(8).hex()}
         enc = AES.new(PHASE2_KEY, AES.MODE_ECB).encrypt(
@@ -1021,12 +1066,29 @@ class Session:
     def send_prelogin_with_retry(self, max_retries: int = 3) -> bool:
         """Send Pre-Login with retry logic.
         
+        DEPRECATED (Issue #172): This function is no longer used.
+        Pre-Login (0xF9) via UDP causes camera to send DISC signal.
+        The working app does NOT send Pre-Login via UDP - encryption
+        initialization happens via BLE instead.
+        
+        This function is kept for historical reference only.
+        DO NOT USE in new code.
+        
         Args:
             max_retries: Maximum number of Pre-Login attempts
             
         Returns:
             True if Pre-Login ACK was received, False if all retries failed
         """
+        import warnings
+        warnings.warn(
+            "send_prelogin_with_retry() is deprecated and should not be used. "
+            "Pre-Login via UDP causes camera DISC signal (Issue #172). "
+            "Proceed directly to login handshake instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
         for attempt in range(max_retries):
             if attempt > 0:
                 logger.info(f">>> Pre-Login Retry {attempt}/{max_retries}...")
@@ -1271,15 +1333,27 @@ class Session:
         # Enable token buffering to capture MsgType=3 responses
         self.enable_token_buffering()
 
-        # Pre-login phase with retry (Issue #168 fix)
-        # CRITICAL: Pre-Login ACK must be received before proceeding to login.
-        # Without ACK, the camera is not ready and will ignore login requests.
-        if not self.send_prelogin_with_retry(max_retries=3):
-            logger.error("❌ Pre-Login failed - cannot proceed to login")
-            return
-        
-        # Brief pause after successful Pre-Login to allow camera to stabilize
-        time.sleep(0.25)
+        # REMOVED (Issue #172): Pre-Login phase causes camera to send DISC signal
+        # CRITICAL: The working app does NOT send Pre-Login (0xF9) via UDP.
+        # Analysis of ALL MITM captures (ble_udp_1.log, ble_udp_2.log, 
+        # traffic_port_get_pictures_thumpnail.log) shows NO Pre-Login packets.
+        # 
+        # Encryption with PHASE2_KEY is static and doesn't require runtime initialization.
+        # Pre-Login likely happens via BLE (credential exchange visible in ble_udp_2.log),
+        # not via UDP. Sending Pre-Login via UDP causes camera to reject session with DISC.
+        #
+        # Evidence from debug07012026_1.log:
+        # - Line 9-11: TX Pre-Login (0xF9)
+        # - Line 22: RX ACK (camera acknowledges Pre-Login)
+        # - Line 29: TX Login #1
+        # - Line 31: TX Magic1
+        # - Line 34: RX DISC signal (0xF0) ← Camera disconnects! ❌
+        #
+        # OLD CODE (v4.21):
+        # if not self.send_prelogin_with_retry(max_retries=3):
+        #     logger.error("❌ Pre-Login failed - cannot proceed to login")
+        #     return
+        # time.sleep(0.25)
 
         # === LOGIN HANDSHAKE (following MITM spec) ===
         # Step 1: Build and send login request (cmdId=0, AppSeq=1)
