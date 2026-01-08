@@ -1298,13 +1298,435 @@ RX Login Response (MsgType=3, AppSeq=1) ✅
 
 ---
 
-## Nächste Schritte (aktualisiert für Issue #172)
+## Nächste Schritte (aktualisiert für Issue #172 und #174)
 
 1. ✅ Analyse Issue #172 abgeschlossen - 2026-01-07
 2. ✅ Root Cause identifiziert: Pre-Login (0xF9) verursacht DISC-Signal von Kamera
-3. ⏳ Implementierung: v4.22 ohne Pre-Login Phase
-4. ⏳ Test mit echter Hardware
-5. ⏳ Security-Scan
+3. ✅ Analyse Issue #174 abgeschlossen - 2026-01-08
+4. ✅ Bestätigung Root Cause durch detaillierte MITM-Analyse
+5. ⏳ Implementierung: v4.22 ohne Pre-Login Phase (bereits implementiert, aber weiterhin fehlerhaft)
+6. ⏳ Hypothesen für verbleibende Probleme entwickeln
+7. ⏳ Test mit echter Hardware
+8. ⏳ Security-Scan
+
+---
+
+## 🎯 KONSOLIDIERTE ANALYSE (Issue #174 - 2026-01-08)
+
+### Zusammenfassung
+
+**Issue**: #174  
+**Status**: In Analyse  
+**Datum**: 2026-01-08 20:23  
+**Symptom**: Login Timeout - Camera sends NO Login Response (0 MsgType=3 packets buffered)
+
+### Aktuelle Situation (debug08012026_1.log)
+
+**Beobachtung**: Trotz Implementierung von v4.22 (Pre-Login entfernt) antwortet die Kamera NICHT auf Login-Requests.
+
+**Aktueller Ablauf (debug08012026_1.log)**:
+```
+Zeile 8:  ✅ Discovery OK, active_port=40611
+Zeile 9:  TX Login #1 (Seq=0, AppSeq=1)                    20:23:45,944
+Zeile 16: TX Magic1 (Seq=3)                                20:23:45,958
+Zeile 17: 🔄 Reset global_seq to 0
+Zeile 18: >>> Wait for camera's ACK after Magic1          20:23:45,978
+Zeile 19-27: RX FRAG packets (LBCS Discovery retries)
+Zeile 28: RX DATA Seq=0 "ACK" payload                      20:23:46,077
+Zeile 29: RX ACK Seq=1                                     20:23:46,091
+Zeile 30: RX F1 DISC signal (0xF0)                         20:23:46,098 ❌
+Zeile 31: TX Login #2 (Seq=0, AppSeq=1)                    20:23:46,419
+Zeile 33: TX Login #3 (Seq=0, AppSeq=1)                    20:23:46,442
+Zeile 36: ⚠️ No Login Response                             20:23:49,467
+Zeile 46: ❌ Login Timeout (0 MsgType=3 packets)           20:24:13,014
+```
+
+**KRITISCHE BEOBACHTUNG**: 
+- Zeile 28: Kamera sendet "ACK" payload (wie erwartet nach MITM)
+- Zeile 29: Kamera sendet ACK Seq=1 
+- Zeile 30: **Kamera sendet DISC Signal (0xF0)** ← PROBLEM!
+
+Dies ist IDENTISCH mit dem Problem in debug07012026_1.log (v4.21 mit Pre-Login).
+
+### Detaillierte MITM-Vergleichsanalyse
+
+#### MITM ble_udp_1.log (ERFOLGREICHER Login, Zeilen 370-480)
+
+```
+Zeile 372: RX DATA Seq=0 "ACK" payload        ← ACK #1 (VOR Login, nach Pre-Login? Unsicher)
+Zeile 378: TX Login #1 (Seq=0, AppSeq=1)
+           f1 d0 00 c5 d1 00 00 00 41 52 54 45 4d 49 53...
+Zeile 393: TX Magic1 (Seq=3)
+           f1 d1 00 0a d1 00 00 03 00 00 00 00 00 00
+           ⬇️ [APP WARTET - keine TX bis Zeile 399]
+Zeile 396: RX DATA Seq=0 "ACK" payload        ← ACK #2 (NACH Magic1)
+           f1 d0 00 07 d1 00 00 00 41 43 4b
+Zeile 399: TX ACK (Seq=1) für camera's ACK
+           f1 d1 00 06 d1 00 00 01 00 00
+Zeile 402: TX Login #2 (Seq=0, AppSeq=1)
+Zeile 417: TX Login #3 (Seq=0, AppSeq=1)
+Zeile 432: RX ACK (Seq=1)
+Zeile 435: RX Login Response (MsgType=3, AppSeq=1) ✅
+```
+
+**Kritisch**: KEIN DISC Signal! Die Kamera sendet nur ACK und dann Login Response.
+
+#### debug08012026_1.log (FEHLERHAFTER Login, trotz v4.22)
+
+```
+Zeile 9:  TX Login #1 (Seq=0, AppSeq=1)       20:23:45,944
+Zeile 16: TX Magic1 (Seq=3)                   20:23:45,958
+Zeile 17: 🔄 Reset global_seq to 0
+Zeile 18: >>> Wait for ACK                    20:23:45,978
+          [pump 0.3s]
+Zeile 28: RX DATA Seq=0 "ACK"                 20:23:46,077 (119ms später)
+Zeile 29: RX ACK Seq=1                        20:23:46,091
+Zeile 30: RX F1 DISC (0xF0)                   20:23:46,098 ❌ KAMERA DISCONNECTED!
+Zeile 31: TX Login #2 (Seq=0, AppSeq=1)       20:23:46,419
+```
+
+**Problem**: Kamera sendet DISC Signal direkt nach dem ACK-Austausch.
+
+#### debug07012026_1.log (v4.21 MIT Pre-Login)
+
+```
+Zeile 9-11: TX Pre-Login (0xF9)
+Zeile 22: RX DATA Seq=0 "ACK"                 ← Pre-Login ACK
+Zeile 29: TX Login #1 (Seq=0, AppSeq=1)
+Zeile 31: TX Magic1 (Seq=3)
+Zeile 34: RX F1 DISC (0xF0)                   ❌ KAMERA DISCONNECTED!
+```
+
+**Beobachtung**: Das DISC Signal kommt auch MIT Pre-Login.
+
+### Neue Hypothesen (Issue #174)
+
+#### ❌ Hypothese A: Pre-Login ist die alleinige Ursache (WIDERLEGT)
+
+**Status**: **WIDERLEGT** durch debug08012026_1.log
+
+debug08012026_1.log zeigt, dass v4.22 (OHNE Pre-Login via UDP) trotzdem ein DISC Signal von der Kamera empfängt. Das bedeutet, Pre-Login alleine kann nicht die Root Cause sein.
+
+**ABER**: Es ist möglich, dass v4.22 noch nicht korrekt implementiert ist. Prüfung erforderlich: Ist der Pre-Login Code wirklich vollständig entfernt oder nur disabled?
+
+#### 🔍 Hypothese B: Sequenznummer-Reset verursacht DISC
+
+**Beobachtung**: In debug08012026_1.log:
+- Zeile 17: global_seq wird von 3 auf 0 zurückgesetzt
+- Dies ist NACH Magic1 (Seq=3)
+- Der ACK TX sollte dann Seq=1 sein (weil global_seq=0, dann next_seq()=1)
+
+**MITM zeigt**:
+- Magic1 TX: Seq=3 (Zeile 393)
+- ACK TX (für camera's ACK): Seq=1 (Zeile 399)
+- Login #2 TX: Seq=0 (Zeile 402)
+
+**Vergleich v4.22 (debug08012026_1.log)**:
+- Magic1 TX: Seq=3 (Zeile 16)
+- [global_seq reset to 0] (Zeile 17)
+- pump() → auto ACK TX sollte Seq=1 sein
+- Login #2 TX: Seq=0 (Zeile 31)
+
+**Problem möglich**: Die Kamera könnte den Sequenz-Reset als Protokollverletzung interpretieren. Oder der ACK wird mit falscher Sequenz gesendet.
+
+**Test**: Prüfen, welche Sequenz der automatische ACK in pump() hat.
+
+#### 🔍 Hypothese C: Timing-Problem zwischen Magic1 und Login-Retransmissions
+
+**MITM-Timing**:
+- Magic1 TX → ACK RX → ACK TX → **SOFORT** Login #2 TX
+- Keine messbare Verzögerung zwischen ACK TX (Zeile 399) und Login #2 TX (Zeile 402)
+
+**v4.22-Timing (debug08012026_1.log)**:
+- Magic1 TX: 20:23:45,958
+- pump(0.3s): 20:23:45,978 - 20:23:46,407 (429ms!)
+- Login #2 TX: 20:23:46,419 (461ms NACH Magic1!)
+
+**Problem**: Die Verzögerung ist zu lang! Die MITM-App sendet Login #2 SOFORT nach ACK TX.
+
+**Theorie**: Die Kamera hat ein Timeout-Fenster nach Magic1. Wenn die Login-Retransmissions zu spät kommen, sendet sie DISC.
+
+#### 🔍 Hypothese D: pump() empfängt zu viele Pakete während Wartezeit
+
+**Beobachtung in debug08012026_1.log Zeilen 19-30**:
+```
+Zeile 19-27: RX FRAG Seq=83 (3x) - LBCS Discovery retries
+Zeile 28:    RX DATA Seq=0 "ACK"
+Zeile 29:    RX ACK Seq=1
+Zeile 30:    RX F1 DISC (0xF0)
+```
+
+Während pump(0.3s) empfängt die Implementierung:
+1. 3x FRAG packets (Discovery retries)
+2. DATA "ACK" (erwarteter ACK)
+3. ACK Seq=1 (ACK für unseren Login #1?)
+4. DISC Signal
+
+**Problem**: Die FRAG-Pakete könnten die Kamera verwirren oder den Zustand stören.
+
+**In MITM**: Zwischen Magic1 TX und Login #2 TX gibt es NUR den ACK-Austausch (Zeilen 396-399), KEINE anderen Pakete.
+
+**Theorie**: Die Discovery-FRAG-Pakete während der Login-Phase könnten die Kamera in einen fehlerhaften Zustand versetzen.
+
+#### 🔍 Hypothese E: ACK für FRAG-Pakete stört Login-Sequenz
+
+**Beobachtung**: Die Implementierung sendet ACKs für die FRAG-Pakete (Zeilen 20, 23, 26):
+```
+Zeile 20: TX ACK Seq=83 (für FRAG Seq=83)
+Zeile 23: TX ACK Seq=83 (für FRAG Seq=83)
+Zeile 26: TX ACK Seq=83 (für FRAG Seq=83)
+```
+
+**Problem**: Diese ACKs haben Seq=83, was die globale Sequenznummer durcheinanderbringen könnte.
+
+**Prüfung erforderlich**: 
+1. Wie beeinflusst das Senden von ACK Seq=83 den internen global_seq Zähler?
+2. Sollten FRAG-Pakete während der Login-Phase ignoriert werden?
+
+#### 🔍 Hypothese F: Discovery nicht vollständig abgeschlossen
+
+**Beobachtung**: Die FRAG Seq=83 Pakete (Zeilen 19-27) sind LBCS Discovery-Pakete:
+```
+hex=f14200144c42435300000000000000004343434a4a000000
+     ^^    ^^ ^^^^^^^^
+     F1    42 LBCS
+     FRAG
+```
+
+Diese kommen NACH dem Discovery OK (Zeile 8) und WÄHREND der Login-Phase.
+
+**MITM zeigt**: Nach Discovery (vor Zeile 372) gibt es KEINE weiteren Discovery-Pakete während Login.
+
+**Theorie**: Die Kamera ist noch nicht vollständig aus dem Discovery-Modus heraus und reagiert deshalb mit DISC auf Login-Requests.
+
+**Test**: Nach Discovery eine längere Pause einlegen, bevor Login gesendet wird?
+
+### Vergleichstabelle: MITM vs. v4.22
+
+| Aspekt | MITM (funktionierend) | debug08012026_1.log (v4.22) | Unterschied |
+|--------|----------------------|----------------------------|-------------|
+| Pre-Login via UDP | ❌ KEIN Pre-Login sichtbar | ❌ KEIN Pre-Login | ✅ Gleich |
+| Discovery | LBCS gesendet, ACK empfangen | LBCS gesendet, ACK empfangen | ✅ Gleich |
+| FRAG nach Discovery | ❌ KEINE FRAG-Pakete | ✅ 3x FRAG Seq=83 | ❌ **UNTERSCHIED!** |
+| Login #1 Seq | 0 | 0 | ✅ Gleich |
+| Magic1 Seq | 3 | 3 | ✅ Gleich |
+| global_seq Reset | Ja (implizit) | Ja (explizit, Zeile 17) | ✅ Gleich |
+| pump() nach Magic1 | Ja (wartet auf ACK) | Ja (0.3s) | ⚠️ **Timing unterschiedlich** |
+| ACK Empfang | Sofort nach Magic1 | 119ms nach Magic1 | ⚠️ **Timing unterschiedlich** |
+| DISC Signal | ❌ KEIN DISC | ✅ DISC empfangen (Zeile 30) | ❌ **HAUPTUNTERSCHIED!** |
+| Login #2 Timing | Sofort nach ACK TX | 461ms nach Magic1 | ❌ **ZU SPÄT!** |
+
+### Empfohlene Nächste Schritte (Priorisiert)
+
+#### 1. KRITISCH: Prüfen, ob Pre-Login wirklich entfernt wurde
+
+**Action**: Code-Review von get_thumbnail_perp.py v4.22
+- Zeile 1336-1356: Ist der Pre-Login Code wirklich auskommentiert/entfernt?
+- Oder wird er noch irgendwo aufgerufen?
+
+#### 2. KRITISCH: FRAG-Pakete nach Discovery unterdrücken
+
+**Problem**: FRAG Seq=83 Pakete während Login-Phase könnten die Kamera verwirren.
+
+**Fix-Option A**: Nach Discovery eine Pause einlegen, damit die Kamera aus Discovery-Modus herauskommt.
+```python
+if not self.discovery():
+    return
+time.sleep(1.0)  # Kamera stabilisieren, Discovery-Modus verlassen
+self.enable_token_buffering()
+```
+
+**Fix-Option B**: FRAG-Pakete während Login-Phase ignorieren (keine ACKs senden).
+
+#### 3. KRITISCH: Login #2 SOFORT nach ACK TX senden
+
+**Problem**: v4.22 sendet Login #2 461ms nach Magic1, MITM sendet es sofort nach ACK TX.
+
+**Fix**: pump() sollte SOFORT beendet werden, nachdem der erwartete ACK empfangen wurde.
+
+```python
+# Nach Magic1
+def accept_ack_then_stop(pkt: bytes) -> bool:
+    """Accept ACK "ACK" payload, then stop pump immediately."""
+    return self._is_simple_ack_payload(pkt)
+
+# pump() beendet sofort nach ACK-Empfang
+self.pump(timeout=0.5, accept_predicate=accept_ack_then_stop, filter_evt=False, no_heartbeat=True)
+
+# SOFORT Login #2 senden (kein zusätzlicher sleep!)
+logger.info(">>> Login Handshake Step 1d: Retransmit Login #2")
+```
+
+**Erwartung**: Login #2 sollte innerhalb von 10-50ms nach ACK TX gesendet werden (wie in MITM).
+
+#### 4. Logging verbessern: TX-Sequenznummern für ACKs anzeigen
+
+**Problem**: Aktuell sehen wir nicht, welche Sequenz die automatischen ACKs haben.
+
+**Fix**: In pump() zusätzliches Logging:
+```python
+if pkt_type == 0xD0 or pkt_type == 0x42:
+    if not self._is_simple_ack_payload(data) and self.active_port:
+        ack_pkt = self.build_ack_10(rx_seq)
+        if self.debug:
+            logger.debug(f"🔧 Auto-ACK wird gesendet: Seq={rx_seq}, current global_seq={self.global_seq}")
+        self.send_raw(ack_pkt, desc=f"ACK(rx_seq={rx_seq})")
+```
+
+### Schätzung Verbleibende Iterationen
+
+**Optimistisches Szenario** (2-3 Iterationen):
+1. Fix FRAG-Unterdrückung + Login #2 Timing → Test
+2. Falls nicht erfolgreich: Debugging mit verbessertem Logging → Root Cause
+3. Final Fix → Test → Success
+
+**Realistisches Szenario** (4-5 Iterationen):
+1. Code-Review: Pre-Login wirklich entfernt?
+2. Fix FRAG + Timing → Test
+3. Weitere Debugging-Iteration (neue Hypothese basierend auf Logs)
+4. Fix basierend auf Debugging
+5. Final Test → Success
+
+**Pessimistisches Szenario** (6-8 Iterationen):
+- Mehrere unbekannte Faktoren (Kamera-Firmware-Bugs, Netzwerk-Timing)
+- Iteratives Debugging notwendig
+- Mögliche Hardware-Tests erforderlich
+
+**Empfehlung**: **5 Iterationen** (realistisch mit Puffer)
+
+### Optimierter GitHub Copilot Prompt
+
+(Wird am Ende des Dokuments eingefügt)
+
+---
+
+## OPTIMIERTER GITHUB COPILOT PROMPT (für nächste Iteration)
+
+```markdown
+# TASK: Fix Login Failure in Wildkamera UDP Client (Issue #174)
+
+## Context
+Du arbeitest an einem Python-Client für eine Wildkamera (Trail Camera), die über ein proprietäres UDP-basiertes Protokoll (RUDP + ARTEMIS) kommuniziert. Der Login schlägt fehl, weil die Kamera mit einem DISC (Disconnect) Signal antwortet.
+
+## Problem Statement
+- **File**: `get_thumbnail_perp.py` (aktuell v4.22)
+- **Symptom**: Login Timeout - Camera sends DISC signal (0xF0) statt Login Response
+- **Log**: `tests/debug08012026_1.log` Zeile 30 zeigt DISC Signal
+- **Spezifikation**: `Protocol_analysis.md` (MITM-Captures als Ground Truth)
+- **MITM-Capture**: `tests/MITM_Captures/ble_udp_1.log` Zeilen 370-480 (funktionierender Login)
+
+## Root Cause Hypothesen (priorisiert)
+
+### 1. KRITISCH: FRAG-Pakete während Login-Phase
+**Problem**: debug08012026_1.log Zeilen 19-27 zeigen 3x FRAG Seq=83 (LBCS Discovery) WÄHREND Login-Handshake.
+- MITM zeigt KEINE FRAG-Pakete nach Discovery
+- Diese könnten die Kamera verwirren
+
+**Fix**: Nach Discovery eine Pause einlegen (1s) ODER FRAG-Pakete während Login ignorieren.
+
+### 2. KRITISCH: Login #2 Timing zu spät
+**Problem**: Login #2 wird 461ms NACH Magic1 gesendet (debug08012026_1.log).
+- MITM zeigt: Login #2 SOFORT nach ACK TX (< 10ms)
+
+**Fix**: pump() SOFORT beenden nach ACK-Empfang, dann Login #2 senden (KEIN zusätzlicher sleep).
+
+### 3. Sequenznummer-Verwaltung
+**Prüfen**: Automatische ACKs für FRAG Seq=83 könnten global_seq durcheinanderbringen.
+
+## Expected Behavior (aus MITM)
+```
+1. Discovery → ACK
+2. [KEINE FRAG-Pakete mehr]
+3. TX Login #1 (Seq=0, AppSeq=1)
+4. TX Magic1 (Seq=3)
+5. [Wait < 100ms]
+6. RX ACK "ACK" (Seq=0)
+7. TX ACK (Seq=1) für camera's ACK
+8. [SOFORT - kein Delay!]
+9. TX Login #2 (Seq=0, AppSeq=1)
+10. TX Login #3 (Seq=0, AppSeq=1)
+11. RX Login Response (MsgType=3) ✅
+```
+
+## Minimal Changes Required
+
+### Change 1: Stabilisierungs-Pause nach Discovery
+```python
+# In run() nach discovery():
+if not self.discovery():
+    return
+
+# CRITICAL: Wait for camera to exit discovery mode
+time.sleep(1.0)  # Kamera stabilisieren
+logger.info(">>> Camera stabilization complete")
+
+self.enable_token_buffering()
+```
+
+### Change 2: pump() sofort beenden nach ACK
+```python
+# In run() nach Magic1:
+logger.info(">>> Login Handshake Step 1c: Wait for camera's ACK after Magic1")
+
+def accept_ack_then_stop(pkt: bytes) -> bool:
+    """Stop pump immediately after receiving ACK."""
+    return self._is_simple_ack_payload(pkt)
+
+# pump() stoppt SOFORT nach ACK-Empfang
+self.pump(timeout=0.5, accept_predicate=accept_ack_then_stop, filter_evt=False, no_heartbeat=True)
+
+# KEIN sleep() hier! SOFORT weiter:
+logger.info(">>> Login Handshake Step 1d: Retransmit Login #2")
+```
+
+### Change 3: Verbessertes Logging für Debugging
+```python
+# In pump(), bei ACK-Senden:
+if pkt_type == 0xD0 or pkt_type == 0x42:
+    if not self._is_simple_ack_payload(data) and self.active_port:
+        ack_pkt = self.build_ack_10(rx_seq)
+        if self.debug:
+            logger.debug(f"🔧 Auto-ACK: rx_seq={rx_seq}, current_global_seq={self.global_seq}")
+        self.send_raw(ack_pkt, desc=f"ACK(rx_seq={rx_seq})")
+```
+
+## Success Criteria
+Nach den Änderungen sollte der Debug-Log zeigen:
+```
+>>> Discovery...
+✅ Discovery OK, active_port=40611
+>>> Camera stabilization complete
+>>> Login Handshake Step 1: Send Login Request
+📤 TX Login #1 (Seq=0, AppSeq=1)
+>>> Login Handshake Step 1b: Send Magic1 packet
+📤 TX Magic1 (Seq=3)
+>>> Wait for camera's ACK after Magic1
+📥 RX DATA Seq=0 "ACK"                  ← ACK empfangen
+📤 TX ACK Seq=1                         ← ACK für camera's ACK
+>>> Login Handshake Step 1d: Retransmit Login #2
+📤 TX Login #2 (Seq=0, AppSeq=1)       ← SOFORT nach ACK TX!
+>>> Login Handshake Step 1e: Retransmit Login #3
+📤 TX Login #3 (Seq=0, AppSeq=1)
+>>> Wait for Login Response
+📥 RX ARTEMIS MsgType=3 AppSeq=1       ← Login Response! ✅
+✅ TOKEN OK (login, strict) token_len=XXX
+```
+
+## Files to Modify
+- `get_thumbnail_perp.py`: run() method (Zeilen 1327-1494)
+
+## Testing
+- Run with: `python get_thumbnail_perp.py --debug --wifi`
+- Compare output with MITM capture timing
+- Check for DISC signal (should NOT appear)
+- Check for Login Response (MsgType=3, should appear)
+
+## References
+- `ANALYSE_KONSOLIDIERT_LOGIN.md`: Vollständige Analyse aller Iterationen
+- `Protocol_analysis.md`: Protokoll-Spezifikation
+- `tests/MITM_Captures/ble_udp_1.log`: Ground Truth für funktionierenden Login
+- `tests/debug08012026_1.log`: Aktuelles fehlerhaftes Verhalten
+```
 
 ---
 
