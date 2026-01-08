@@ -1367,7 +1367,7 @@ class Session:
         # The MITM capture shows NO FRAG packets after discovery.
         # debug08012026_1.log shows FRAG Seq=83 (LBCS Discovery) packets during login,
         # which could confuse the camera and cause DISC signal.
-        # Solution: Wait CAMERA_STABILIZATION_DELAY after discovery to ensure camera exits discovery mode.
+        # Solution: Wait CAMERA_STABILIZATION_DELAY (1.0s) after discovery to ensure camera exits discovery mode.
         time.sleep(CAMERA_STABILIZATION_DELAY)  # Stabilize camera
         logger.info(">>> Camera stabilization complete")
 
