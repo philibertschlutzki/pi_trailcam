@@ -207,6 +207,8 @@ DEFAULT_PASS = "85087127"
 BLE_MAC = "C6:1E:0D:E0:32:E8"
 
 LOGIN_DELAY_AFTER_STABILIZATION = 2.0
+# Camera stabilization delay after discovery (Issue #174)
+CAMERA_STABILIZATION_DELAY = 1.0
 # Timeout for waiting for camera's ACK after Magic1 handshake packet (per MITM analysis)
 MAGIC1_ACK_TIMEOUT = 0.3
 
@@ -1365,10 +1367,10 @@ class Session:
         # The MITM capture shows NO FRAG packets after discovery.
         # debug08012026_1.log shows FRAG Seq=83 (LBCS Discovery) packets during login,
         # which could confuse the camera and cause DISC signal.
-        # Solution: Wait 1 second after discovery to ensure camera is stable.
-        time.sleep(1.0)
+        # Solution: Wait CAMERA_STABILIZATION_DELAY seconds after discovery to ensure camera is stable.
+        time.sleep(CAMERA_STABILIZATION_DELAY)
         if self.debug:
-            logger.debug("🔄 Camera stabilization: 1.0s pause after discovery")
+            logger.debug(f"🔄 Camera stabilization: {CAMERA_STABILIZATION_DELAY}s pause after discovery")
 
         # Enable token buffering to capture MsgType=3 responses
         self.enable_token_buffering()
@@ -1469,8 +1471,13 @@ class Session:
         # pump() will stop as soon as ACK is received (instead of waiting full timeout)
         ack_received = self.pump(timeout=0.5, accept_predicate=accept_ack_then_stop, filter_evt=False, no_heartbeat=True)
         
-        if ack_received and self.debug:
-            logger.debug("✅ Camera ACK received after Magic1, proceeding immediately to login retransmissions")
+        if ack_received:
+            if self.debug:
+                logger.debug("✅ Camera ACK received after Magic1, proceeding immediately to login retransmissions")
+        else:
+            # ACK not received within timeout - log warning but continue anyway
+            # The camera might still accept login retransmissions
+            logger.warning(f"⚠️ Camera ACK not received within timeout after Magic1, proceeding with login retransmissions anyway")
         
         # Step 1d: Retransmit login request #2 (per MITM capture ble_udp_1.log line 402)
         # CRITICAL: The working app sends the login request THREE times total.
