@@ -1,7 +1,35 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.22
+"""Wildkamera Thumbnail Downloader - consolidated v4.23
 
-Changes in this version (v4.22) - FIX for Issue #172:
+Changes in this version (v4.23) - FIX for Issue #174:
+- CRITICAL FIX: Camera stabilization after discovery and improved pump() timing.
+  Analysis of debug08012026_1.log reveals that despite removing Pre-Login (v4.22),
+  the camera still sends DISC signal. New root causes identified:
+  
+  Problem with v4.22:
+  - FRAG Seq=83 (LBCS Discovery) packets appear DURING login handshake (lines 19-27)
+  - Login #2 sent 461ms AFTER Magic1 (MITM shows < 10ms timing)
+  - These cause camera to send DISC signal (line 30)
+  
+  Root Cause Analysis (Issue #174):
+  1. Discovery not fully completed - camera still in discovery mode during login
+  2. pump() timeout too long (0.3s) - delays Login #2 transmission
+  3. MITM shows Login #2 IMMEDIATELY after ACK TX (< 10ms), not 461ms later
+  
+  Fixes:
+  1. Added 1.0s stabilization pause after discovery to ensure camera exits discovery mode
+  2. Changed pump() after Magic1 to stop IMMEDIATELY after receiving ACK "ACK"
+     - Uses accept_predicate that returns True for ACK payload
+     - This ensures Login #2 is sent < 10ms after ACK TX (matching MITM)
+  3. Enhanced logging: Auto-ACK now logs rx_seq, packet type, and current global_seq
+  
+  Expected behavior after fix:
+  Discovery → [1s pause] → Login#1 → Magic1 → RX ACK (< 100ms) → TX ACK → 
+  [IMMEDIATELY] Login#2 → Login#3 → Login Response ✅
+  
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "KONSOLIDIERTE ANALYSE (Issue #174)" for detailed analysis.
+
+Changes in v4.22 - FIX for Issue #172:
 - CRITICAL FIX: Removed Pre-Login (0xF9) phase entirely.
   Analysis of ALL MITM captures (ble_udp_1.log, ble_udp_2.log, traffic_port_get_pictures_thumpnail.log)
   reveals that the working app NEVER sends Pre-Login (0xF9) packets via UDP.
@@ -1170,7 +1198,10 @@ class Session:
                 # Note: We check _is_simple_ack_payload to avoid ACKing ACK packets (which would create an infinite loop)
                 if pkt_type == 0xD0 or pkt_type == 0x42:
                     if not self._is_simple_ack_payload(data) and self.active_port:
-                        self.send_raw(self.build_ack_10(rx_seq), desc=f"ACK(rx_seq={rx_seq})")
+                        ack_pkt = self.build_ack_10(rx_seq)
+                        if self.debug:
+                            logger.debug(f"🔧 Auto-ACK: rx_seq={rx_seq}, type=0x{pkt_type:02X}, current_global_seq={self.global_seq}")
+                        self.send_raw(ack_pkt, desc=f"ACK(rx_seq={rx_seq})")
 
                 # Handle FRAG reassembly for ARTEMIS packets
                 if pkt_type == 0x42:
@@ -1330,6 +1361,15 @@ class Session:
         if not self.discovery():
             return
 
+        # CRITICAL (Issue #174): Wait for camera to exit discovery mode
+        # The MITM capture shows NO FRAG packets after discovery.
+        # debug08012026_1.log shows FRAG Seq=83 (LBCS Discovery) packets during login,
+        # which could confuse the camera and cause DISC signal.
+        # Solution: Wait 1 second after discovery to ensure camera is stable.
+        time.sleep(1.0)
+        if self.debug:
+            logger.debug("🔄 Camera stabilization: 1.0s pause after discovery")
+
         # Enable token buffering to capture MsgType=3 responses
         self.enable_token_buffering()
 
@@ -1414,8 +1454,23 @@ class Session:
         # global_seq to 0 above). This ACK exchange is a critical handshake - without it, 
         # the camera ignores login retransmissions.
         # NOTE: no_heartbeat=True prevents heartbeat interference (Issue #159).
+        # CRITICAL (Issue #174): pump() must STOP IMMEDIATELY after receiving ACK "ACK".
+        # MITM shows Login #2 is sent < 10ms after ACK TX. Long pump timeout causes delay.
         logger.info(">>> Login Handshake Step 1c: Wait for camera's ACK after Magic1")
-        self.pump(timeout=MAGIC1_ACK_TIMEOUT, accept_predicate=lambda _: False, filter_evt=False, no_heartbeat=True)
+        
+        def accept_ack_then_stop(pkt: bytes) -> bool:
+            """Accept ACK with 'ACK' payload, then stop pump immediately.
+            
+            This ensures Login #2 is sent IMMEDIATELY after ACK exchange,
+            matching MITM timing (< 10ms between ACK TX and Login #2 TX).
+            """
+            return self._is_simple_ack_payload(pkt)
+        
+        # pump() will stop as soon as ACK is received (instead of waiting full timeout)
+        ack_received = self.pump(timeout=0.5, accept_predicate=accept_ack_then_stop, filter_evt=False, no_heartbeat=True)
+        
+        if ack_received and self.debug:
+            logger.debug("✅ Camera ACK received after Magic1, proceeding immediately to login retransmissions")
         
         # Step 1d: Retransmit login request #2 (per MITM capture ble_udp_1.log line 402)
         # CRITICAL: The working app sends the login request THREE times total.
