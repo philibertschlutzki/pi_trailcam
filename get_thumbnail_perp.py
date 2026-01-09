@@ -1271,6 +1271,7 @@ class Session:
                 # Ignoring LBCS FRAG prevents flood and allows login to proceed.
                 if pkt_type == 0xD0 or pkt_type == 0x42:
                     # Skip ACK for LBCS Discovery FRAG packets (Issue #179)
+                    # Check: len >= 12 ensures we have RUDP header (8 bytes) + payload start (4 bytes for "LBCS")
                     if pkt_type == 0x42 and len(data) >= 12 and data[8:12] == b'LBCS':
                         if self.debug:
                             logger.debug(f"⚠️ Ignoring LBCS Discovery FRAG Seq={rx_seq} (no ACK sent, skipping packet)")
