@@ -150,11 +150,11 @@ Unsere Implementation:
 
 Die Kamera sendet die RUDP ACKs deutlich verspätet, was auf einen internen Timeout hindeutet.
 
-**NEUE HYPOTHESE H12 (HÖCHSTE PRIORITÄT):**
+**Hypothesis H12 (PRIMARY HYPOTHESIS - AWAITING HARDWARE TEST):**
 
-**H12: Nach Login #2 und Login #3 müssen wir eine kleine Pause einbauen, BEVOR wir die ACK-Suppression aktivieren.**
+**H12: We send Login #2 and #3 too quickly, overwhelming camera firmware which needs processing time between packets.**
 
-Die Theorie:
+Beobachtungen:
 1. Login #1 wird gesendet
 2. Magic1 wird gesendet  
 3. Camera ACK empfangen und ge-ACKt ✅

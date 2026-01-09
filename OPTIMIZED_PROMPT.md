@@ -83,14 +83,17 @@ RX MsgType=3 ✅ Login Response with token
 4. ERR (0xE0) or DISC (0xF0) signals present? (Should be NONE)
 
 **If RUDP ACKs still arrive after >2 seconds**:
-- 100ms delays insufficient, try 200ms delays
-- Camera may need even more processing time
-- Alternative: Camera expecting different packet sequence
+- If 1-2s delay: Partial improvement, increase delays to 200ms
+- If >2.5s delay: No improvement, timing may not be root cause
+- Try 200ms delays first before alternative approach
+- Camera may have different processing requirements than expected
 
 **If RUDP ACKs arrive quickly but MsgType=3 missing**:
-- Timing fixed, but different issue preventing login response
+- Timing fixed successfully! ✅ 
+- Different issue preventing login response (not timing-related)
 - Check for ERR signals before/after RUDP ACKs
 - May need to respond to RUDP ACKs explicitly
+- Investigate packet sequence after RUDP ACKs
 
 **If MsgType=3 received but token extraction fails**:
 - Login handshake successful! ✅

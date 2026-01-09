@@ -1803,12 +1803,12 @@ class Session:
         # MITM timing unknown, but the 2.9s delay indicates camera timeout waiting for processing time.
         # Adding 100ms delays gives camera time to process each login packet properly.
         logger.info(">>> Login Handshake Step 1d: Retransmit Login #2")
-        time.sleep(0.1)  # Allow camera to process Login #1 and Magic1
+        time.sleep(0.1)  # Allow camera firmware to process Login #1 and Magic1 before sending Login #2
         login_pkt_2, _ = self.build_packet(0xD0, login_body, force_seq=0)
         self.send_raw(login_pkt_2, desc=f"Login#2(cmdId=0,AppSeq={login_app_seq})")
         
         logger.info(">>> Login Handshake Step 1e: Retransmit Login #3")
-        time.sleep(0.1)  # Allow camera to process Login #2
+        time.sleep(0.1)  # Allow camera firmware to process Login #2 before sending Login #3
         login_pkt_3, _ = self.build_packet(0xD0, login_body, force_seq=0)
         self.send_raw(login_pkt_3, desc=f"Login#3(cmdId=0,AppSeq={login_app_seq})")
         

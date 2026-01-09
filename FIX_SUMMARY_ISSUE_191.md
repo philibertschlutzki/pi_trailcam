@@ -41,7 +41,7 @@ The **2.9 second delay** between Login #3 and the RUDP ACK packets is the smokin
 - Our implementation: RUDP ACKs come after **2.9 seconds**
 - This indicates a **camera timeout** - the camera is waiting for something we're not providing
 
-**Hypothesis H12 (CONFIRMED):**
+**Hypothesis H12 (PRIMARY HYPOTHESIS - AWAITING HARDWARE TEST):**
 We send Login #2 and #3 too quickly (30ms and 20ms intervals). The camera's firmware needs processing time between each login packet. When packets arrive too fast, the camera enters a timeout state, eventually sends ACKs as part of error recovery, then sends ERR signals instead of the normal MsgType=3 login response.
 
 ## Solution Implemented (v4.31)
