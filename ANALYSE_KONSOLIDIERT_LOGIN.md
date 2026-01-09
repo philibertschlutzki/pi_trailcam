@@ -2622,7 +2622,7 @@ if frag_count > 0:
 **v4.15-v4.22**: Verschiedene Login-Handshake Fixes (Seq, Magic1, Retransmissions, Pre-Login-Entfernung, etc.)  
 **v4.23**: 1.0s Stabilisierungspause implementiert (Issue #174) - FRAG-Flut reduziert aber nicht gelöst  
 **v4.24**: 3.0s Stabilisierungspause implementiert (Issue #177) - **FRAG-Flut VERSCHLIMMERT!**  
-**v4.25** (TODO): Ignoriere LBCS Discovery FRAG-Pakete (Issue #179) - **ERWARTETE LÖSUNG**
+**v4.25**: ✅ **IMPLEMENTIERT** - Ignoriere LBCS Discovery FRAG-Pakete (Issue #179) - **ERWARTETE LÖSUNG**
 
 ### Schätzung verbleibende Iterationen
 
@@ -2745,4 +2745,4 @@ Check for:
   - `tests/debug04012026.txt` bis `tests/debug08012026_1.log` (frühere Iterationen)
   - `tests/debug09012026_1.log` (v4.23 - 30+ FRAG-Pakete über 800ms)
   - `tests/debug09012026_2.log` (v4.24 - 70+ FRAG-Pakete über 3s - AKTUELL)
-- **Implementierung**: `get_thumbnail_perp.py` (aktuell v4.24, TODO: v4.25)
+- **Implementierung**: `get_thumbnail_perp.py` (aktuell v4.25 - ✅ LBCS FRAG-Ignorierung implementiert)
