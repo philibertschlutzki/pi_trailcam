@@ -2008,3 +2008,327 @@ F1    D0       Seq=0    "ACK"
 **Root Cause (Issue #168)**: Die Pre-Login Phase schlägt manchmal fehl, erkennbar am fehlenden "ACK" Paket nach Pre-Login. Ohne dieses "ACK #1" ist die Kamera nicht bereit für Login-Requests und ignoriert alle nachfolgenden Pakete einschließlich des Login-Requests und Magic1.
 
 **Fix**: Pre-Login ACK explizit abwarten und bei Fehlen Retry oder Abbruch.
+
+---
+
+## 🎯 NEUSTER ROOT CAUSE (Issue #177 - 2026-01-09)
+
+### Zusammenfassung
+
+**Issue**: #177  
+**Datum**: 2026-01-09 08:00:05  
+**Symptom**: Login Timeout - Camera floods with FRAG+ACK packets and sends DISC signal (0xF0)  
+**Status v4.23**: 1.0s stabilization delay implemented, but camera still in discovery mode during login  
+
+### Analyse debug09012026_1.log
+
+**Beobachtung**: Die 1.0s Stabilisierungspause nach Discovery ist NICHT ausreichend. Die Kamera verbleibt im Discovery-Modus und sendet während der Login-Phase kontinuierlich Discovery-FRAG-Pakete.
+
+**Aktueller Ablauf (debug09012026_1.log)**:
+```
+Zeile 7:   ✅ Discovery OK, active_port=40611                  08:00:12,114
+Zeile 8:   >>> Camera stabilization complete                    08:00:13,123 (1.0s pause ✅)
+Zeile 15:  TX Login #1 (Seq=0, AppSeq=1)                       08:00:13,202
+Zeile 18:  TX Magic1 (Seq=3)                                   08:00:13,218
+Zeile 32:  RX DATA Seq=0 "ACK"                                 08:00:13,366 ✅ (expected ACK after Magic1)
+Zeile 33:  ✅ Camera ACK received after Magic1                 08:00:13,378
+
+KRITISCHES PROBLEM: FRAG-Flut während Login-Wait-Phase
+Zeile 39-158: 30+ FRAG Seq=83 Pakete + "ACK" Pakete (LBCS Discovery!)
+  - Pattern: RX FRAG → TX ACK → RX "ACK" → RX FRAG → TX ACK → RX "ACK" ...
+  - Frequenz: ~6-10ms zwischen Paketen
+  - Dauer: ~800ms (von 13,439 bis 14,266)
+
+Zeile 159:  RX ACK Seq=1                                       08:00:14,659
+Zeile 160:  RX F1 DISC (0xF0)                                  08:00:14,671 ❌ CAMERA DISCONNECTED!
+Zeile 161:  ⚠️ No Login Response received                      08:00:16,487
+Zeile 172:  ❌ Login Timeout (0 MsgType=3 packets buffered)    08:00:40,032
+```
+
+### Kritische Erkenntnisse
+
+#### Problem 1: Kamera bleibt im Discovery-Modus
+
+**Beweis**: 30+ FRAG Seq=83 Pakete (LBCS Discovery) während Login-Handshake
+- Diese Pakete kommen NACH der 1.0s Stabilisierungspause
+- Sie beginnen direkt nach Magic1 und dauern ~800ms an
+- Die Kamera sendet diese Pakete aktiv, nicht als Antwort auf unsere Requests
+
+**MITM-Vergleich**:
+- MITM ble_udp_1.log: KEINE FRAG-Pakete nach Discovery
+- Nach Discovery gibt es nur Login-Handshake-Pakete
+
+**Theorie**: Die 1.0s Pause ist zu kurz. Die Kamera benötigt länger, um vollständig aus dem Discovery-Modus herauszukommen.
+
+#### Problem 2: FRAG-ACK Loop verwirrt Kamera-State-Machine
+
+**Beobachtung**: Die Implementierung sendet automatisch ACKs für alle FRAG Seq=83 Pakete (Zeilen 22, 26, 30, etc.)
+
+**Sequenzmuster**:
+```
+RX FRAG Seq=83 (Line 20)
+TX ACK Seq=83 (Line 22)    ← Auto-ACK mit global_seq=0
+RX "ACK" (Line 32)         ← Kamera ACKt unseren ACK?
+RX FRAG Seq=83 (Line 24)
+TX ACK Seq=83 (Line 26)
+RX "ACK" (Line 43)
+... (30+ Wiederholungen)
+```
+
+**Problem**: 
+- Die ACKs mit Seq=83 überschreiben nicht global_seq (gut!)
+- ABER: Die Kamera interpretiert unsere ACKs möglicherweise als "Wir sind noch im Discovery"
+- Die Flut an FRAG+ACK Paketen könnte die Kamera-State-Machine verwirren
+- Nach ~800ms FRAG-Flut sendet die Kamera DISC Signal
+
+#### Problem 3: DISC Signal Timing
+
+**Sequenz kurz vor DISC**:
+```
+Zeile 148: RX "ACK" (Seq=0)                    08:00:14,483
+Zeile 153: RX "ACK" (Seq=0)                    08:00:14,536
+Zeile 158: RX "ACK" (Seq=0)                    08:00:14,647
+Zeile 159: RX ACK Seq=1                        08:00:14,659 ← ACK für unseren Login?
+Zeile 160: RX F1 DISC (0xF0)                   08:00:14,671 ← 12ms später!
+```
+
+**Interpretation**:
+- ACK Seq=1 (Zeile 159) ist vermutlich die Bestätigung für unseren Login-Request
+- Aber 12ms später sendet die Kamera DISC
+- Möglicherweise Timeout oder State-Machine-Fehler
+
+### Root Cause Hypothesen (priorisiert)
+
+#### ✅ Hypothese 1: Stabilisierungspause zu kurz (SEHR WAHRSCHEINLICH)
+
+**Begründung**:
+- 1.0s Pause ist nicht ausreichend
+- Kamera sendet weiterhin Discovery-FRAG-Pakete NACH der Pause
+- MITM zeigt: KEINE FRAG-Pakete nach Discovery
+
+**Fix-Strategie**:
+- Erhöhe Stabilisierungspause von 1.0s auf 3.0s
+- Warte bis KEINE FRAG-Pakete mehr kommen
+- Alternative: Aktives Warten mit pump() bis FRAG-Pakete stoppen
+
+```python
+# Option A: Längere statische Pause
+time.sleep(3.0)  # Erhöht von 1.0s
+
+# Option B: Aktives Warten (intelligenter)
+logger.info(">>> Waiting for camera to exit discovery mode...")
+frag_timeout = time.time() + 5.0
+last_frag = time.time()
+
+while time.time() < frag_timeout:
+    try:
+        data, addr = self.sock.recvfrom(2048)
+        if len(data) >= 2 and data[0] == 0xF1 and data[1] == 0x42:
+            # FRAG packet detected
+            last_frag = time.time()
+            frag_timeout = last_frag + 2.0  # Reset timeout
+            # Send ACK for FRAG
+            if len(data) >= 8:
+                rx_seq = data[7]
+                ack_pkt = self.build_ack_10(rx_seq)
+                self.send_raw(ack_pkt, desc=f"ACK(rx_seq={rx_seq})")
+    except socket.timeout:
+        pass
+    
+    # Exit if no FRAG for 1.0s
+    if time.time() - last_frag > 1.0:
+        break
+
+logger.info(">>> Camera discovery mode exit confirmed")
+```
+
+#### ⚠️ Hypothese 2: FRAG-ACKs sollten NICHT gesendet werden während Login-Phase
+
+**Begründung**:
+- Die automatischen ACKs für FRAG Seq=83 könnten die Kamera verwirren
+- Kamera denkt "Client ist noch im Discovery" weil wir FRAG-Pakete ACKen
+- MITM zeigt: Keine FRAG-Pakete, also keine ACKs nötig
+
+**Fix-Strategie**:
+- Ignoriere FRAG-Pakete (kein ACK senden) während Login-Handshake
+- Füge Flag hinzu: `self._ignore_frag_during_login = True`
+
+```python
+# In pump(), vor dem ACK-Senden:
+if pkt_type == 0x42:  # FRAG
+    if self._ignore_frag_during_login:
+        logger.debug(f"⚠️ Ignoring FRAG Seq={rx_seq} during login phase (no ACK sent)")
+        continue  # Skip ACK
+    
+    # Normal FRAG handling...
+```
+
+**WARNUNG**: Dies könnte die Kamera verwirren, wenn sie erwartet dass ALLE Pakete ge-ACKt werden per RUDP-Spec.
+
+#### ⚠️ Hypothese 3: Login-Requests kommen zu früh
+
+**Begründung**:
+- Login wird bereits nach 1.0s gesendet
+- FRAG-Pakete kommen erst NACH Login/Magic1
+- Vielleicht sollten wir warten bis FRAG-Pakete stoppen, DANN erst Login senden
+
+**Fix**: Option B von Hypothese 1 (Aktives Warten)
+
+### Vergleich: MITM vs. debug09012026_1.log
+
+| Aspekt | MITM (funktionierend) | debug09012026_1.log (v4.23) | Unterschied |
+|--------|----------------------|----------------------------|-------------|
+| Discovery | LBCS gesendet, ACK empfangen | LBCS gesendet, ACK empfangen | ✅ Gleich |
+| Stabilisierungspause | Unbekannt (nicht sichtbar) | 1.0s | ⚠️ Möglicherweise zu kurz |
+| FRAG nach Stabilisierung | ❌ KEINE FRAG-Pakete | ✅ 30+ FRAG Seq=83 | ❌ **HAUPTUNTERSCHIED!** |
+| Login #1 Seq | 0 | 0 | ✅ Gleich |
+| Magic1 Seq | 3 | 3 | ✅ Gleich |
+| ACK nach Magic1 | Empfangen | Empfangen (Line 32) | ✅ Gleich |
+| Login #2/3 gesendet | Ja | Ja (Lines 35, 37) | ✅ Gleich |
+| DISC Signal | ❌ KEIN DISC | ✅ DISC empfangen (Line 160) | ❌ **KRITISCHER UNTERSCHIED!** |
+| Login Response | ✅ Empfangen | ❌ NICHT empfangen | ❌ **HAUPTPROBLEM!** |
+
+### Empfohlene Nächste Schritte
+
+#### 1. KRITISCH: Erhöhe Stabilisierungspause (EMPFOHLEN)
+
+**Änderung in get_thumbnail_perp.py Zeile 1371**:
+```python
+# CRITICAL (Issue #177): Wait LONGER for camera to exit discovery mode
+# Analysis of debug09012026_1.log shows that 1.0s is NOT sufficient.
+# Camera continues sending FRAG Seq=83 (LBCS Discovery) packets after 1.0s pause,
+# which causes DISC signal (line 160). Increase to 3.0s.
+time.sleep(3.0)  # Erhöht von 1.0s auf 3.0s
+logger.info(">>> Camera stabilization complete (3.0s)")
+```
+
+#### 2. ALTERNATIV: Implementiere aktives Warten auf FRAG-Stopp
+
+**Vorteil**: Intelligenter, passt sich an Kamera-Verhalten an
+**Nachteil**: Komplexer, könnte zu lange warten
+
+#### 3. Verbessertes Logging: Zähle FRAG-Pakete während Stabilisierung
+
+```python
+logger.info(f">>> Camera stabilization complete ({CAMERA_STABILIZATION_DELAY}s)")
+
+# Count remaining FRAG packets for diagnostics
+frag_count = 0
+try:
+    frag_check_start = time.time()
+    while time.time() - frag_check_start < 0.5:
+        data, _ = self.sock.recvfrom(2048)
+        if len(data) >= 2 and data[0] == 0xF1 and data[1] == 0x42:
+            frag_count += 1
+except socket.timeout:
+    pass
+
+if frag_count > 0:
+    logger.warning(f"⚠️ Camera still sending {frag_count} FRAG packets after stabilization - may need longer pause")
+```
+
+### Status-Update
+
+**v4.15-v4.21**: Verschiedene Login-Handshake Fixes (Seq, Magic1, Retransmissions, etc.)  
+**v4.22**: Pre-Login Phase entfernt (Issue #172)  
+**v4.23**: 1.0s Stabilisierungspause implementiert (Issue #174) - **ABER zu kurz!**  
+**v4.24** (TODO): Erhöhe Stabilisierungspause auf 3.0s (Issue #177)
+
+### Schätzung verbleibende Iterationen
+
+**Optimistisches Szenario** (1-2 Iterationen):
+1. Erhöhe Stabilisierungspause auf 3.0s → Test → Success
+
+**Realistisches Szenario** (2-3 Iterationen):
+1. Erhöhe Pause auf 3.0s → Test
+2. Falls nicht erfolgreich: Implementiere aktives Warten → Test
+3. Falls immer noch FRAG: Debugging mit längeren Pausen (5.0s, 10.0s)
+
+**Pessimistisches Szenario** (4-5 Iterationen):
+- Kamera hat Firmware-Bug, benötigt Hardware-Reset zwischen Versuchen
+- Timing ist extrem sensitiv
+- Möglicherweise BLE-Wakeup-Problem
+
+**Empfehlung**: **2-3 Iterationen** (realistisch)
+
+### Optimierter GitHub Copilot Prompt (aktualisiert für Issue #177)
+
+```markdown
+# TASK: Fix Login Failure - Camera Discovery Mode Not Exiting (Issue #177)
+
+## Context
+Python UDP client for trail camera. Camera remains in discovery mode during login,
+causing DISC signal and login failure.
+
+## Problem Statement
+- **File**: `get_thumbnail_perp.py` (v4.23)
+- **Symptom**: Camera sends 30+ FRAG Seq=83 packets during login, then DISC signal (0xF0)
+- **Log**: `tests/debug09012026_1.log` Lines 39-160
+- **Root Cause**: 1.0s stabilization pause after discovery is TOO SHORT
+
+## Evidence
+**debug09012026_1.log**:
+- Line 8: 1.0s stabilization pause completed
+- Lines 39-158: 30+ FRAG Seq=83 (LBCS Discovery) packets during login wait
+- Line 160: DISC signal (0xF0) after ~800ms FRAG flood
+- Line 172: No token received (login failed)
+
+**MITM ble_udp_1.log** (working app):
+- NO FRAG packets after discovery
+- Clean login handshake
+
+## Solution
+Increase `CAMERA_STABILIZATION_DELAY` from 1.0s to 3.0s
+
+## Implementation
+```python
+# In get_thumbnail_perp.py line ~213:
+CAMERA_STABILIZATION_DELAY = 3.0  # Increased from 1.0s (Issue #177)
+```
+
+Update comment in run() method (line ~1371):
+```python
+# CRITICAL (Issue #177): Wait LONGER for camera to exit discovery mode
+# Analysis of debug09012026_1.log shows 1.0s is insufficient - camera
+# continues sending FRAG Seq=83 packets, causing DISC signal.
+time.sleep(CAMERA_STABILIZATION_DELAY)
+logger.info(f">>> Camera stabilization complete ({CAMERA_STABILIZATION_DELAY}s)")
+```
+
+## Expected Result
+After fix:
+```
+>>> Discovery OK
+[3.0s pause]
+>>> Camera stabilization complete (3.0s)
+>>> Login Handshake Step 1: Send Login Request
+[NO FRAG packets during login]
+>>> Login Response received ✅
+```
+
+## Testing
+Run: `python get_thumbnail_perp.py --debug --wifi`
+Check for:
+- No FRAG Seq=83 after stabilization
+- No DISC signal
+- Login Response (MsgType=3) received
+
+## Files to Modify
+- `get_thumbnail_perp.py`: 
+  - Line 213: CAMERA_STABILIZATION_DELAY constant
+  - Line 1371: Comment update
+```
+
+---
+
+## Referenzen (aktualisiert)
+
+- **Issues**: #157, #159, #162, #164, #166, #168, #170, #172, #174, #177
+- **Protokoll-Spezifikation**: `Protocol_analysis.md`
+- **MITM-Captures**: 
+  - `tests/MITM_Captures/ble_udp_1.log` (funktionierender Login - KEIN FRAG nach Discovery!)
+  - `tests/MITM_Captures/ble_udp_2.log`
+- **Debug-Logs**:
+  - `tests/debug04012026.txt` bis `tests/debug08012026_1.log` (frühere Iterationen)
+  - `tests/debug09012026_1.log` (aktuell - zeigt FRAG-Flut Problem)
+- **Implementierung**: `get_thumbnail_perp.py` (aktuell v4.23, TODO: v4.24)
