@@ -1,34 +1,48 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.27
+"""Wildkamera Thumbnail Downloader - consolidated v4.28
 
-Changes in this version (v4.27) - CRITICAL FIX for Issue #182:
-- CRITICAL FIX: Added missing Magic2 packet to login handshake sequence.
-  Analysis of debug09012026_4.log (failed login with v4.26) vs debug05012026.log (successful login)
-  reveals that Magic2 packet is ESSENTIAL for camera to send login response.
+Changes in this version (v4.28) - CRITICAL FIX for Issue #185:
+- CRITICAL FIX: Corrected ACK logic to always ACK DATA packets, even with "ACK" payload.
+  Analysis of debug09012026_4.log vs MITM ble_udp_1.log reveals that after sending Magic1,
+  the camera sends a DATA(0xD0) packet with "ACK" string as payload (MITM Line 396).
+  The working app ACKs this packet with ACK(0xD1) Seq=1 (MITM Line 399).
   
   Problem with v4.26:
-  - v4.26 correctly fixed LBCS detection (Issue #181) - FRAG packets are properly ignored ✓
-  - However, login still failed with "Login Timeout (0 MsgType=3 packets buffered)"
-  - Camera sent 74 ACK packets for our login requests but NEVER sent MsgType=3 response
-  - Camera sent periodic ERROR (0xE0) packets during wait
+  - _is_simple_ack_payload() check prevented ACKing DATA packets containing "ACK" string
+  - This was intended to prevent infinite loops when ACKing ACK packets
+  - HOWEVER, the camera's "ACK" packet is DATA(0xD0), NOT ACK(0xD1)!
+  - Per RUDP spec, ALL DATA packets MUST be ACKed
+  - Without this ACK, camera never sends MsgType=3 login response
   
-  Root Cause (Issue #182):
-  - Comparison of packet flows shows MISSING Magic2 packet in v4.26:
-    * Successful (debug05012026.log): Hello → Magic1(Seq=3) → Magic2(Seq=1) → MsgType=3 ✓
-    * Failed (debug09012026_4.log): Login#1 → Magic1(Seq=3) → [NO Magic2!] → Login#2/3 → TIMEOUT ✗
-  - Camera expects BOTH Magic1 AND Magic2 before responding with login token
-  - Without Magic2, camera acknowledges packets but never enters authenticated state
+  Root Cause (Issue #185):
+  - Camera sends DATA Seq=0 with "ACK" payload as signal "I'm ready for login processing"
+  - App must ACK this signal before camera will respond with login token
+  - v4.26 suppressed this critical ACK, causing login timeout
   
   Fix:
-  - Added Magic2 packet (force_seq=1, MAGIC_BODY_2) after Magic1 in login handshake
-  - Removed incorrect login retransmission logic (#2, #3) that was masking the real issue
-  - Simplified wait logic: after Magic2, directly wait for MsgType=3 response
+  - Removed _is_simple_ack_payload() check for DATA/FRAG packets
+  - Now ALL DATA (0xD0) and FRAG (0x42) packets are ACKed (except LBCS Discovery FRAGs)
+  - ACK suppression only needed for ACK-type packets (0xD1), which we don't process anyway
+  
+  ALSO REMOVED v4.27 Magic2 code - hypothesis was INCORRECT:
+  - v4.27 analysis incorrectly identified MITM Line 399 as "Magic2 packet"
+  - Correct interpretation: Line 399 is ACK(0xD1) Seq=1 for camera's "ACK" packet (Line 396)
+  - It's normal RUDP ACK protocol, not a special "Magic2" handshake packet
+  - MAGIC_BODY_2 concept was wrong - removed from codebase
   
   Expected behavior after fix:
-  Discovery → [3.0s pause] → Login#1(Seq=0) → Magic1(Seq=3) → Magic2(Seq=1) → 
-  Camera sends ACK(Seq=1) → Camera sends MsgType=3(Seq=1) with token ✅
+  Discovery → [3.0s pause] → Login#1(Seq=0) → Magic1(Seq=3) → 
+  RX DATA "ACK" (Seq=0) → TX ACK(Seq=1) ✅ [CRITICAL FIX!] →
+  Login#2(Seq=0) → Login#3(Seq=0) → RX MsgType=3(Seq=1) with token ✅
   
-  Note: This fix is independent of the v4.26 LBCS fix - BOTH are required for login to succeed.
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "🎯 KRITISCHE ANALYSE (Issue #185)" for detailed
+  MITM comparison and proof of root cause.
+
+Changes in this version (v4.27) - REMOVED (Hypothesis was WRONG):
+- The "Magic2" hypothesis was based on incorrect interpretation of MITM capture
+- MITM Line 399 is an ACK packet, not a "Magic2" handshake packet
+- See Issue #185 analysis for correct understanding
+- This version was never tested - directly superseded by v4.28
 
 Changes in this version (v4.26) - CRITICAL FIX for Issue #181:
 - CRITICAL BUG FIX: Corrected LBCS offset detection in FRAG packet skip logic.
@@ -348,8 +362,7 @@ MAGIC1_ACK_TIMEOUT = 0.3
 # --- CONSTANTS / PAYLOADS ---
 LBCS_PAYLOAD = bytes.fromhex("f14100144c42435300000000000000004343434a4a000000")
 
-MAGIC_BODY_1 = bytes.fromhex("000000000000")
-MAGIC_BODY_2 = bytes.fromhex("0000")
+MAGIC_BODY_1 = bytes.fromhex("000000000000")  # 6 bytes of zeros for Magic1 packet
 
 # Heartbeat body is a vendor-specific "ARTEMIS" blob; keep as-is.
 HEARTBEAT_BODY_START = bytes.fromhex("415254454d49530002000000")
@@ -1328,7 +1341,6 @@ class Session:
                 rx_seq = data[7]
 
                 # ACK all DATA and ALL FRAG packets (per spec: "Jedes eingehende Paket vom Typ 0xD0 oder 0x42")
-                # Note: We check _is_simple_ack_payload to avoid ACKing ACK packets (which would create an infinite loop)
                 # CRITICAL (Issue #179/#181): Do NOT ACK LBCS Discovery FRAG packets
                 # Analysis shows camera floods with FRAG Seq=83 during login when we send ACKs.
                 # Sending ACKs creates endless loop: RX FRAG → TX ACK → RX "ACK" → RX FRAG...
@@ -1344,6 +1356,16 @@ class Session:
                 # Normal packets: Const=0xD1, Pad=0x0000, Seq=0-255
                 # LBCS packets: Const='L', Pad='BC', Seq='S' at offsets 4-7
                 # Payload starts at offset 8, so data[8:12] is 0x00000000, NOT "LBCS".
+                #
+                # CRITICAL FIX (Issue #185): Always ACK DATA packets, even if payload is "ACK" string
+                # The camera sends DATA(0xD0) Seq=0 with "ACK" string as payload after Magic1.
+                # This MUST be ACKed with ACK(0xD1) Seq=1 before camera will respond with MsgType=3.
+                # MITM ble_udp_1.log:
+                #   Line 396: RX DATA(0xD0) Seq=0 "ACK" from camera
+                #   Line 399: TX ACK(0xD1) Seq=1 - ACKing the camera's "ACK" packet
+                #   Line 435: RX MsgType=3 (Login Response) ✅
+                # Previous bug: _is_simple_ack_payload() check prevented ACKing DATA packets with "ACK" payload.
+                # Fix: Only suppress ACK for ACK-type packets (0xD1) to prevent loops, NOT for DATA packets!
                 if pkt_type == 0xD0 or pkt_type == 0x42:
                     # Skip ACK for LBCS Discovery FRAG packets (Issue #179/#181)
                     # Check: len >= 8 ensures we have full RUDP header including LBCS at offset 4-8
@@ -1352,10 +1374,17 @@ class Session:
                             logger.debug(f"⚠️ Ignoring LBCS Discovery FRAG Seq={rx_seq} (no ACK sent, skipping packet)")
                         # Skip this packet entirely - do not ACK, do not process
                         continue
-                    elif not self._is_simple_ack_payload(data) and self.active_port:
+                    elif self.active_port:
+                        # ACK all DATA/FRAG packets, even if payload contains "ACK" string (Issue #185)
+                        # Note: We used to check _is_simple_ack_payload() to avoid ACKing "ACK" packets,
+                        # but the camera's "ACK" is a DATA packet (0xD0), NOT an ACK packet (0xD1).
+                        # Per RUDP spec, ALL DATA packets MUST be ACKed.
                         ack_pkt = self.build_ack_10(rx_seq)
                         if self.debug:
-                            logger.debug(f"🔧 Auto-ACK: rx_seq={rx_seq}, type=0x{pkt_type:02X}, current_global_seq={self.global_seq}")
+                            if pkt_type == 0xD0 and self._is_simple_ack_payload(data):
+                                logger.debug(f"🔧 ACKing DATA packet with 'ACK' payload Seq={rx_seq} (Critical for login! Issue #185)")
+                            else:
+                                logger.debug(f"🔧 Auto-ACK: rx_seq={rx_seq}, type=0x{pkt_type:02X}, current_global_seq={self.global_seq}")
                         self.send_raw(ack_pkt, desc=f"ACK(rx_seq={rx_seq})")
 
                 # Handle FRAG reassembly for ARTEMIS packets
@@ -1592,18 +1621,52 @@ class Session:
         magic1_pkt, _ = self.build_packet(0xD1, MAGIC_BODY_1, force_seq=3)
         self.send_raw(magic1_pkt, desc="Magic1")
         
-        # CRITICAL FIX (Issue #182): Send Magic2 packet after Magic1
-        # Analysis of successful login (debug05012026.log) shows Magic2 is REQUIRED for login to succeed.
-        # The successful flow is: Hello → Magic1 (Seq=3) → Magic2 (Seq=1) → Wait → Camera sends MsgType=3
-        # Without Magic2, camera never sends login response (as seen in debug09012026_4.log).
-        # Magic2 uses Seq=1 (not Seq=0) and has a shorter payload than Magic1.
-        logger.info(">>> Login Handshake Step 1c: Send Magic2 packet")
-        magic2_pkt, _ = self.build_packet(0xD1, MAGIC_BODY_2, force_seq=1)
-        self.send_raw(magic2_pkt, desc="Magic2")
+        # CRITICAL (Issue #185): Wait for and ACK the camera's "ACK" response
+        # After Magic1, camera sends DATA(0xD0) Seq=0 with "ACK" string as payload.
+        # This signal means "I've processed Magic1 and am ready for login processing".
+        # The app MUST ACK this packet with ACK(0xD1) Seq=1 before camera will respond.
+        # 
+        # MITM ble_udp_1.log sequence:
+        #   Line 393: TX Magic1 (Seq=3)
+        #   Line 396: RX DATA(0xD0) Seq=0 "ACK" from camera
+        #   Line 399: TX ACK(0xD1) Seq=1 - ACKing the camera's "ACK" packet
+        #   Line 402: TX Login #2 (first retransmission)
+        #   Line 417: TX Login #3 (second retransmission)
+        #   Line 435: RX MsgType=3 (Login Response) ✅
+        #
+        # The ACK is now sent automatically in pump() after v4.28 fix (Issue #185).
+        # Previously, _is_simple_ack_payload() check prevented ACKing DATA packets with "ACK" payload.
+        logger.info(">>> Login Handshake Step 1c: Wait for camera's ACK after Magic1")
+        
+        # Brief pump to receive and ACK the camera's "ACK" packet
+        # The pump() will automatically ACK it (v4.28 fix), then we proceed to retransmissions
+        def is_camera_ack(pkt: bytes) -> bool:
+            """Accept the camera's "ACK" DATA packet."""
+            return self._is_simple_ack_payload(pkt)
+        
+        camera_ack = self.pump(timeout=0.5, accept_predicate=is_camera_ack, 
+                              filter_evt=False, no_heartbeat=True)
+        
+        if camera_ack:
+            logger.debug("✅ Camera ACK received after Magic1, proceeding immediately to login retransmissions")
+        else:
+            logger.warning("⚠️ Camera ACK not received after Magic1 - proceeding anyway")
+        
+        # Step 1d/1e: Send Login retransmissions (per MITM spec - Lines 402, 417)
+        # The working app sends the login request THREE times (original + 2 retransmissions).
+        # All three have identical content (same Seq=0, same AppSeq=1, same encrypted payload).
+        # This appears to be part of the protocol's reliability mechanism.
+        logger.info(">>> Login Handshake Step 1d: Retransmit Login #2")
+        login_pkt_2, _ = self.build_packet(0xD0, login_body, force_seq=0)
+        self.send_raw(login_pkt_2, desc=f"Login#2(cmdId=0,AppSeq={login_app_seq})")
+        
+        logger.info(">>> Login Handshake Step 1e: Retransmit Login #3")
+        login_pkt_3, _ = self.build_packet(0xD0, login_body, force_seq=0)
+        self.send_raw(login_pkt_3, desc=f"Login#3(cmdId=0,AppSeq={login_app_seq})")
         
         # Step 2: Wait for Login Response (MsgType=3, AppSeq=1)
-        # After Magic1 and Magic2, the camera will send the login response.
-        # Analysis of debug05012026.log shows: Magic1 → Magic2 → Camera sends MsgType=3(Seq=1)
+        # After the retransmissions, camera should send the login response.
+        # MITM shows: ACK(Seq=1) followed by MsgType=3(Seq=1) with token payload.
         # CRITICAL: no_heartbeat=True prevents heartbeat from incrementing AppSeq during wait,
         # ensuring clean AppSeq sequence for login response matching
         logger.info(">>> Login Handshake Step 2: Wait for Login Response (MsgType=3, AppSeq=1)")
