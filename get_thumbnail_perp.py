@@ -1,5 +1,37 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.30
+"""Wildkamera Thumbnail Downloader - consolidated v4.31
+
+Changes in this version (v4.31) - CRITICAL FIX for Issue #191:
+- CRITICAL FIX: Time-limited ACK suppression to prevent camera ERROR (0xE0) signals.
+  Analysis of debug09012026_8.log vs MITM ble_udp_1.log reveals that v4.30's unlimited
+  ACK suppression causes the camera to send ERROR packets instead of login response.
+  
+  Problem with v4.30:
+  - After Login #3, v4.30 enters "login response wait mode" with UNLIMITED ACK suppression
+  - Camera sends 60+ "ACK" DATA packets over 3 seconds during login processing
+  - v4.30 suppresses ALL these ACKs indefinitely
+  - Camera interprets missing ACKs as "client dead" → sends ERROR (0xE0) → DISC (0xF0)
+  - No MsgType=3 login response is ever sent
+  
+  Root Cause (Issue #191):
+  - MITM ble_udp_1.log shows working app resumes ACKing after brief pause
+  - After Login #3 (Line 417), MITM shows only brief ACK suppression, then normal ACKing
+  - Camera needs periodic ACKs as "keepalive" signal during login processing
+  - Unlimited suppression violates RUDP reliability protocol expectations
+  
+  Fix (Combination of Solution 1 + Solution 2 from ANALYSE_KONSOLIDIERT_LOGIN.md):
+  - Added _login_response_wait_start timestamp and _ack_suppression_count counter
+  - ACK suppression now limited to FIRST 200ms OR first 5 packets (whichever comes first)
+  - After limit reached, client resumes normal ACKing to keep camera happy
+  - This prevents camera from thinking client is dead while still avoiding ACK flood
+  
+  Expected behavior after fix:
+  Login#1 → Magic1 → RX "ACK" (Seq=0) → TX ACK (Seq=1) ✅ →
+  Login#2 → Login#3 → 🕐 SUPPRESS ACK (200ms/5 packets) → ✅ RESUME ACKing →
+  Camera stays alive → RX MsgType=3 with token ✅
+  
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "🔬 KRITISCHE NEUE ANALYSE (Issue #191)" for
+  detailed MITM comparison and fix rationale.
 
 Changes in this version (v4.30) - CRITICAL FIX for Issue #189:
 - CRITICAL FIX: Suppress ACK for camera's "ACK" packets after Login #3 retransmission.
@@ -628,11 +660,17 @@ class Session:
         self._token_packet_buffer: deque = deque(maxlen=10)
         self._buffering_active = False
 
-        # CRITICAL (Issue #189): Flag to suppress ACK for camera's "ACK" packets after Login #3
+        # CRITICAL (Issue #189/#191): Time-limited ACK suppression for camera's "ACK" packets
         # After Login #3 retransmission, camera sends continuous "ACK" DATA packets.
-        # These must NOT be ACKed to avoid endless loop. Only first "ACK" after Magic1
-        # should be ACKed (Issue #185).
+        # Analysis shows these should be suppressed for a SHORT time (~200ms) after Login #3,
+        # then we must resume normal ACKing or camera sends ERROR (0xE0) instead of login response.
+        # 
+        # Root cause (Issue #191): Unlimited ACK suppression makes camera think client is dead.
+        # MITM capture shows: Working app resumes ACKing after brief pause.
+        # See ANALYSE_KONSOLIDIERT_LOGIN.md "🔬 KRITISCHE NEUE ANALYSE" for details.
         self._in_login_response_wait = False
+        self._login_response_wait_start = 0.0
+        self._ack_suppression_count = 0
 
     def enable_token_buffering(self):
         self._buffering_active = True
@@ -1462,18 +1500,53 @@ class Session:
                         # Camera sends DATA(0xD0) Seq=0 with "ACK" after Magic1. Must be ACKed!
                         # Only skip ACKing ACK-type packets (0xD1) to prevent loops.
                         #
-                        # CRITICAL FIX (Issue #189): After Login #3, suppress ACK for camera's "ACK" packets
+                        # CRITICAL FIX (Issue #189/#191): Time-limited ACK suppression for camera's "ACK" packets
                         # Camera continuously sends "ACK" DATA packets during login processing (74+ in 3s).
-                        # After login retransmissions, we must STOP ACKing these to avoid endless loop.
-                        # MITM ble_udp_1.log shows: ACK first "ACK" (Line 399) → send Login #2/#3 → NO MORE ACKs
-                        # Current implementation ACKs all (creating loop Seq 1-74+), causing ERR/DISC signals.
+                        # 
+                        # Root Cause (Issue #191): Unlimited ACK suppression causes camera to send ERROR (0xE0)!
+                        # Analysis of debug09012026_8.log vs MITM ble_udp_1.log shows:
+                        # - After Login #3, camera expects ACKs to resume after brief pause (~200ms max)
+                        # - If client suppresses ACKs for 3+ seconds, camera thinks "client dead" → sends ERROR
+                        # - MITM shows: Working app only suppresses first few ACKs, then resumes normal ACKing
+                        #
+                        # Fix Strategy (combination of Solution 1 + Solution 2 from ANALYSE_KONSOLIDIERT_LOGIN.md):
+                        # 1. Time-based: Only suppress ACKs for first 200ms after Login #3
+                        # 2. Count-based: Only suppress first 5 "ACK" packets after Login #3
+                        # 3. After either limit is reached, resume normal ACKing to keep camera happy
+                        #
+                        # Expected behavior after fix:
+                        # Login#3 → Suppress first 5 "ACK" packets or 200ms → Resume ACKing → 
+                        # Camera receives ACKs → Stays alive → Sends MsgType=3 ✅
                         
                         skip_ack = False
                         if self._in_login_response_wait and pkt_type == 0xD0 and self._is_simple_ack_payload(data):
-                            # After Login #3, suppress ACK for camera's repeated "ACK" packets
-                            skip_ack = True
-                            if self.debug:
-                                logger.debug(f"⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)")
+                            # Calculate time since login response wait started
+                            time_since_wait_start = time.time() - self._login_response_wait_start
+                            
+                            # Suppress ACKs only if:
+                            # - Less than 200ms has passed since Login #3, AND
+                            # - We've suppressed fewer than 5 packets
+                            if time_since_wait_start < 0.2 and self._ack_suppression_count < 5:
+                                # Still within suppression window
+                                skip_ack = True
+                                self._ack_suppression_count += 1
+                                if self.debug:
+                                    logger.debug(
+                                        f"⚠️ Suppressing ACK for camera's 'ACK' packet "
+                                        f"(count={self._ack_suppression_count}/5, "
+                                        f"time={time_since_wait_start*1000:.0f}ms/200ms)"
+                                    )
+                            else:
+                                # Suppression window expired - resume normal ACKing
+                                skip_ack = False
+                                if self.debug and self._ack_suppression_count > 0:
+                                    # Log once when we exit suppression mode
+                                    logger.debug(
+                                        f"✅ Resumed ACKing camera's 'ACK' packets after "
+                                        f"{self._ack_suppression_count} suppressions, "
+                                        f"{time_since_wait_start*1000:.0f}ms elapsed"
+                                    )
+                                    self._ack_suppression_count = -1  # Mark as "logged", prevent spam
                         
                         if not skip_ack:
                             ack_pkt = self.build_ack_10(rx_seq)
@@ -1769,14 +1842,23 @@ class Session:
         login_pkt_3, _ = self.build_packet(0xD0, login_body, force_seq=0)
         self.send_raw(login_pkt_3, desc=f"Login#3(cmdId=0,AppSeq={login_app_seq})")
         
-        # CRITICAL FIX (Issue #189): After Login #3, suppress ACK for camera's "ACK" packets
+        # CRITICAL FIX (Issue #189/#191): Time-limited ACK suppression after Login #3
         # Camera continuously sends "ACK" DATA packets during login processing (74+ in 3 seconds).
-        # After login retransmissions, we must STOP ACKing these to avoid endless loop.
-        # MITM ble_udp_1.log shows: ACK first "ACK" (Line 399) → send Login #2/#3 → NO MORE ACKs
-        # The working app does NOT ACK subsequent "ACK" packets after Login #3.
+        # 
+        # Root Cause (Issue #191): Unlimited ACK suppression causes camera to send ERROR (0xE0)!
+        # Analysis of debug09012026_8.log vs MITM ble_udp_1.log shows:
+        # - After Login #3, camera expects ACKs to resume after brief pause (~200ms max)
+        # - If client suppresses ACKs for 3+ seconds, camera thinks "client dead" → sends ERROR
+        # - MITM shows: Working app only suppresses first few ACKs, then resumes normal ACKing
+        #
+        # Fix: Limit ACK suppression to 200ms OR 5 packets (whichever comes first)
+        # See ANALYSE_KONSOLIDIERT_LOGIN.md "🔬 KRITISCHE NEUE ANALYSE (Issue #191)" for details.
         self._in_login_response_wait = True
+        self._login_response_wait_start = time.time()
+        self._ack_suppression_count = 0
         if self.debug:
-            logger.debug("🔒 Entered login response wait mode - suppressing ACK for camera's 'ACK' packets")
+            logger.debug("🔒 Entered login response wait mode - time-limited ACK suppression active (200ms/5 packets max)")
+
         
         # Step 2: Wait for Login Response (MsgType=3, AppSeq=1)
         # After the retransmissions, camera should send the login response.
