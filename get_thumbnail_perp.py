@@ -1,5 +1,40 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.30
+"""Wildkamera Thumbnail Downloader - consolidated v4.31
+
+Changes in this version (v4.31) - CRITICAL FIX for Issue #191:
+- CRITICAL FIX: Add timing delays between Login retransmissions to prevent camera timeout.
+  Analysis of debug09012026_8.log vs MITM ble_udp_1.log reveals critical timing issue:
+  
+  Problem with v4.30:
+  - Login #2 and #3 sent too quickly after Login #1 (30ms and 20ms intervals)
+  - Camera receives packets but takes time to process each login request
+  - Without delays, camera appears overwhelmed and enters timeout state
+  - After 2.9 seconds, camera sends RUDP ACK packets (should be immediate)
+  - After RUDP ACKs, camera sends ERR (0xE0) signals instead of MsgType=3
+  - Eventually camera sends DISC (0xF0) disconnect signal
+  
+  Root Cause (Issue #191):
+  - MITM ble_udp_1.log shows working app sequence but lacks precise timing info
+  - Our implementation sends all 3 login packets within ~50ms total
+  - Camera firmware needs processing time between each login packet
+  - The 2.9s delay before RUDP ACKs indicates internal camera timeout
+  - Camera's timeout handler sends ACKs + ERR instead of normal login response
+  
+  Fix:
+  - Added time.sleep(0.1) between Login #1→#2 (after camera ACK)
+  - Added time.sleep(0.1) between Login #2→#3
+  - Total timing: Login #1 → ~100ms → Login #2 → ~100ms → Login #3
+  - Gives camera ~100ms to process each login packet before next arrives
+  
+  Expected behavior after fix:
+  Login #1 (Seq=0) → Magic1 (Seq=3) → RX "ACK" → TX ACK (Seq=1) ✅ →
+  [100ms delay] → Login #2 (Seq=0) →
+  [100ms delay] → Login #3 (Seq=0) →
+  Suppress ACK mode → RX RUDP ACK (Seq=1) quickly (<500ms) ✅ →
+  RX MsgType=3 (Login Response) with token ✅
+  
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "KRITISCHE NEUE ANALYSE" for detailed
+  timing analysis, MITM comparison, and hypothesis H12 explanation.
 
 Changes in this version (v4.30) - CRITICAL FIX for Issue #189:
 - CRITICAL FIX: Suppress ACK for camera's "ACK" packets after Login #3 retransmission.
@@ -1761,11 +1796,19 @@ class Session:
         # The working app sends the login request THREE times (original + 2 retransmissions).
         # All three have identical content (same Seq=0, same AppSeq=1, same encrypted payload).
         # This appears to be part of the protocol's reliability mechanism.
+        #
+        # CRITICAL FIX (Issue #191): Add delays between retransmissions
+        # Analysis of debug09012026_8.log shows Login #2 and #3 sent too fast (30ms, 20ms intervals).
+        # Camera responds with RUDP ACKs only after 2.9s timeout, then sends ERR instead of MsgType=3.
+        # MITM timing unknown, but the 2.9s delay indicates camera timeout waiting for processing time.
+        # Adding 100ms delays gives camera time to process each login packet properly.
         logger.info(">>> Login Handshake Step 1d: Retransmit Login #2")
+        time.sleep(0.1)  # Allow camera to process Login #1 and Magic1
         login_pkt_2, _ = self.build_packet(0xD0, login_body, force_seq=0)
         self.send_raw(login_pkt_2, desc=f"Login#2(cmdId=0,AppSeq={login_app_seq})")
         
         logger.info(">>> Login Handshake Step 1e: Retransmit Login #3")
+        time.sleep(0.1)  # Allow camera to process Login #2
         login_pkt_3, _ = self.build_packet(0xD0, login_body, force_seq=0)
         self.send_raw(login_pkt_3, desc=f"Login#3(cmdId=0,AppSeq={login_app_seq})")
         

@@ -2,132 +2,151 @@
 
 ## Context
 
-Python UDP client for KJK/Artemis trail camera. Implementing proprietary RUDP+ARTEMIS protocol based on MITM captures. Currently on v4.30 attempting to fix login timeout (Issue #189).
+Python UDP client for KJK/Artemis trail camera. Implementing proprietary RUDP+ARTEMIS protocol based on MITM captures. Currently on v4.31 implementing timing fix for login timeout (Issue #191).
 
-**Current Status**: v4.30 implemented ACK suppression after Login #3, awaiting hardware test.
+**Current Status**: v4.31 implemented timing delays between login retransmissions, awaiting hardware test.
 
 ---
 
 ## Quick Reference
 
 **Repository**: https://github.com/philibertschlutzki/pi_trailcam  
-**Main Script**: `get_thumbnail_perp.py` (v4.30)  
+**Main Script**: `get_thumbnail_perp.py` (v4.31)  
 **Protocol Spec**: `Protocol_analysis.md`  
 **Analysis Document**: `ANALYSE_KONSOLIDIERT_LOGIN.md`  
-**Issue #189 Summary**: `ISSUE_189_SUMMARY.md`  
+**Issue #191 Summary**: `FIX_SUMMARY_ISSUE_191.md`  
 
 **MITM Capture** (working app): `tests/MITM_Captures/ble_udp_1.log`  
-**Latest Debug Log** (v4.29 failed): `tests/debug09012026_7.log`  
+**Latest Debug Logs**: `tests/debug09012026_7.log` (v4.29), `tests/debug09012026_8.log` (v4.30)
 
 ---
 
-## Issue #189: Login Timeout Due to ACK Loop
+## Issue #191: Login Timeout Due to Timing Problem
 
 ### Problem Statement
 
-**Symptom**: Login timeout after 3 seconds, no token received, camera sends ERR/DISC signals  
-**Root Cause**: Implementation ACKs camera's "ACK" packets continuously (74+ times), working app ACKs only once  
-**Fix**: v4.30 adds `_in_login_response_wait` flag to suppress ACK after Login #3  
+**Symptom**: Login timeout after 3 seconds, no token received, camera sends RUDP ACKs after 2.9s delay, then ERR/DISC signals  
+**Root Cause**: Login retransmissions (#2, #3) sent too fast (30ms, 20ms intervals), camera timeout waiting for processing time  
+**Fix (v4.31)**: Added 100ms delays between Login #1→#2 and #2→#3 to give camera processing time  
 
 ### Evidence
 
-**MITM (working)**: Lines 399 (ACK first "ACK") → 402/417 (Login #2/#3) → 435 (Response) ✅  
-**v4.29 (failed)**: Lines 28 (ACK) → 31/33 (Login #2/#3) → 37-336 (74+ ACK loop) → 435 (DISC) ❌  
+**MITM (working app)**: Lines 378→393→399→402→417→432→435
+- Login #1 → Magic1 → ACK → Login #2 → Login #3 → RUDP ACK (immediate) → MsgType=3 ✅
 
-### Changes in v4.30
+**v4.30 (failed)**: Timestamps from debug09012026_8.log
+- 19:32:45,640: Login #1
+- 19:32:45,655: Magic1 (Δ=15ms)
+- 19:32:45,769: TX ACK (Δ=114ms)
+- 19:32:45,799: Login #2 (**Δ=30ms** ← TOO FAST!)
+- 19:32:45,819: Login #3 (**Δ=20ms** ← TOO FAST!)
+- 19:32:48,792: RX RUDP ACK (**Δ=2.9s** ← TIMEOUT!)
+- 19:32:48,813: RX ERR (f1e00000) ❌
 
-1. Flag: `self._in_login_response_wait = False` in `__init__` (line ~607)
-2. Logic: Check flag before ACKing "ACK" packets in `pump()` (lines ~1460-1486)
-3. Set: After Login #3 in `run()` (line ~1780)
-4. Clear: After login success/timeout (lines ~1827, 1845)
+**Key Finding**: The 2.9 second delay before RUDP ACKs indicates camera timeout. Camera needs processing time between login packets.
 
-### Expected Test Output
+### Changes in v4.31
+
+1. Added `time.sleep(0.1)` before Login #2 transmission (line ~1765)
+2. Added `time.sleep(0.1)` before Login #3 transmission (line ~1770)
+3. Updated version docstring with detailed timing analysis
+
+### Expected Test Output (v4.31)
 
 ```
-TX Login #3 → 🔒 Entered login response wait mode
-→ RX "ACK" → ⚠️ Suppressing ACK (max 1-2 suppression messages)
-→ RX MsgType=3 ✅ Login Response received
-→ ✅ TOKEN OK
+TX Login #1 (Seq=0)
+TX Magic1 (Seq=3)
+RX DATA "ACK" (Seq=0)
+TX ACK (Seq=1)
+>>> Login Handshake Step 1d: Retransmit Login #2
+[100ms delay]
+TX Login #2 (Seq=0)
+>>> Login Handshake Step 1e: Retransmit Login #3
+[100ms delay]
+TX Login #3 (Seq=0)
+🔒 Entered login response wait mode
+RX RUDP ACK Seq=1 (expected within <500ms, not 2.9s) ✅
+RX MsgType=3 ✅ Login Response with token
+✅ Login erfolgreich
 ```
 
 ---
 
 ## Common Debugging Scenarios
 
-### If v4.30 Test Fails
+### If v4.31 Test Fails
 
 **Check debug log for**:
-1. Is "Entered login response wait mode" present? (Should appear after Login #3)
-2. How many "Suppressing ACK" messages? (Should be 5-50, not 0)
+1. Are the 100ms delays being applied? (Check timestamps between Login packets)
+2. When do RUDP ACKs arrive? (<500ms is good, >2s indicates still timing out)
 3. Any MsgType=3 packets buffered? (Check "X MsgType=3 packets buffered")
 4. ERR (0xE0) or DISC (0xF0) signals present? (Should be NONE)
 
-**If "Entered login response wait mode" is missing**:
-- Bug in run() method, flag not being set
-- Check line ~1780 execution path
+**If RUDP ACKs still arrive after >2 seconds**:
+- 100ms delays insufficient, try 200ms delays
+- Camera may need even more processing time
+- Alternative: Camera expecting different packet sequence
 
-**If "Suppressing ACK" appears 0 times**:
-- Camera not sending "ACK" packets (different behavior than expected)
-- Consider alternative timing hypothesis
+**If RUDP ACKs arrive quickly but MsgType=3 missing**:
+- Timing fixed, but different issue preventing login response
+- Check for ERR signals before/after RUDP ACKs
+- May need to respond to RUDP ACKs explicitly
 
-**If "Suppressing ACK" appears 74+ times but still timeout**:
-- ACK suppression working, but camera expects different behavior
-- May need to send something else instead of suppressing
-
-**If MsgType=3 buffered but token extraction fails**:
-- Decryption issue, not ACK issue
+**If MsgType=3 received but token extraction fails**:
+- Login handshake successful! ✅
+- Decryption issue, not timing issue
 - Check AES key, IV, mode (ECB vs CBC)
 
-### If v4.30 Succeeds (Iteration Complete)
+### If v4.31 Succeeds (Iteration Complete!)
 
-1. Close Issue #189
-2. Test full workflow (file list, thumbnails)
-3. Document success in ANALYSE_KONSOLIDIERT_LOGIN.md
-4. Create release notes for v4.30
+1. Close Issue #191
+2. Document success in ANALYSE_KONSOLIDIERT_LOGIN.md
+3. Test full workflow (file list, thumbnails, downloads)
+4. Create release notes for v4.31
+5. Celebrate! 🎉
 
 ---
 
 ## Prompt Templates
 
-### For v4.31 (If v4.30 Fails)
+### For v4.32 (If v4.31 Timing Fix Insufficient)
 
 ```markdown
-# TASK: Fix Login Failure v4.31 - Investigate [SPECIFIC ISSUE FROM DEBUG LOG]
+# TASK: Fix Login Failure v4.32 - Adjust Timing or Alternative Approach
 
 ## Context
-Trail camera UDP client, v4.30 failed with [SYMPTOM]. See debug log `tests/debug[DATE].log`.
+Trail camera UDP client, v4.31 added 100ms delays but [SYMPTOM FROM DEBUG LOG].
 
 ## Previous Iteration Summary
-v4.30 implemented ACK suppression after Login #3 to fix endless ACK loop (Issue #189).
-Flag `_in_login_response_wait` added to suppress ACK for camera's "ACK" packets.
+v4.31 implemented 100ms delays between Login #1→#2 and #2→#3 to fix timing issue (Issue #191).
+RUDP ACKs in v4.30 arrived after 2.9s timeout, indicating camera needs processing time.
 
 ## Current Problem
-[COPY RELEVANT LINES FROM DEBUG LOG]
+[COPY RELEVANT LINES FROM DEBUG LOG showing RUDP ACK timing]
 
-Debug log shows:
-- [OBSERVATION 1 from log]
-- [OBSERVATION 2 from log]
-- [OBSERVATION 3 from log]
+Observed RUDP ACK timing: [X seconds after Login #3]
+- If <500ms: Timing fix worked! ✅ Look for different issue
+- If 1-2s: Partial improvement, may need longer delays
+- If >2.5s: No improvement, timing may not be the issue
 
-## Root Cause Analysis Needed
-Compare debug log with MITM `tests/MITM_Captures/ble_udp_1.log` lines 393-435:
-- [DIFFERENCE 1]
-- [DIFFERENCE 2]
-- [HYPOTHESIS]
+## Root Cause Analysis
+Compare with MITM `tests/MITM_Captures/ble_udp_1.log` lines 378-435:
+- [TIMING DIFFERENCE]
+- [PACKET SEQUENCE DIFFERENCE]
+- [NEW HYPOTHESIS]
 
-## Proposed Fix
-[MINIMAL CHANGE DESCRIPTION]
+## Proposed Fix Options
+OPTION 1: Increase delays to 200ms
+OPTION 2: Try alternative delay pattern (before Login #1, after camera ACK, etc.)
+OPTION 3: Test without retransmits (#2/#3) to isolate issue
+OPTION 4: Implement RUDP ACK response handling
 
 ## Files to Modify
-- `get_thumbnail_perp.py`: [SPECIFIC CHANGES]
-- `ANALYSE_KONSOLIDIERT_LOGIN.md`: Add v4.31 analysis
+- `get_thumbnail_perp.py`: Adjust sleep() values or sequence
+- `FIX_SUMMARY_ISSUE_191.md`: Document test results
 
 ## Expected Result
-[DESCRIBE SUCCESS CRITERIA]
-
-## Testing
-Run: `python get_thumbnail_perp.py --debug --wifi`
-Success criteria: [SPECIFIC LOG MESSAGES]
+RUDP ACKs arrive within <500ms, followed by MsgType=3 with token
 ```
 
 ### For Post-Login Issues
@@ -182,18 +201,20 @@ Relevant MITM capture: `tests/MITM_Captures/[FILE].log` lines [X-Y]
 - **v4.27**: Magic2 hypothesis (never tested, wrong)
 - **v4.28**: ACK all "ACK" packets (creates loop) ❌
 - **v4.29**: Seq reset + ACK next_seq() (ACK loop remains) ❌
-- **v4.30**: **CURRENT** - ACK suppression after Login #3 (awaiting test)
+- **v4.30**: ACK suppression after Login #3 (still timeout with 2.9s delay) ❌
+- **v4.31**: **CURRENT** - 100ms timing delays between login retransmissions (awaiting test)
 
 ---
 
 ## Estimated Remaining Work
 
-**If v4.30 succeeds**: 0-1 iterations (post-login operations testing)  
-**If v4.30 fails**: 1-2 iterations (edge case or alternative hypothesis)  
-**Confidence**: 75-80%  
+**If v4.31 succeeds**: 0-1 iterations (post-login operations testing)  
+**If v4.31 partially works**: 1 iteration (adjust timing values)  
+**If v4.31 fails completely**: 1-2 iterations (alternative hypothesis)  
+**Confidence**: 80-85% (timing issue well-documented, fix targeted)  
 
-**Total effort since Issue #157**: 15+ iterations  
-**Progress**: Discovery ✅ | Stabilization ✅ | LBCS ✅ | Seq ✅ | ACK Logic → Testing  
+**Total effort since Issue #157**: 16+ iterations  
+**Progress**: Discovery ✅ | Stabilization ✅ | LBCS ✅ | Seq ✅ | ACK Logic ✅ | Timing → Testing  
 **Estimated completion**: 1-2 days (assuming hardware access)  
 
 ---
@@ -232,7 +253,7 @@ ls -lht tests/debug*.log | head -5
 
 ---
 
-**Last Updated**: 2026-01-09 (v4.30 implementation)  
-**Next Action**: Test v4.30 with real hardware, create debug log  
-**If Successful**: Close Issue #189, document success, test file operations  
-**If Failed**: Analyze new debug log, create v4.31 with targeted fix  
+**Last Updated**: 2026-01-09 (v4.31 implementation)  
+**Next Action**: Test v4.31 with real hardware, create debug log  
+**If Successful**: Close Issue #191, document success, test file operations  
+**If Failed**: Analyze RUDP ACK timing in new log, adjust delays or try alternative approach in v4.32  
