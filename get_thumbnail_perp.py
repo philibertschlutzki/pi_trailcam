@@ -1,7 +1,35 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.23
+"""Wildkamera Thumbnail Downloader - consolidated v4.24
 
-Changes in this version (v4.23) - FIX for Issue #174:
+Changes in this version (v4.24) - FIX for Issue #177:
+- CRITICAL FIX: Increased camera stabilization delay from 1.0s to 3.0s.
+  Analysis of debug09012026_1.log reveals that v4.23's 1.0s delay was insufficient.
+  
+  Problem with v4.23:
+  - Camera continues sending 30+ FRAG Seq=83 (LBCS Discovery) packets AFTER 1.0s pause
+  - FRAG flood occurs during login handshake (lines 39-158 in debug09012026_1.log)
+  - Pattern: RX FRAG → TX ACK → RX "ACK" repeating ~30 times over ~800ms
+  - Camera sends DISC signal (0xF0) at line 160, aborting session
+  - Login timeout - no token received (0 MsgType=3 packets buffered)
+  
+  Root Cause Analysis (Issue #177):
+  1. 1.0s stabilization pause too short - camera not fully exiting discovery mode
+  2. FRAG Seq=83 packets indicate camera still in discovery state
+  3. MITM captures show NO FRAG packets after discovery in working app
+  4. Continuous FRAG+ACK exchanges may confuse camera state machine
+  
+  Fix:
+  - Increased CAMERA_STABILIZATION_DELAY from 1.0s to 3.0s
+  - Updated comments to explain the longer delay requirement
+  - This gives camera sufficient time to fully exit discovery mode
+  
+  Expected behavior after fix:
+  Discovery → [3.0s pause] → NO FRAG packets → Login#1 → Magic1 → ACK → 
+  Login#2 → Login#3 → Login Response ✅
+  
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "🎯 NEUSTER ROOT CAUSE (Issue #177)" for detailed analysis.
+
+Changes in v4.23 - FIX for Issue #174:
 - CRITICAL FIX: Camera stabilization after discovery and improved pump() timing.
   Analysis of debug08012026_1.log reveals that despite removing Pre-Login (v4.22),
   the camera still sends DISC signal. New root causes identified:
@@ -207,8 +235,13 @@ DEFAULT_PASS = "85087127"
 BLE_MAC = "C6:1E:0D:E0:32:E8"
 
 LOGIN_DELAY_AFTER_STABILIZATION = 2.0
-# Camera stabilization delay after discovery (Issue #174)
-CAMERA_STABILIZATION_DELAY = 1.0
+# Camera stabilization delay after discovery
+# Issue #174: Initial implementation with 1.0s
+# Issue #177: Increased to 3.0s - 1.0s was insufficient, camera continued sending
+# FRAG Seq=83 (LBCS Discovery) packets during login, causing DISC signal (0xF0).
+# Analysis of debug09012026_1.log shows 30+ FRAG packets after 1.0s pause.
+# MITM captures show NO FRAG packets after discovery in working app.
+CAMERA_STABILIZATION_DELAY = 3.0
 # Timeout for waiting for camera's ACK after Magic1 handshake packet (per MITM analysis)
 MAGIC1_ACK_TIMEOUT = 0.3
 
@@ -1363,13 +1396,15 @@ class Session:
         if not self.discovery():
             return
 
-        # CRITICAL (Issue #174): Wait for camera to exit discovery mode
-        # The MITM capture shows NO FRAG packets after discovery.
-        # debug08012026_1.log shows FRAG Seq=83 (LBCS Discovery) packets during login,
-        # which could confuse the camera and cause DISC signal.
-        # Solution: Wait CAMERA_STABILIZATION_DELAY (1.0s) after discovery to ensure camera exits discovery mode.
-        time.sleep(CAMERA_STABILIZATION_DELAY)  # Stabilize camera
-        logger.info(">>> Camera stabilization complete")
+        # CRITICAL (Issue #177): Wait LONGER for camera to exit discovery mode
+        # Analysis of debug09012026_1.log shows that 1.0s is NOT sufficient.
+        # Camera continues sending FRAG Seq=83 (LBCS Discovery) packets after 1.0s pause,
+        # which causes ~30 FRAG+ACK exchanges during login handshake, eventually triggering
+        # DISC signal (0xF0) from camera at line 160. MITM captures show NO FRAG packets
+        # after discovery in the working app. Increased delay to 3.0s to ensure camera
+        # fully exits discovery mode before login handshake begins.
+        time.sleep(CAMERA_STABILIZATION_DELAY)  # 3.0s (increased from 1.0s)
+        logger.info(f">>> Camera stabilization complete ({CAMERA_STABILIZATION_DELAY}s)")
 
         # Enable token buffering to capture MsgType=3 responses
         self.enable_token_buffering()
