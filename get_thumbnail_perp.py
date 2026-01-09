@@ -1,5 +1,35 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.29
+"""Wildkamera Thumbnail Downloader - consolidated v4.30
+
+Changes in this version (v4.30) - CRITICAL FIX for Issue #189:
+- CRITICAL FIX: Suppress ACK for camera's "ACK" packets after Login #3 retransmission.
+  Analysis of debug09012026_7.log reveals that v4.29 creates an endless ACK loop after Login #3.
+  
+  Problem with v4.29:
+  - Camera sends continuous "ACK" DATA packets (Seq=0) during login processing (74+ packets)
+  - v4.28 fix (Issue #185) ACKs ALL "ACK" packets to ensure first one after Magic1 is ACKed
+  - But this also ACKs all subsequent "ACK" packets, creating endless loop (Seq 1-74+)
+  - Camera sends ERR (0xE0) signals and eventually DISC (0xF0), never sends MsgType=3
+  
+  Root Cause (Issue #189):
+  - MITM ble_udp_1.log shows working app ACKs "ACK" only ONCE (Line 399, after Magic1)
+  - After Login #2 and #3 (Lines 402, 417), MITM shows NO MORE ACKs for "ACK" packets
+  - Either camera doesn't send more "ACK", or app ignores them
+  - Our implementation continues ACKing in normal pump() mode, creating the loop
+  
+  Fix:
+  - Added _in_login_response_wait flag to Session class
+  - After Login #3, set flag to suppress ACK for camera's "ACK" packets
+  - First "ACK" after Magic1 is still ACKed (Issue #185 fix intact)
+  - Subsequent "ACK" packets during login response wait are NOT ACKed
+  
+  Expected behavior after fix:
+  Login#1 → Magic1 → RX "ACK" (Seq=0) → TX ACK (Seq=1) ✅ →
+  Login#2 → Login#3 → 🔒 SUPPRESS ACK MODE →
+  RX "ACK" (ignored) → RX "ACK" (ignored) → RX MsgType=3 ✅
+  
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "🎯 KRITISCHER BUG IN v4.29 (Issue #189)" for
+  detailed MITM comparison and proof that working app doesn't ACK subsequent "ACK" packets.
 
 Changes in this version (v4.29) - CRITICAL FIX for Issue #187:
 - CRITICAL FIX: Two separate bugs in ACK sequence number handling after Magic1.
@@ -597,6 +627,12 @@ class Session:
         # Token buffer (raw MsgType=3 responses during handshake/login)
         self._token_packet_buffer: deque = deque(maxlen=10)
         self._buffering_active = False
+
+        # CRITICAL (Issue #189): Flag to suppress ACK for camera's "ACK" packets after Login #3
+        # After Login #3 retransmission, camera sends continuous "ACK" DATA packets.
+        # These must NOT be ACKed to avoid endless loop. Only first "ACK" after Magic1
+        # should be ACKed (Issue #185).
+        self._in_login_response_wait = False
 
     def enable_token_buffering(self):
         self._buffering_active = True
@@ -1422,17 +1458,31 @@ class Session:
                         # Skip this packet entirely - do not ACK, do not process
                         continue
                     elif self.active_port:
-                        # ACK all DATA/FRAG packets, even if payload contains "ACK" string (Issue #185)
-                        # Note: We used to check _is_simple_ack_payload() to avoid ACKing "ACK" packets,
-                        # but the camera's "ACK" is a DATA packet (0xD0), NOT an ACK packet (0xD1).
-                        # Per RUDP spec, ALL DATA packets MUST be ACKed.
-                        ack_pkt = self.build_ack_10(rx_seq)
-                        if self.debug:
-                            if pkt_type == 0xD0 and self._is_simple_ack_payload(data):
-                                logger.debug(f"🔧 ACKing DATA packet with 'ACK' payload Seq={rx_seq} (Critical for login! Issue #185)")
-                            else:
-                                logger.debug(f"🔧 Auto-ACK: rx_seq={rx_seq}, type=0x{pkt_type:02X}, current_global_seq={self.global_seq}")
-                        self.send_raw(ack_pkt, desc=f"ACK(rx_seq={rx_seq})")
+                        # CRITICAL FIX (Issue #185): Always ACK DATA packets, even if payload is "ACK" string
+                        # Camera sends DATA(0xD0) Seq=0 with "ACK" after Magic1. Must be ACKed!
+                        # Only skip ACKing ACK-type packets (0xD1) to prevent loops.
+                        #
+                        # CRITICAL FIX (Issue #189): After Login #3, suppress ACK for camera's "ACK" packets
+                        # Camera continuously sends "ACK" DATA packets during login processing (74+ in 3s).
+                        # After login retransmissions, we must STOP ACKing these to avoid endless loop.
+                        # MITM ble_udp_1.log shows: ACK first "ACK" (Line 399) → send Login #2/#3 → NO MORE ACKs
+                        # Current implementation ACKs all (creating loop Seq 1-74+), causing ERR/DISC signals.
+                        
+                        skip_ack = False
+                        if self._in_login_response_wait and pkt_type == 0xD0 and self._is_simple_ack_payload(data):
+                            # After Login #3, suppress ACK for camera's repeated "ACK" packets
+                            skip_ack = True
+                            if self.debug:
+                                logger.debug(f"⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)")
+                        
+                        if not skip_ack:
+                            ack_pkt = self.build_ack_10(rx_seq)
+                            if self.debug:
+                                if pkt_type == 0xD0 and self._is_simple_ack_payload(data):
+                                    logger.debug(f"🔧 ACKing DATA packet with 'ACK' payload Seq={rx_seq} (Critical for login! Issue #185)")
+                                else:
+                                    logger.debug(f"🔧 Auto-ACK: rx_seq={rx_seq}, type=0x{pkt_type:02X}, current_global_seq={self.global_seq}")
+                            self.send_raw(ack_pkt, desc=f"ACK(rx_seq={rx_seq})")
 
                 # Handle FRAG reassembly for ARTEMIS packets
                 if pkt_type == 0x42:
@@ -1719,6 +1769,15 @@ class Session:
         login_pkt_3, _ = self.build_packet(0xD0, login_body, force_seq=0)
         self.send_raw(login_pkt_3, desc=f"Login#3(cmdId=0,AppSeq={login_app_seq})")
         
+        # CRITICAL FIX (Issue #189): After Login #3, suppress ACK for camera's "ACK" packets
+        # Camera continuously sends "ACK" DATA packets during login processing (74+ in 3 seconds).
+        # After login retransmissions, we must STOP ACKing these to avoid endless loop.
+        # MITM ble_udp_1.log shows: ACK first "ACK" (Line 399) → send Login #2/#3 → NO MORE ACKs
+        # The working app does NOT ACK subsequent "ACK" packets after Login #3.
+        self._in_login_response_wait = True
+        if self.debug:
+            logger.debug("🔒 Entered login response wait mode - suppressing ACK for camera's 'ACK' packets")
+        
         # Step 2: Wait for Login Response (MsgType=3, AppSeq=1)
         # After the retransmissions, camera should send the login response.
         # MITM shows: ACK(Seq=1) followed by MsgType=3(Seq=1) with token payload.
@@ -1765,6 +1824,9 @@ class Session:
         # Step 5: Extract token from buffered responses
         logger.info(f">>> Extracting token from Login Response (AppSeq={login_app_seq})...")
         if not self.wait_for_login_token(timeout=max(8.0, self.raw_rx_window_seconds), expected_app_seq=login_app_seq):
+            # Disable login response wait mode (failed)
+            self._in_login_response_wait = False
+            
             logger.error(f"❌ Login Timeout (no token received, {len(self._token_packet_buffer)} MsgType=3 packets buffered)")
             if self.debug and self._token_packet_buffer:
                 logger.debug(f"Buffered MsgType=3 packets:")
@@ -1780,6 +1842,9 @@ class Session:
                         logger.debug(f"    Decrypted: {json_preview}...")
             return
 
+        # Disable login response wait mode (success)
+        self._in_login_response_wait = False
+        
         self.disable_token_buffering()
 
         # === POST-LOGIN OPERATIONS ===
