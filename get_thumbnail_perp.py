@@ -1,7 +1,43 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.25
+"""Wildkamera Thumbnail Downloader - consolidated v4.26
 
-Changes in this version (v4.25) - FIX for Issue #179:
+Changes in this version (v4.26) - CRITICAL FIX for Issue #181:
+- CRITICAL BUG FIX: Corrected LBCS offset detection in FRAG packet skip logic.
+  v4.25 implementation checked data[8:12] for "LBCS", but this was WRONG!
+  
+  Problem with v4.25:
+  - LBCS Discovery packets encode "LBCS" in RUDP header fields (Const, Pad, Seq), NOT payload
+  - RUDP header: offset 4='L', offset 5-6='BC', offset 7='S' → "LBCS" at bytes 4-8
+  - Payload starts at offset 8, so data[8:12] = 0x00000000 ≠ "LBCS"
+  - The skip logic NEVER executed, ACKs were still sent
+  - Result: Identical behavior to v4.24 (70+ FRAG floods, DISC signal, login timeout)
+  
+  Root Cause (Issue #181):
+  - Hex analysis of debug09012026_2.log shows:
+    Packet: f1 42 00 14 4c 42 43 53 00 00 00 00 00 00 00 00 43 43 43 4a 4a 00 00 00
+    Offset:  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+            F1 42 ... ... L  B  C  S  ↑Payload
+                          ^^^^^^^^^^^^
+                          LBCS at offset 4-8, NOT 8-12!
+  
+  - Normal RUDP packets: Const=0xD1, Pad=0x0000, Seq=0-255
+  - LBCS Discovery packets: Const='L' (0x4C), Pad='BC' (0x4243), Seq='S' (0x53)
+  - This creates "LBCS" pattern in header fields 4-7
+  
+  Fix:
+  - Changed check from `data[8:12] == b'LBCS'` to `data[4:8] == b'LBCS'`
+  - Now correctly detects LBCS Discovery FRAG packets and skips ACK
+  - This should prevent FRAG flood and allow login to succeed
+  
+  Expected behavior after fix:
+  Discovery → [3.0s pause] → Login#1 → Magic1 → 
+  RX FRAG(LBCS) [IGNORED, no ACK - FIX WORKS!] → RX ACK from camera → 
+  Login#2 → Login#3 → Login Response ✅
+  
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "🎯 KRITISCHER BUG IN v4.25 FIX (Issue #181)" 
+  for detailed hex analysis and bug discovery process.
+
+Changes in this version (v4.25) - FIX for Issue #179 (BROKEN - see v4.26):
 - CRITICAL FIX: Ignore LBCS Discovery FRAG packets (do NOT send ACK).
   Analysis of debug09012026_2.log reveals that even with 3.0s stabilization (v4.24),
   the camera floods with 70+ LBCS Discovery FRAG Seq=83 packets during login.
@@ -1264,15 +1300,25 @@ class Session:
 
                 # ACK all DATA and ALL FRAG packets (per spec: "Jedes eingehende Paket vom Typ 0xD0 oder 0x42")
                 # Note: We check _is_simple_ack_payload to avoid ACKing ACK packets (which would create an infinite loop)
-                # CRITICAL (Issue #179): Do NOT ACK LBCS Discovery FRAG packets
+                # CRITICAL (Issue #179/#181): Do NOT ACK LBCS Discovery FRAG packets
                 # Analysis shows camera floods with FRAG Seq=83 during login when we send ACKs.
                 # Sending ACKs creates endless loop: RX FRAG → TX ACK → RX "ACK" → RX FRAG...
                 # MITM ble_udp_1.log shows NO ACKs for Discovery FRAG packets in working app.
                 # Ignoring LBCS FRAG prevents flood and allows login to proceed.
+                #
+                # CRITICAL FIX (Issue #181): Corrected LBCS offset detection
+                # BUG in v4.25: Checked data[8:12] (payload), but LBCS is in RUDP header at offset 4-8!
+                # LBCS Discovery packets encode "LBCS" in RUDP header fields (Const, Pad, Seq):
+                # - Offset 4: Const = 'L' (0x4C)
+                # - Offset 5-6: Pad = 'BC' (0x4243)  
+                # - Offset 7: Seq = 'S' (0x53)
+                # Normal packets: Const=0xD1, Pad=0x0000, Seq=0-255
+                # LBCS packets: Const='L', Pad='BC', Seq='S' at offsets 4-7
+                # Payload starts at offset 8, so data[8:12] is 0x00000000, NOT "LBCS".
                 if pkt_type == 0xD0 or pkt_type == 0x42:
-                    # Skip ACK for LBCS Discovery FRAG packets (Issue #179)
-                    # Check: len >= 12 ensures we have RUDP header (8 bytes) + payload start (4 bytes for "LBCS")
-                    if pkt_type == 0x42 and len(data) >= 12 and data[8:12] == b'LBCS':
+                    # Skip ACK for LBCS Discovery FRAG packets (Issue #179/#181)
+                    # Check: len >= 8 ensures we have full RUDP header including LBCS at offset 4-8
+                    if pkt_type == 0x42 and len(data) >= 8 and data[4:8] == b'LBCS':
                         if self.debug:
                             logger.debug(f"⚠️ Ignoring LBCS Discovery FRAG Seq={rx_seq} (no ACK sent, skipping packet)")
                         # Skip this packet entirely - do not ACK, do not process
