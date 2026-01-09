@@ -1,0 +1,362 @@
+2026-01-09 19:32:35,671 - INFO - Verbinde WLAN…
+2026-01-09 19:32:42,476 - INFO - Socket: 192.168.43.20:35281
+2026-01-09 19:32:42,495 - INFO - Discovery…
+2026-01-09 19:32:42,519 - DEBUG - 📤 RUDP DISC Seq=83 BodyLen=20 to=192.168.43.1:40611 LBCS | hex=f14100144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:42,528 - DEBUG - 📤 RUDP DISC Seq=83 BodyLen=20 to=192.168.43.1:3333 LBCS | hex=f14100144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:42,545 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:42,554 - INFO - ✅ Discovery OK, active_port=40611
+2026-01-09 19:32:45,563 - INFO - >>> Camera stabilization complete (3.0s)
+2026-01-09 19:32:45,574 - DEBUG - 🔓 Token-Pufferung aktiviert
+2026-01-09 19:32:45,587 - INFO - >>> Login Handshake Step 1: Send Login Request (cmdId=0, AppSeq=1)
+2026-01-09 19:32:45,593 - DEBUG - 🔐 Login JSON: {"cmdId":0,"usrName":"admin","password":"admin","needVideo":0,"needAudio":0,"utcTime":1767983565,"su...
+2026-01-09 19:32:45,605 - DEBUG - 🔧 build_artemis_frame: MsgType=2, AppSeq=1, BodyLen=173
+2026-01-09 19:32:45,614 - DEBUG -    AppSeq bytes (LE): 01000000
+2026-01-09 19:32:45,626 - DEBUG - 📊 Login packet: RUDP seq=0, ARTEMIS MsgType=2, AppSeq=1
+2026-01-09 19:32:45,640 - DEBUG - 📤 RUDP DATA Seq=0 BodyLen=197 | ARTEMIS MsgType=2 AppSeq=1 ALen=173 to=192.168.43.1:40611 Login#1(cmdId=0,AppSeq=1) | hex=f1d000c5d1000000415254454d4953000200000001000000ad000000524a467673684d7353714534323179344c63785a7253733667623841566e3554594d5a354f2b44427478517852552b574d677251314f70452b435a74656c534e6a527364…(+105b)
+2026-01-09 19:32:45,646 - INFO - >>> Login Handshake Step 1b: Send Magic1 packet
+2026-01-09 19:32:45,655 - DEBUG - 📤 RUDP ACK Seq=3 BodyLen=10 to=192.168.43.1:40611 Magic1 | hex=f1d1000ad1000003000000000000
+2026-01-09 19:32:45,664 - DEBUG - 🔄 Reset global_seq: 3 → 0 (preparing for ACK Seq=1)
+2026-01-09 19:32:45,676 - INFO - >>> Login Handshake Step 1c: Wait for camera's ACK after Magic1
+2026-01-09 19:32:45,691 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:45,697 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:45,706 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:45,718 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:45,730 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:45,741 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:45,748 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:45,758 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-09 19:32:45,769 - DEBUG - 📤 RUDP ACK Seq=1 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000010000
+2026-01-09 19:32:45,785 - DEBUG - ✅ Camera ACK received after Magic1, proceeding immediately to login retransmissions
+2026-01-09 19:32:45,790 - INFO - >>> Login Handshake Step 1d: Retransmit Login #2
+2026-01-09 19:32:45,799 - DEBUG - 📤 RUDP DATA Seq=0 BodyLen=197 | ARTEMIS MsgType=2 AppSeq=1 ALen=173 to=192.168.43.1:40611 Login#2(cmdId=0,AppSeq=1) | hex=f1d000c5d1000000415254454d4953000200000001000000ad000000524a467673684d7353714534323179344c63785a7253733667623841566e3554594d5a354f2b44427478517852552b574d677251314f70452b435a74656c534e6a527364…(+105b)
+2026-01-09 19:32:45,808 - INFO - >>> Login Handshake Step 1e: Retransmit Login #3
+2026-01-09 19:32:45,819 - DEBUG - 📤 RUDP DATA Seq=0 BodyLen=197 | ARTEMIS MsgType=2 AppSeq=1 ALen=173 to=192.168.43.1:40611 Login#3(cmdId=0,AppSeq=1) | hex=f1d000c5d1000000415254454d4953000200000001000000ad000000524a467673684d7353714534323179344c63785a7253733667623841566e3554594d5a354f2b44427478517852552b574d677251314f70452b435a74656c534e6a527364…(+105b)
+2026-01-09 19:32:45,837 - DEBUG - 🔒 Entered login response wait mode - suppressing ACK for camera's 'ACK' packets
+2026-01-09 19:32:45,845 - INFO - >>> Login Handshake Step 2: Wait for Login Response (MsgType=3, AppSeq=1)
+2026-01-09 19:32:45,854 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:45,865 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:45,880 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:45,886 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:45,895 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:45,904 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:45,915 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:45,928 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:45,935 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:45,943 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:45,952 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:45,964 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:45,978 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:45,985 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:45,993 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,002 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,014 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,029 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,035 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,044 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,055 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,067 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,079 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,086 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,095 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,106 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,121 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,127 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,136 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,145 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,156 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,170 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,177 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,186 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,198 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,213 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,219 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,227 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,237 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,248 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,261 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,267 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,275 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,284 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,296 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,310 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,317 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,325 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,334 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,346 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,360 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,367 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,376 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,387 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,399 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,410 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,417 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,426 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,437 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,453 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,459 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,467 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,476 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,487 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,501 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,509 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,518 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,529 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,544 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,550 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,559 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,568 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,579 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,592 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,599 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,607 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,616 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,628 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,642 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,648 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,656 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,666 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,678 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,692 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,699 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,708 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,719 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,731 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,742 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,749 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,758 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,769 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,784 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,790 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,799 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,808 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,819 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,833 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,841 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,850 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,861 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,876 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,882 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-09 19:32:46,890 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,899 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,911 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,924 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,930 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,938 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,947 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,959 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:46,973 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:46,980 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:46,988 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:46,997 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,010 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,023 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,030 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,039 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,050 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,062 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,073 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,080 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,089 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,100 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,116 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,122 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,130 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,139 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,150 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,164 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,172 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,181 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,192 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,207 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,213 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,221 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,230 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,257 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,270 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,276 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,284 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,293 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,305 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,319 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,325 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,333 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,343 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,355 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,369 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,375 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,384 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,395 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,407 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,418 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,425 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,434 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,445 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,460 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,466 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,475 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,484 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,495 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,509 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,516 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,525 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,536 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,551 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,557 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,566 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,575 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,586 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,599 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,605 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,613 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,622 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,634 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,648 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,654 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,662 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,672 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,684 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,698 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,704 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,713 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,724 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,736 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,748 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,755 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,764 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,775 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,790 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,796 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,805 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,814 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,825 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,838 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,845 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,854 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,866 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,881 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,887 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,895 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,904 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-09 19:32:47,915 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,928 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,935 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,943 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,952 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:47,964 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:47,978 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:47,984 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:47,992 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,002 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,014 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,028 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,034 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,043 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,054 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,066 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,077 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,084 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,093 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,104 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,119 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,125 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,133 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,142 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,153 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,166 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,174 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,183 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,194 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,209 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,215 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,223 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,233 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,244 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,257 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,263 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,271 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,280 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,292 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,306 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,312 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,320 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,330 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,341 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,355 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,362 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,371 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,382 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,394 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,405 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,412 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,421 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,432 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,447 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,454 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,462 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,471 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,482 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,495 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,503 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,512 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,523 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,538 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,544 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,552 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,561 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,572 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,585 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,591 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,600 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,609 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,620 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,635 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,641 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,649 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,659 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,672 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,686 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,693 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,701 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,713 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,725 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,736 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,743 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,752 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-09 19:32:48,763 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (waiting for login response)
+2026-01-09 19:32:48,778 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-09 19:32:48,784 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-09 19:32:48,792 - DEBUG - 📥 RUDP ACK Seq=1 BodyLen=6 from=('192.168.43.1', 40611) | hex=f1d10006d10000010000
+2026-01-09 19:32:48,802 - DEBUG - 📥 RUDP ACK Seq=2 BodyLen=8 from=('192.168.43.1', 40611) | hex=f1d10008d100000200000000
+2026-01-09 19:32:48,813 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-09 19:32:48,826 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-09 19:32:48,984 - WARNING - ⚠️ No Login Response received within timeout
+2026-01-09 19:32:48,993 - INFO - Attempting to continue with stabilization and token wait...
+2026-01-09 19:32:49,004 - INFO - >>> Login Handshake Step 3: Stabilization (send heartbeats)
+2026-01-09 19:32:49,019 - DEBUG - 🔧 build_artemis_frame: MsgType=2, AppSeq=2, BodyLen=25
+2026-01-09 19:32:49,025 - DEBUG -    AppSeq bytes (LE): 02000000
+2026-01-09 19:32:49,033 - DEBUG - 📊 Heartbeat AppSeq=2, cnt=1
+2026-01-09 19:32:49,042 - DEBUG - 📤 RUDP DATA Seq=1 BodyLen=49 | ARTEMIS MsgType=2 AppSeq=2 ALen=25 to=192.168.43.1:40611 Heartbeat AppSeq=2 | hex=f1d00031d1000001415254454d4953000200000002000000190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00
+2026-01-09 19:32:49,054 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-09 19:32:49,067 - DEBUG - 📥 RUDP ACK Seq=1 BodyLen=6 from=('192.168.43.1', 40611) | hex=f1d10006d10000010001
+2026-01-09 19:32:50,126 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-09 19:32:50,286 - INFO - >>> Waiting 2.0s for additional responses...
+2026-01-09 19:32:51,150 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-09 19:32:52,186 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-09 19:32:52,350 - DEBUG - 🧾 RAW-RX-DUMP aktiv für 20.0s (bis 1767983592.3507006)
+2026-01-09 19:32:52,357 - INFO - >>> Extracting token from Login Response (AppSeq=1)...
+2026-01-09 19:32:53,217 - DEBUG - 🧾 RAW RX from=192.168.43.1:40611 len=4
+0000: f1e00000
+2026-01-09 19:32:53,228 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-09 19:32:54,253 - DEBUG - 🧾 RAW RX from=192.168.43.1:40611 len=4
+0000: f1e00000
+2026-01-09 19:32:54,267 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-09 19:32:55,277 - DEBUG - 🧾 RAW RX from=192.168.43.1:40611 len=4
+0000: f1e00000
+2026-01-09 19:32:55,286 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-09 19:32:56,315 - DEBUG - 🧾 RAW RX from=192.168.43.1:40611 len=4
+0000: f1e00000
+2026-01-09 19:32:56,328 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-09 19:32:56,339 - DEBUG - 🧾 RAW RX from=192.168.43.1:40611 len=4
+0000: f1f00000
+2026-01-09 19:32:56,346 - DEBUG - 📥 F1 DISC (short,len=4) f1f00000 from=('192.168.43.1', 40611) | hex=f1f00000
+2026-01-09 19:33:12,436 - ERROR - ❌ Login Timeout (no token received, 0 MsgType=3 packets buffered)
