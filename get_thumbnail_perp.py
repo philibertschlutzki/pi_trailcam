@@ -1,5 +1,34 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.26
+"""Wildkamera Thumbnail Downloader - consolidated v4.27
+
+Changes in this version (v4.27) - CRITICAL FIX for Issue #182:
+- CRITICAL FIX: Added missing Magic2 packet to login handshake sequence.
+  Analysis of debug09012026_4.log (failed login with v4.26) vs debug05012026.log (successful login)
+  reveals that Magic2 packet is ESSENTIAL for camera to send login response.
+  
+  Problem with v4.26:
+  - v4.26 correctly fixed LBCS detection (Issue #181) - FRAG packets are properly ignored ✓
+  - However, login still failed with "Login Timeout (0 MsgType=3 packets buffered)"
+  - Camera sent 74 ACK packets for our login requests but NEVER sent MsgType=3 response
+  - Camera sent periodic ERROR (0xE0) packets during wait
+  
+  Root Cause (Issue #182):
+  - Comparison of packet flows shows MISSING Magic2 packet in v4.26:
+    * Successful (debug05012026.log): Hello → Magic1(Seq=3) → Magic2(Seq=1) → MsgType=3 ✓
+    * Failed (debug09012026_4.log): Login#1 → Magic1(Seq=3) → [NO Magic2!] → Login#2/3 → TIMEOUT ✗
+  - Camera expects BOTH Magic1 AND Magic2 before responding with login token
+  - Without Magic2, camera acknowledges packets but never enters authenticated state
+  
+  Fix:
+  - Added Magic2 packet (force_seq=1, MAGIC_BODY_2) after Magic1 in login handshake
+  - Removed incorrect login retransmission logic (#2, #3) that was masking the real issue
+  - Simplified wait logic: after Magic2, directly wait for MsgType=3 response
+  
+  Expected behavior after fix:
+  Discovery → [3.0s pause] → Login#1(Seq=0) → Magic1(Seq=3) → Magic2(Seq=1) → 
+  Camera sends ACK(Seq=1) → Camera sends MsgType=3(Seq=1) with token ✅
+  
+  Note: This fix is independent of the v4.26 LBCS fix - BOTH are required for login to succeed.
 
 Changes in this version (v4.26) - CRITICAL FIX for Issue #181:
 - CRITICAL BUG FIX: Corrected LBCS offset detection in FRAG packet skip logic.
@@ -1563,64 +1592,18 @@ class Session:
         magic1_pkt, _ = self.build_packet(0xD1, MAGIC_BODY_1, force_seq=3)
         self.send_raw(magic1_pkt, desc="Magic1")
         
-        # CRITICAL FIX (Issue #166): Reset global_seq to 0 after Magic1
-        # This ensures the next ACK (for camera's ACK response) will have Seq=1, matching
-        # MITM behavior (ble_udp_1.log line 399). Without this, sequence numbers are wrong.
-        # NOTE: build_packet() with force_seq=3 set global_seq=3, and we immediately reset it
-        # to 0 here. This is INTENTIONAL - it's part of the critical handshake sequence where
-        # the sequence number "jumps" from Login(Seq=0) to Magic1(Seq=3) then resets to 0
-        # for proper ACK synchronization. This matches the MITM-captured behavior exactly.
-        if self.debug:
-            logger.debug(f"🔄 Resetting global_seq from {self.global_seq} to 0 (post-Magic1 sync)")
-        self.global_seq = 0
+        # CRITICAL FIX (Issue #182): Send Magic2 packet after Magic1
+        # Analysis of successful login (debug05012026.log) shows Magic2 is REQUIRED for login to succeed.
+        # The successful flow is: Hello → Magic1 (Seq=3) → Magic2 (Seq=1) → Wait → Camera sends MsgType=3
+        # Without Magic2, camera never sends login response (as seen in debug09012026_4.log).
+        # Magic2 uses Seq=1 (not Seq=0) and has a shorter payload than Magic1.
+        logger.info(">>> Login Handshake Step 1c: Send Magic2 packet")
+        magic2_pkt, _ = self.build_packet(0xD1, MAGIC_BODY_2, force_seq=1)
+        self.send_raw(magic2_pkt, desc="Magic2")
         
-        # Step 1c: Wait for camera's ACK response after Magic1
-        # CRITICAL: The camera sends an ACK with "ACK" payload (ble_udp_1.log line 396) AFTER 
-        # processing Magic1. This ACK signals the camera is ready for login retransmissions.
-        # The pump() will automatically send an ACK for this ACK (with Seq=1 because we reset
-        # global_seq to 0 above). This ACK exchange is a critical handshake - without it, 
-        # the camera ignores login retransmissions.
-        # NOTE: no_heartbeat=True prevents heartbeat interference (Issue #159).
-        # CRITICAL (Issue #174): pump() must STOP IMMEDIATELY after receiving ACK "ACK".
-        # MITM shows Login #2 is sent < 10ms after ACK TX. Long pump timeout causes delay.
-        logger.info(">>> Login Handshake Step 1c: Wait for camera's ACK after Magic1")
-        
-        def accept_ack_then_stop(pkt: bytes) -> bool:
-            """Accept ACK with 'ACK' payload, then stop pump immediately.
-            
-            This ensures Login #2 is sent IMMEDIATELY after ACK exchange,
-            matching MITM timing (< 10ms between ACK TX and Login #2 TX).
-            """
-            return self._is_simple_ack_payload(pkt)
-        
-        # pump() will stop as soon as ACK is received (instead of waiting full timeout)
-        ack_received = self.pump(timeout=0.5, accept_predicate=accept_ack_then_stop, filter_evt=False, no_heartbeat=True)
-        
-        if ack_received:
-            if self.debug:
-                logger.debug("✅ Camera ACK received after Magic1, proceeding immediately to login retransmissions")
-        else:
-            # ACK not received within timeout - log warning but continue anyway
-            # The camera might still accept login retransmissions
-            logger.warning(f"⚠️ Camera ACK not received within timeout after Magic1, proceeding with login retransmissions anyway")
-        
-        # Step 1d: Retransmit login request #2 (per MITM capture ble_udp_1.log line 402)
-        # CRITICAL: The working app sends the login request THREE times total.
-        # This is not error handling - it's part of the expected protocol flow.
-        # The camera firmware appears to require multiple transmissions before responding.
-        # IMPORTANT: Use same Seq=0 and same login_body (it's a retransmission, not a new request)
-        logger.info(">>> Login Handshake Step 1d: Retransmit Login #2")
-        login_pkt2, _ = self.build_packet(0xD0, login_body, force_seq=0)
-        self.send_raw(login_pkt2, desc=f"Login#2(cmdId=0,AppSeq={login_app_seq})")
-        
-        # Step 1e: Retransmit login request #3 (per MITM capture ble_udp_1.log line 417)
-        # The camera typically responds after the third transmission
-        logger.info(">>> Login Handshake Step 1e: Retransmit Login #3")
-        login_pkt3, _ = self.build_packet(0xD0, login_body, force_seq=0)
-        self.send_raw(login_pkt3, desc=f"Login#3(cmdId=0,AppSeq={login_app_seq})")
-        
-        # Step 2: Wait for and ACK the login response (MsgType=3, AppSeq=1)
-        # After the triple transmission, the camera should now respond (MITM line 463)
+        # Step 2: Wait for Login Response (MsgType=3, AppSeq=1)
+        # After Magic1 and Magic2, the camera will send the login response.
+        # Analysis of debug05012026.log shows: Magic1 → Magic2 → Camera sends MsgType=3(Seq=1)
         # CRITICAL: no_heartbeat=True prevents heartbeat from incrementing AppSeq during wait,
         # ensuring clean AppSeq sequence for login response matching
         logger.info(">>> Login Handshake Step 2: Wait for Login Response (MsgType=3, AppSeq=1)")
