@@ -1,5 +1,38 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.24
+"""Wildkamera Thumbnail Downloader - consolidated v4.25
+
+Changes in this version (v4.25) - FIX for Issue #179:
+- CRITICAL FIX: Ignore LBCS Discovery FRAG packets (do NOT send ACK).
+  Analysis of debug09012026_2.log reveals that even with 3.0s stabilization (v4.24),
+  the camera floods with 70+ LBCS Discovery FRAG Seq=83 packets during login.
+  
+  Problem with v4.24:
+  - Camera sends FRAG Seq=83 (LBCS Discovery) continuously during login phase
+  - Our implementation sends ACKs for these FRAG packets
+  - This creates endless loop: RX FRAG → TX ACK → RX "ACK" → RX FRAG (70+ iterations)
+  - Pattern repeats over ~3 seconds (lines 20-325 in debug09012026_2.log)
+  - Camera sends F1 ERR (0xE0) signals during flood (lines 168, 294)
+  - Camera sends F1 DISC (0xF0) signal, aborting session (line 409)
+  - Login timeout - no token received (0 MsgType=3 packets buffered)
+  
+  Root Cause Analysis (Issue #179):
+  1. Sending ACKs for LBCS Discovery FRAG keeps camera in discovery mode
+  2. Camera interprets ACK as "client wants more discovery" → sends more FRAGs
+  3. MITM ble_udp_1.log shows NO ACKs for Discovery FRAG packets in working app
+  4. Working app IGNORES Discovery FRAG packets (lines 374-377), allowing login to proceed
+  
+  Fix:
+  - Modified pump() method to detect LBCS Discovery FRAG packets (data[8:12] == b'LBCS')
+  - Skip ACK for these packets while still logging them
+  - This prevents the FRAG+ACK loop and allows camera to exit discovery mode
+  - Normal FRAG reassembly for ARTEMIS packets continues to work
+  
+  Expected behavior after fix:
+  Discovery → [3.0s pause] → Login#1 → Magic1 → 
+  RX FRAG(LBCS) [IGNORED, no ACK] → RX ACK from camera → 
+  Login#2 → Login#3 → Login Response ✅
+  
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "🎯 KRITISCHER ROOT CAUSE (Issue #179)" for detailed analysis.
 
 Changes in this version (v4.24) - FIX for Issue #177:
 - CRITICAL FIX: Increased camera stabilization delay from 1.0s to 3.0s.
@@ -1231,8 +1264,20 @@ class Session:
 
                 # ACK all DATA and ALL FRAG packets (per spec: "Jedes eingehende Paket vom Typ 0xD0 oder 0x42")
                 # Note: We check _is_simple_ack_payload to avoid ACKing ACK packets (which would create an infinite loop)
+                # CRITICAL (Issue #179): Do NOT ACK LBCS Discovery FRAG packets
+                # Analysis shows camera floods with FRAG Seq=83 during login when we send ACKs.
+                # Sending ACKs creates endless loop: RX FRAG → TX ACK → RX "ACK" → RX FRAG...
+                # MITM ble_udp_1.log shows NO ACKs for Discovery FRAG packets in working app.
+                # Ignoring LBCS FRAG prevents flood and allows login to proceed.
                 if pkt_type == 0xD0 or pkt_type == 0x42:
-                    if not self._is_simple_ack_payload(data) and self.active_port:
+                    # Skip ACK for LBCS Discovery FRAG packets (Issue #179)
+                    # Check: len >= 12 ensures we have RUDP header (8 bytes) + payload start (4 bytes for "LBCS")
+                    if pkt_type == 0x42 and len(data) >= 12 and data[8:12] == b'LBCS':
+                        if self.debug:
+                            logger.debug(f"⚠️ Ignoring LBCS Discovery FRAG Seq={rx_seq} (no ACK sent, skipping packet)")
+                        # Skip this packet entirely - do not ACK, do not process
+                        continue
+                    elif not self._is_simple_ack_payload(data) and self.active_port:
                         ack_pkt = self.build_ack_10(rx_seq)
                         if self.debug:
                             logger.debug(f"🔧 Auto-ACK: rx_seq={rx_seq}, type=0x{pkt_type:02X}, current_global_seq={self.global_seq}")
@@ -1251,7 +1296,7 @@ class Session:
                         data = re
                     else:
                         if self.debug:
-                            logger.debug("FRAG without ARTEMIS signature (likely LBCS/Discovery); ACK sent")
+                            logger.debug("FRAG without ARTEMIS signature (non-LBCS)")
 
             # Token buffer: store MsgType=3 responses (raw) while buffering is active
             if self._buffering_active:

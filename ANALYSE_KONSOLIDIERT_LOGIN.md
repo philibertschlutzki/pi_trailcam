@@ -2332,3 +2332,417 @@ Check for:
   - `tests/debug04012026.txt` bis `tests/debug08012026_1.log` (frühere Iterationen)
   - `tests/debug09012026_1.log` (aktuell - zeigt FRAG-Flut Problem)
 - **Implementierung**: `get_thumbnail_perp.py` (aktuell v4.23, TODO: v4.24)
+
+---
+
+## 🎯 KRITISCHER ROOT CAUSE (Issue #179 - 2026-01-09)
+
+### Zusammenfassung
+
+**Issue**: #179  
+**Datum**: 2026-01-09 12:26:05  
+**Symptom**: Login Timeout - MASSIVE FRAG flood despite 3.0s stabilization, camera sends ERR (0xE0) and DISC (0xF0) signals  
+**Status v4.24**: 3.0s stabilization delay implemented, but camera STILL floods with FRAG packets during login  
+
+### Analyse debug09012026_2.log
+
+**KRITISCHE BEOBACHTUNG**: Die 3.0s Stabilisierungspause (implementiert in v4.24 für Issue #177) ist NICHT ausreichend. Die Kamera verbleibt PERMANENT im Discovery-Modus und sendet kontinuierlich Discovery-FRAG-Pakete während der gesamten Login-Phase.
+
+**Aktueller Ablauf (debug09012026_2.log)**:
+```
+Zeile 7:   ✅ Discovery OK, active_port=40611                  12:26:01,949
+Zeile 8:   >>> Camera stabilization complete (3.0s)            12:26:04,964 (3.0s pause ✅)
+Zeile 15:  TX Login #1 (Seq=0, AppSeq=1)                       12:26:05,033
+Zeile 17:  TX Magic1 (Seq=3)                                   12:26:05,057
+Zeile 20:  RX FRAG Seq=83 (LBCS Discovery!)                    12:26:05,084 ❌ PROBLEM!
+Zeile 32:  RX DATA Seq=0 "ACK"                                 12:26:05,208 ✅ (expected ACK after Magic1)
+Zeile 33:  ✅ Camera ACK received after Magic1                 12:26:05,214
+
+KATASTROPHALES PROBLEM: ENDLOSE FRAG+ACK-Flut während Login-Wait-Phase
+Zeilen 39-325: 70+ FRAG Seq=83 Pakete + "ACK" Pakete (LBCS Discovery!)
+  - Pattern: RX FRAG → TX ACK → RX "ACK" → RX FRAG → TX ACK → RX "ACK" ...
+  - Frequenz: ~10-20ms zwischen Paketen  
+  - Dauer: ~3.0 SEKUNDEN! (von 05,276 bis 08,287)
+  - Zwischendurch: 2x F1 ERR (0xE0) Signale (Zeilen 168, 294)
+  
+Zeile 408:  RX ACK Seq=1                                       12:26:09,034
+Zeile 409:  RX F1 DISC (0xF0)                                  12:26:09,051 ❌ CAMERA DISCONNECTED!
+Zeile 413:  ❌ Login Timeout (0 MsgType=3 packets buffered)    12:26:31,632
+```
+
+### Vergleich: MITM vs. debug09012026_2.log
+
+#### MITM ble_udp_1.log (ERFOLGREICHER Login)
+
+```
+Zeile 372: RX DATA Seq=0 "ACK" payload        ← Pre-Login ACK (VOR Login)
+Zeile 378: TX Login #1 (Seq=0, AppSeq=1)
+Zeile 393: TX Magic1 (Seq=3)
+Zeile 396: RX DATA Seq=0 "ACK" payload        ← ACK nach Magic1
+Zeile 399: TX ACK (Seq=1) für camera's ACK
+Zeile 402: TX Login #2 (Seq=0, AppSeq=1)
+Zeile 417: TX Login #3 (Seq=0, AppSeq=1)
+Zeile 432: RX ACK (Seq=1)
+Zeile 435: RX Login Response (MsgType=3, AppSeq=1) ✅
+
+KRITISCH: KEINE FRAG-Pakete nach der initialen Discovery!
+```
+
+#### debug09012026_2.log (FEHLERHAFTER Login trotz v4.24)
+
+```
+Zeile 8:   >>> Camera stabilization complete (3.0s)           12:26:04,964
+Zeile 15:  TX Login #1 (Seq=0, AppSeq=1)                      12:26:05,033
+Zeile 17:  TX Magic1 (Seq=3)                                  12:26:05,057
+Zeile 20-325: 70+ FRAG Seq=83 + "ACK" Pakete                  12:26:05,084 - 12:26:08,287 ❌
+Zeile 168: RX F1 ERR (0xE0)                                   12:26:06,608 ❌
+Zeile 294: RX F1 ERR (0xE0)                                   12:26:07,947 ❌
+Zeile 408: RX ACK Seq=1                                       12:26:09,034
+Zeile 409: RX F1 DISC (0xF0)                                  12:26:09,051 ❌ CAMERA DISCONNECTED!
+
+KRITISCH: MASSIVE FRAG-Flut TROTZ 3.0s Stabilisierung!
+```
+
+### Kritische Erkenntnisse
+
+#### Problem 1: Kamera verbleibt PERMANENT im Discovery-Modus
+
+**Beweis**: 70+ FRAG Seq=83 Pakete (LBCS Discovery) über ~3 Sekunden während Login-Handshake
+- Diese Pakete kommen NACH der 3.0s Stabilisierungspause
+- Sie beginnen direkt nach Magic1 (Zeile 20) und dauern bis zur DISC-Meldung (Zeile 409) an
+- Die Kamera sendet diese Pakete aktiv und kontinuierlich in einem Loop
+- Die Frequenz zeigt: Kamera ist in einem aktiven Discovery-Retry-Modus gefangen
+
+**Vergleich v4.23 (debug09012026_1.log) vs. v4.24 (debug09012026_2.log)**:
+- v4.23 (1.0s Stabilisierung): ~30 FRAG-Pakete über ~800ms
+- v4.24 (3.0s Stabilisierung): ~70 FRAG-Pakete über ~3.0 Sekunden
+- **ERGEBNIS**: Längere Stabilisierung hilft NICHT! Das Problem ist fundamentaler.
+
+#### Problem 2: F1 ERR (0xE0) Signale während FRAG-Flut
+
+**Beobachtung**: Zwei ERR Signale (Zeilen 168, 294) während der FRAG-Flut
+
+```
+Zeile 168: 📥 F1 ERR (short,len=4) f1e00000                    12:26:06,608
+Zeile 294: 📥 F1 ERR (short,len=4) f1e00000                    12:26:07,947
+```
+
+**Bedeutung**: 
+- 0xE0 ist ein ERROR-Signal im RUDP-Protokoll
+- Dies deutet darauf hin, dass die Kamera einen Protokollfehler erkannt hat
+- Möglicherweise: Die Kamera erwartet eine andere Reaktion auf ihre FRAG-Pakete
+
+#### Problem 3: ACK für FRAG-Pakete könnte das Problem VERSCHLIMMERN
+
+**Aktuelle Implementierung**: Die Implementierung sendet automatisch ACKs für ALLE FRAG Seq=83 Pakete
+
+**Pattern in debug09012026_2.log**:
+```
+Zeile 20:  RX FRAG Seq=83
+Zeile 22:  TX ACK Seq=83                      ← Auto-ACK
+Zeile 32:  RX DATA Seq=0 "ACK"                ← Kamera ACKt unseren ACK!
+Zeile 24:  RX FRAG Seq=83
+Zeile 26:  TX ACK Seq=83
+Zeile 43:  RX DATA Seq=0 "ACK"
+... (70+ Wiederholungen)
+```
+
+**Problem**: 
+- Die Kamera interpretiert unsere ACKs als "Client ist noch im Discovery"
+- Dies könnte die Kamera in einer Discovery-Loop gefangen halten
+- Jeder ACK triggert ein weiteres FRAG vom Kamera
+- Dies erzeugt eine endlose FRAG+ACK+ACK Loop
+
+#### Problem 4: MITM zeigt KEIN Discovery-ACK-Pattern
+
+**MITM-Analyse**: In ble_udp_1.log gibt es:
+- Zeile 374-377: EINE FRAG Seq=83 Response auf Discovery
+- DANACH: KEINE weiteren FRAG-Pakete
+- Keine ACK+ACK-Loop wie in unserer Implementierung
+
+**Theorie**: Die funktionierende App sendet KEIN ACK für das Discovery-FRAG-Paket, sondern ignoriert es oder behandelt es anders.
+
+### Neue Hypothesen (Issue #179)
+
+#### ✅ Hypothese 1: Discovery-FRAG-Pakete sollten NICHT ge-ACKt werden (SEHR WAHRSCHEINLICH)
+
+**Begründung**:
+- MITM zeigt: Nach Discovery-Request kommt EIN FRAG Seq=83, aber KEINE ACKs dafür
+- Unsere Implementierung: Sendet ACKs für ALLE FRAG Seq=83 → triggert endlose Loop
+- Die Kamera interpretiert ACKs als "Client möchte Discovery fortsetzen"
+- Dies hält die Kamera im Discovery-Modus gefangen
+
+**Fix-Strategie**:
+Option A: Ignoriere ALLE FRAG-Pakete während Login-Phase (KEIN ACK senden)
+```python
+# In pump(), bei FRAG-Paketen:
+if pkt_type == 0x42:  # FRAG
+    # Check if LBCS Discovery packet
+    if len(data) >= 12 and data[8:12] == b'LBCS':
+        logger.debug(f"⚠️ Ignoring LBCS Discovery FRAG Seq={rx_seq} (no ACK sent)")
+        continue  # Skip ACK, do not respond
+    
+    # Normal FRAG handling for other packets...
+```
+
+Option B: Setze Flag nach Discovery, ignoriere FRAG bis Login abgeschlossen
+```python
+# In discovery():
+self.discovery_complete = True
+
+# In pump():
+if pkt_type == 0x42 and self.discovery_complete:
+    if len(data) >= 12 and data[8:12] == b'LBCS':
+        logger.debug(f"⚠️ Ignoring post-discovery LBCS FRAG (discovery already complete)")
+        continue
+```
+
+**KRITISCH**: Dies widerspricht der RUDP-Spezifikation (alle DATA/FRAG-Pakete müssen ge-ACKt werden), ABER das MITM-Verhalten zeigt, dass die funktionierende App genau dies tut!
+
+#### ⚠️ Hypothese 2: Discovery ist nicht richtig abgeschlossen
+
+**Begründung**:
+- Die Kamera sendet kontinuierlich FRAG Seq=83 (LBCS Discovery)
+- Dies deutet darauf hin, dass die Kamera denkt, Discovery ist noch aktiv
+- Möglicherweise: Unser Discovery-ACK ist falsch oder fehlt
+
+**MITM-Analyse der Discovery-Phase**:
+```
+[Vor Zeile 370]: Discovery-Request TX
+Zeile 374-377: RX FRAG Seq=83 (LBCS) - Discovery Response
+Zeile 372: RX DATA "ACK" - Was ist dies?
+```
+
+**Problem**: Die MITM-Capture zeigt Zeile 372 ein "ACK"-Paket VOR dem Discovery-FRAG. Dies ist unklar - möglicherweise ein ACK für einen früheren Request?
+
+**Test**: Prüfen, ob wir nach Discovery einen finalen "Stop Discovery"-Command senden müssen?
+
+#### ⚠️ Hypothese 3: F1 ERR (0xE0) Signal ist die eigentliche Fehlerursache
+
+**Begründung**:
+- ERR Signale erscheinen während der FRAG-Flut (Zeilen 168, 294)
+- Diese könnten der GRUND sein, warum die Kamera dann DISC sendet
+- Möglicherweise: Die Kamera erkennt einen Protokollfehler
+
+**Mögliche Ursachen für ERR Signal**:
+1. Falsche ACK-Sequenznummer (wir senden ACK Seq=83 für FRAG Seq=83)
+2. ACK sollte NICHT gesendet werden für Discovery-FRAG
+3. Global_seq wird durch FRAG-ACKs durcheinander gebracht
+
+**Test**: Unterdrücke FRAG-ACKs und prüfe, ob ERR Signale verschwinden
+
+### Vergleichstabelle: Alle Versionen
+
+| Aspekt | MITM (funktionierend) | v4.23 (1.0s) | v4.24 (3.0s) | Unterschied |
+|--------|----------------------|--------------|--------------|-------------|
+| Stabilisierungspause | Unbekannt | 1.0s | 3.0s | ⚠️ Hilft nicht |
+| FRAG nach Stabilisierung | ❌ KEINE | ✅ ~30 über ~800ms | ✅ ~70 über ~3s | ❌ **HAUPTPROBLEM!** |
+| ACK für FRAG Seq=83 | ❌ KEINE ACKs sichtbar | ✅ Gesendet | ✅ Gesendet | ❌ **ROOT CAUSE?** |
+| FRAG+ACK Loop | ❌ KEIN Loop | ✅ Loop vorhanden | ✅ Loop vorhanden | ❌ **KRITISCH!** |
+| F1 ERR (0xE0) Signal | ❌ KEIN ERR | Nicht sichtbar | ✅ 2x ERR | ❌ **NEU!** |
+| F1 DISC (0xF0) Signal | ❌ KEIN DISC | ✅ DISC | ✅ DISC | ❌ **KONSISTENT** |
+| Login Response | ✅ Empfangen | ❌ NICHT empfangen | ❌ NICHT empfangen | ❌ **HAUPTPROBLEM!** |
+
+### Empfohlene Nächste Schritte (Priorisiert)
+
+#### 1. KRITISCH: Ignoriere LBCS Discovery FRAG-Pakete (EMPFOHLEN)
+
+**Änderung in get_thumbnail_perp.py pump() method**:
+
+```python
+def pump(self, timeout, accept_cmd=None, accept_predicate=None, filter_evt=True, no_heartbeat=False):
+    """
+    ...existing docstring...
+    """
+    start = time.time()
+    while time.time() - start < timeout:
+        # ... existing code ...
+        
+        if pkt_type == 0x42:  # FRAG
+            # CRITICAL (Issue #179): Ignore LBCS Discovery FRAG packets
+            # Analysis shows camera floods with FRAG Seq=83 even after 3.0s stabilization.
+            # Sending ACKs creates endless loop: RX FRAG → TX ACK → RX "ACK" → RX FRAG...
+            # MITM shows NO ACKs for Discovery FRAG packets.
+            # Ignoring these prevents FRAG flood and allows login to proceed.
+            if len(data) >= 12 and data[8:12] == b'LBCS':
+                logger.debug(f"⚠️ Ignoring LBCS Discovery FRAG Seq={rx_seq} during login (no ACK sent)")
+                continue  # Skip ACK, do not process further
+            
+            # Normal FRAG handling for non-Discovery packets
+            # ... existing FRAG processing code ...
+```
+
+**Erwartetes Verhalten nach Fix**:
+```
+>>> Discovery OK
+>>> Camera stabilization complete (3.0s)
+>>> Login Handshake Step 1: Send Login Request
+📤 TX Login #1 (Seq=0, AppSeq=1)
+>>> Login Handshake Step 1b: Send Magic1 packet
+📤 TX Magic1 (Seq=3)
+📥 RX FRAG Seq=83 (LBCS)                        ← Ignoriert, kein ACK!
+📥 RX DATA Seq=0 "ACK"                          ← Kamera-ACK für Magic1
+>>> Login Handshake Step 1d: Retransmit Login #2
+📤 TX Login #2 (Seq=0, AppSeq=1)
+>>> Login Handshake Step 1e: Retransmit Login #3
+📤 TX Login #3 (Seq=0, AppSeq=1)
+>>> Wait for Login Response
+📥 RX ARTEMIS MsgType=3 AppSeq=1                ← Login Response! ✅
+✅ TOKEN OK (login, strict) token_len=XXX
+```
+
+#### 2. ALTERNATIV: Sende "Discovery Stop"-Command
+
+**Theorie**: Möglicherweise gibt es einen expliziten Command, um Discovery zu beenden
+
+**Test**: Analysiere MITM genauer auf Commands zwischen Discovery und Login
+
+#### 3. Verbessertes Logging: FRAG-Pakete zählen und warnen
+
+```python
+# Nach Discovery, vor Login:
+frag_count = 0
+logger.info(">>> Checking for residual Discovery FRAG packets...")
+check_start = time.time()
+while time.time() - check_start < 0.5:
+    try:
+        data, _ = self.sock.recvfrom(2048)
+        if len(data) >= 12 and data[0] == 0xF1 and data[1] == 0x42 and data[8:12] == b'LBCS':
+            frag_count += 1
+    except socket.timeout:
+        break
+
+if frag_count > 0:
+    logger.warning(f"⚠️ Camera sent {frag_count} Discovery FRAG packets after stabilization!")
+    logger.warning(f"⚠️ This indicates camera may still be in discovery mode")
+```
+
+### Status-Update
+
+**v4.15-v4.22**: Verschiedene Login-Handshake Fixes (Seq, Magic1, Retransmissions, Pre-Login-Entfernung, etc.)  
+**v4.23**: 1.0s Stabilisierungspause implementiert (Issue #174) - FRAG-Flut reduziert aber nicht gelöst  
+**v4.24**: 3.0s Stabilisierungspause implementiert (Issue #177) - **FRAG-Flut VERSCHLIMMERT!**  
+**v4.25**: ✅ **IMPLEMENTIERT** - Ignoriere LBCS Discovery FRAG-Pakete (Issue #179) - **ERWARTETE LÖSUNG**
+
+### Schätzung verbleibende Iterationen
+
+**Optimistisches Szenario** (1-2 Iterationen):
+1. Ignoriere LBCS FRAG → Test → **SUCCESS** (wahrscheinlichste Lösung)
+2. Falls nicht: Zusätzliches Debugging → Final Fix
+
+**Realistisches Szenario** (2-3 Iterationen):
+1. Ignoriere LBCS FRAG → Test (möglicherweise teilweise Verbesserung)
+2. Weitere Analyse basierend auf neuem Log (z.B. andere FRAG-Quellen)
+3. Refinement + Final Test → Success
+
+**Pessimistisches Szenario** (4-5 Iterationen):
+- Kamera hat Firmware-Bug, erfordert speziellen "Discovery Exit"-Command
+- Multiple FRAG-Quellen (nicht nur LBCS)
+- Timing-Issues mit FRAG-Unterdrückung
+- Möglicherweise BLE-Phase erforderlich vor UDP
+
+**Empfehlung**: **2-3 Iterationen** (realistisch)
+
+**KRITISCHE ERKENNTNIS**: Das Problem ist NICHT die Stabilisierungspause (1s vs. 3s macht keinen Unterschied). Das Problem ist, dass wir ACKs für Discovery-FRAG-Pakete senden, was die Kamera in einer Discovery-Loop gefangen hält. Die MITM-Capture zeigt klar: KEINE ACKs für LBCS FRAG-Pakete!
+
+### Optimierter GitHub Copilot Prompt (Issue #179)
+
+```markdown
+# TASK: Fix Login Failure - LBCS Discovery FRAG Loop (Issue #179)
+
+## Context
+Python UDP client for trail camera. Despite 3.0s stabilization delay, camera floods
+with 70+ LBCS Discovery FRAG packets during login, creating ACK loop and causing
+F1 ERR (0xE0) and F1 DISC (0xF0) signals.
+
+## Problem Statement
+- **File**: `get_thumbnail_perp.py` (v4.24)
+- **Symptom**: Camera sends continuous LBCS Discovery FRAG Seq=83 packets during login
+- **Log**: `tests/debug09012026_2.log` Lines 20-325 show FRAG flood over 3 seconds
+- **Root Cause**: Implementation sends ACK for LBCS FRAG → creates endless loop
+- **MITM shows**: NO ACKs for Discovery FRAG packets (working app ignores them)
+
+## Evidence
+**debug09012026_2.log**:
+- Lines 20-325: 70+ FRAG Seq=83 (LBCS) + our ACKs + camera "ACK" responses
+- Pattern: RX FRAG → TX ACK → RX "ACK" → RX FRAG (endless loop)
+- Lines 168, 294: F1 ERR (0xE0) signals during FRAG flood
+- Line 409: F1 DISC (0xF0) signal - camera disconnects
+- Line 413: Login timeout - no token received
+
+**MITM ble_udp_1.log** (working app):
+- Line 374-377: Single FRAG Seq=83 (LBCS) after discovery
+- NO ACKs sent for this FRAG packet
+- NO FRAG packets during login phase
+- Login succeeds (Line 435: Login Response received)
+
+## Root Cause
+Sending ACKs for LBCS Discovery FRAG packets keeps camera in discovery mode.
+Camera interprets ACK as "client wants more discovery" → sends more FRAGs → we ACK → loop.
+MITM proves: Working app IGNORES Discovery FRAG packets (no ACK).
+
+## Solution
+Ignore LBCS Discovery FRAG packets (do NOT send ACK) during login phase.
+
+## Implementation
+In `get_thumbnail_perp.py` pump() method (around line 970-990):
+
+```python
+if pkt_type == 0x42:  # FRAG
+    # CRITICAL (Issue #179): Ignore LBCS Discovery FRAG packets
+    # Sending ACKs creates endless loop. MITM shows no ACKs for Discovery FRAGs.
+    if len(data) >= 12 and data[8:12] == b'LBCS':
+        logger.debug(f"⚠️ Ignoring LBCS Discovery FRAG Seq={rx_seq} (no ACK sent)")
+        continue  # Skip ACK, do not process
+    
+    # Normal FRAG handling for non-Discovery packets
+    # [existing FRAG processing code...]
+```
+
+## Expected Result
+After fix:
+```
+>>> Discovery OK
+>>> Camera stabilization complete (3.0s)
+>>> Login Handshake Step 1: Send Login Request
+📤 TX Login #1
+📤 TX Magic1
+📥 RX FRAG Seq=83 (LBCS) - IGNORED ✅
+📥 RX ACK "ACK" (from camera)
+📤 TX Login #2
+📤 TX Login #3
+📥 RX Login Response (MsgType=3) ✅
+```
+
+## Testing
+Run: `python get_thumbnail_perp.py --debug --wifi`
+Check for:
+- FRAG Seq=83 packets are logged but NOT ACKed
+- No FRAG+ACK loop
+- No F1 ERR (0xE0) signals
+- No F1 DISC (0xF0) signal
+- Login Response (MsgType=3) received
+
+## Files to Modify
+- `get_thumbnail_perp.py`: pump() method (around line 970-990)
+
+## References
+- `ANALYSE_KONSOLIDIERT_LOGIN.md`: Full analysis (new section for Issue #179)
+- `tests/MITM_Captures/ble_udp_1.log`: Lines 370-480 (working login, no FRAG ACKs)
+- `tests/debug09012026_2.log`: Current failure (FRAG flood with ACKs)
+```
+
+---
+
+## Referenzen (aktualisiert)
+
+- **Issues**: #157, #159, #162, #164, #166, #168, #170, #172, #174, #177, **#179**
+- **Protokoll-Spezifikation**: `Protocol_analysis.md`
+- **MITM-Captures**: 
+  - `tests/MITM_Captures/ble_udp_1.log` (funktionierender Login - KEINE ACKs für LBCS FRAG!)
+  - `tests/MITM_Captures/ble_udp_2.log`
+- **Debug-Logs**:
+  - `tests/debug04012026.txt` bis `tests/debug08012026_1.log` (frühere Iterationen)
+  - `tests/debug09012026_1.log` (v4.23 - 30+ FRAG-Pakete über 800ms)
+  - `tests/debug09012026_2.log` (v4.24 - 70+ FRAG-Pakete über 3s - AKTUELL)
+- **Implementierung**: `get_thumbnail_perp.py` (aktuell v4.25 - ✅ LBCS FRAG-Ignorierung implementiert)
