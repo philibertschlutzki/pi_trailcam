@@ -1525,8 +1525,8 @@ class Session:
                             
                             # Suppress ACKs only if:
                             # - Less than 200ms has passed since Login #3, AND
-                            # - We've suppressed fewer than 5 packets
-                            if time_since_wait_start < 0.2 and self._ack_suppression_count < 5:
+                            # - We've suppressed fewer than 5 packets (non-negative count means still suppressing)
+                            if time_since_wait_start < 0.2 and 0 <= self._ack_suppression_count < 5:
                                 # Still within suppression window
                                 skip_ack = True
                                 self._ack_suppression_count += 1
@@ -1539,7 +1539,7 @@ class Session:
                             else:
                                 # Suppression window expired - resume normal ACKing
                                 skip_ack = False
-                                if self.debug and self._ack_suppression_count > 0:
+                                if self.debug and self._ack_suppression_count >= 0:
                                     # Log once when we exit suppression mode
                                     logger.debug(
                                         f"✅ Resumed ACKing camera's 'ACK' packets after "
