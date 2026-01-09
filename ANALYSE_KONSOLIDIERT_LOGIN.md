@@ -2746,3 +2746,298 @@ Check for:
   - `tests/debug09012026_1.log` (v4.23 - 30+ FRAG-Pakete über 800ms)
   - `tests/debug09012026_2.log` (v4.24 - 70+ FRAG-Pakete über 3s - AKTUELL)
 - **Implementierung**: `get_thumbnail_perp.py` (aktuell v4.25 - ✅ LBCS FRAG-Ignorierung implementiert)
+
+---
+
+## 🎯 KRITISCHER BUG IN v4.25 FIX (Issue #181 - 2026-01-09, 12:49 Uhr)
+
+### Zusammenfassung
+
+**Issue**: #181  
+**Datum**: 2026-01-09 12:26 - 12:49  
+**Symptom**: v4.25 Fix funktioniert NICHT - LBCS FRAG-Pakete werden weiterhin ge-ACKt  
+**Status v4.25**: LBCS-Check implementiert, aber mit FALSCHEM OFFSET - Bug im Fix!  
+
+### Analyse debug09012026_2.log und debug09012026_3.log
+
+**KRITISCHE BEOBACHTUNG**: Trotz v4.25 Fix (Issue #179) werden LBCS FRAG-Pakete weiterhin ge-ACKt!
+
+**Beweis aus debug09012026_2.log**:
+```
+Zeile 20: RX FRAG Seq=83 (LBCS)                     hex=f14200144c42435300000000000000004343434a4a000000
+Zeile 22: 🔧 Auto-ACK: rx_seq=83, type=0x42         ← ACK WIRD GESENDET! ❌
+Zeile 23: FRAG without ARTEMIS signature (likely LBCS/Discovery); ACK sent
+
+Zeilen 24-407: 70+ FRAG+ACK Exchanges (gleich wie vor v4.25!)
+Zeile 409: RX DISC signal (0xF0)                    ← Camera disconnects ❌
+Zeile 413: Login Timeout (0 MsgType=3 packets)      ❌
+```
+
+**Beweis aus debug09012026_3.log**:
+```
+Zeile 20: RX FRAG Seq=83 (LBCS)                     hex=f14200144c42435300000000000000004343434a4a000000
+Zeile 22: 🔧 Auto-ACK: rx_seq=83, type=0x42         ← ACK WIRD GESENDET! ❌
+Zeile 23: FRAG without ARTEMIS signature (non-LBCS)
+
+Zeilen 24-407: 70+ FRAG+ACK Exchanges
+Zeile 409: RX DISC signal (0xF0)                    ← Camera disconnects ❌
+Zeile 413: Login Timeout (0 MsgType=3 packets)      ❌
+```
+
+### Root Cause Identifizierung
+
+**BUG IN v4.25**: Der LBCS-Check verwendet den **FALSCHEN OFFSET**!
+
+**Aktueller Code (v4.25, Zeile 1275)**:
+```python
+if pkt_type == 0x42 and len(data) >= 12 and data[8:12] == b'LBCS':
+    # Skip ACK
+    continue
+```
+
+**Problem**: `data[8:12]` ist FALSCH! LBCS befindet sich NICHT im Payload.
+
+**Analyse des LBCS FRAG-Pakets**:
+```
+Hex: f1 42 00 14 4c 42 43 53 00 00 00 00 00 00 00 00 43 43 43 4a 4a 00 00 00
+     ^^       ^^ ^^ ^^ ^^
+     F1       |  L  B  C  S
+     42 (FRAG)|
+              Offset 4-8: LBCS!
+```
+
+**RUDP Header Struktur** (per Protocol_analysis.md):
+- Offset 0x00: Magic (0xF1)
+- Offset 0x01: Type (0x42 = FRAG)
+- Offset 0x02-03: Length (0x0014)
+- **Offset 0x04: Const (0x4C = 'L')**
+- **Offset 0x05-06: Pad (0x4243 = 'BC')**
+- **Offset 0x07: Seq (0x53 = 'S')**
+- Offset 0x08: **Payload Start** (0x00 0x00...)
+
+**Erkenntnis**: "LBCS" ist Teil der RUDP-Header-Felder (Const, Pad, Seq), NICHT des Payloads!
+
+Bei Discovery-FRAG-Paketen wird "LBCS" **als Header kodiert**, nicht als Payload-Daten.
+- Normal: Const=0xD1, Pad=0x0000, Seq=0-255
+- LBCS-Discovery: Const='L', Pad='BC', Seq='S' → "LBCS" bei Offset 4-8
+
+**Korrekter Check**:
+```python
+if pkt_type == 0x42 and len(data) >= 8 and data[4:8] == b'LBCS':
+    # Skip ACK for LBCS Discovery FRAG
+    continue
+```
+
+### Warum der Bug unentdeckt blieb
+
+1. Der Code wurde implementiert basierend auf der Annahme, dass LBCS im Payload ist
+2. Die Debug-Logs zeigten "FRAG without ARTEMIS signature", was korrekt war
+3. Aber der ACK-Skip wurde NIE ausgeführt, weil `data[8:12]` = `b'\x00\x00\x00\x00'` ≠ `b'LBCS'`
+4. Daher wurden ACKs weiterhin gesendet, trotz "Fix"
+
+### Beweis der Fehlfunktion
+
+**Test mit Python**:
+```python
+packet = bytes.fromhex('f14200144c42435300000000000000004343434a4a000000')
+print(f"data[8:12] = {packet[8:12]}")   # → b'\x00\x00\x00\x00' (FALSCH!)
+print(f"data[4:8]  = {packet[4:8]}")    # → b'LBCS' (KORREKT!)
+```
+
+**Aktueller v4.25 Code Check**:
+```python
+if pkt_type == 0x42 and len(data) >= 12 and data[8:12] == b'LBCS':  # NIEMALS True!
+    continue  # Wird NIEMALS ausgeführt!
+```
+
+**Resultat**: Der Fix-Code wird niemals ausgeführt, ACKs werden weiterhin gesendet.
+
+### Vergleich: v4.24 vs. v4.25 (fehlerhaft)
+
+| Aspekt | v4.24 | v4.25 (Bug) | Ergebnis |
+|--------|-------|-------------|----------|
+| LBCS-Check | Nicht vorhanden | `data[8:12] == b'LBCS'` ❌ | Check schlägt fehl |
+| ACKs für FRAG Seq=83 | ✅ Gesendet | ✅ Gesendet | GLEICH! |
+| FRAG-Flut | 70+ Pakete | 70+ Pakete | GLEICH! |
+| DISC Signal | ✅ Empfangen | ✅ Empfangen | GLEICH! |
+| Login Erfolg | ❌ Timeout | ❌ Timeout | GLEICH! |
+
+**Fazit**: v4.25 verhält sich IDENTISCH wie v4.24, weil der Fix niemals aktiviert wird!
+
+### Fix-Strategie (v4.26)
+
+**Änderung in get_thumbnail_perp.py Zeile 1275**:
+
+```python
+# CRITICAL FIX (Issue #181): Correct LBCS offset detection
+# BUG in v4.25: Checked data[8:12] (payload), but LBCS is in header at offset 4-8!
+# LBCS Discovery packets encode "LBCS" in RUDP header fields (Const, Pad, Seq):
+# - Offset 4: Const = 'L' (0x4C)
+# - Offset 5-6: Pad = 'BC' (0x4243)
+# - Offset 7: Seq = 'S' (0x53)
+# Normal packets: Const=0xD1, Pad=0x0000, Seq=0-255
+# LBCS packets: Const='L', Pad='BC', Seq='S'
+if pkt_type == 0x42 and len(data) >= 8 and data[4:8] == b'LBCS':
+    if self.debug:
+        logger.debug(f"⚠️ Ignoring LBCS Discovery FRAG Seq={rx_seq} (no ACK sent, skipping packet)")
+    # Skip this packet entirely - do not ACK, do not process
+    continue
+```
+
+### Erwartetes Verhalten nach Fix (v4.26)
+
+Nach Korrektur des Offsets sollte der Debug-Log zeigen:
+
+```
+>>> Discovery OK
+>>> Camera stabilization complete (3.0s)
+>>> Login Handshake Step 1: Send Login Request
+📤 TX Login #1 (Seq=0, AppSeq=1)
+>>> Login Handshake Step 1b: Send Magic1 packet
+📤 TX Magic1 (Seq=3)
+📥 RX FRAG Seq=83 (LBCS)
+⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet) ← FIX AKTIV! ✅
+📥 RX ACK "ACK" (from camera)
+📤 TX Login #2 (Seq=0, AppSeq=1)
+📤 TX Login #3 (Seq=0, AppSeq=1)
+📥 RX Login Response (MsgType=3, AppSeq=1) ← ERWARTET! ✅
+✅ TOKEN OK (login, strict) token_len=XXX
+```
+
+**Unterschied zu v4.25**:
+- KEINE ACKs für FRAG Seq=83
+- KEINE FRAG-Flut (70+ Pakete)
+- KEIN DISC Signal
+- Login Response erfolgreich empfangen
+
+### Schätzung verbleibende Iterationen
+
+**Nach diesem Fix (v4.26)**:
+
+**Optimistisches Szenario** (1 Iteration):
+1. Offset-Korrektur (data[4:8]) → Test → **SUCCESS** ✅
+
+**Realistisches Szenario** (1-2 Iterationen):
+1. Offset-Korrektur → Test (sollte funktionieren, da die Logik korrekt ist)
+2. Falls unerwartetes Verhalten: Fine-tuning → Success
+
+**Pessimistisches Szenario** (2-3 Iterationen):
+- Andere FRAG-Pakete mit ähnlichem Problem
+- Timing-Issues nach FRAG-Unterdrückung
+- Weitere unbekannte Probleme
+
+**EMPFEHLUNG**: **1-2 Iterationen** (sehr wahrscheinlich nur 1!)
+
+**Begründung**: Dies ist ein eindeutiger Programmierfehler (falscher Offset), keine konzeptionelle Fehleinschätzung. Die Korrektur ist trivial und sollte sofort funktionieren.
+
+### Optimierter GitHub Copilot Prompt (v4.26)
+
+```markdown
+# TASK: Fix LBCS Detection Bug (Issue #181)
+
+## Context
+Python UDP client for trail camera. v4.25 fix for LBCS FRAG suppression is BROKEN
+due to incorrect offset check. ACKs are still sent, causing camera DISC signal.
+
+## Problem Statement
+- **File**: `get_thumbnail_perp.py` (v4.25)
+- **Bug**: LBCS check uses WRONG OFFSET (data[8:12] instead of data[4:8])
+- **Root Cause**: LBCS is encoded in RUDP header fields (Const, Pad, Seq), NOT payload
+- **Symptom**: Fix never activates, ACKs still sent, camera floods with FRAG packets
+
+## Evidence
+**LBCS FRAG packet structure**:
+```
+Hex: f1 42 00 14 4c 42 43 53 00 00 00 00 00 00 00 00 43 43 43 4a 4a 00 00 00
+Offset:  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+         F1 42 ... ... L  B  C  S  ↑Payload starts
+                       ^^^^^^^^^^^^
+                       LBCS at offset 4-8 (NOT 8-12!)
+```
+
+**v4.25 code (BROKEN)**:
+```python
+if pkt_type == 0x42 and len(data) >= 12 and data[8:12] == b'LBCS':  # WRONG!
+    continue  # Never executes because data[8:12] = b'\x00\x00\x00\x00'
+```
+
+**debug09012026_2.log and debug09012026_3.log**:
+- Lines 20-407: 70+ FRAG Seq=83 + ACKs sent (fix NOT working)
+- Line 409: DISC signal (0xF0) - camera disconnects
+- Line 413: Login timeout
+
+## Root Cause
+LBCS Discovery packets encode "LBCS" in RUDP header, not payload:
+- Normal RUDP: Const=0xD1, Pad=0x0000, Seq=0-255 (at offsets 4, 5-6, 7)
+- LBCS Discovery: Const='L', Pad='BC', Seq='S' (forms "LBCS" at offsets 4-7)
+
+Payload starts at offset 8, so data[8:12] contains 0x00000000, NOT "LBCS".
+
+## Solution
+Change offset from data[8:12] to data[4:8]
+
+## Implementation
+In `get_thumbnail_perp.py` line ~1275:
+
+```python
+# CRITICAL FIX (Issue #181): Correct LBCS offset - was data[8:12], now data[4:8]
+# LBCS is encoded in RUDP header fields (Const='L', Pad='BC', Seq='S') at offset 4-8
+# NOT in payload which starts at offset 8
+if pkt_type == 0x42 and len(data) >= 8 and data[4:8] == b'LBCS':
+    if self.debug:
+        logger.debug(f"⚠️ Ignoring LBCS Discovery FRAG Seq={rx_seq} (no ACK sent, skipping packet)")
+    continue  # Skip - no ACK, no processing
+```
+
+## Expected Result
+After fix:
+```
+>>> Login #1 → Magic1 → RX FRAG(LBCS)
+⚠️ Ignoring LBCS Discovery FRAG (no ACK sent) ← FIX WORKS! ✅
+RX ACK from camera → Login #2 → Login #3
+RX Login Response (MsgType=3) ✅
+✅ TOKEN OK
+```
+
+## Testing
+Run: `python get_thumbnail_perp.py --debug --wifi`
+Check for:
+- "Ignoring LBCS Discovery FRAG" in log (fix activated)
+- NO ACKs for FRAG Seq=83
+- NO FRAG flood
+- NO DISC signal
+- Login Response (MsgType=3) received
+
+## Files to Modify
+- `get_thumbnail_perp.py`: Line ~1275 (pump() method)
+  Change: `data[8:12]` → `data[4:8]`
+  
+- `ANALYSE_KONSOLIDIERT_LOGIN.md`: Add Issue #181 analysis section
+
+## References
+- Bug discovered via hex analysis of debug09012026_2.log packet dumps
+- RUDP header structure per Protocol_analysis.md §3.1
+- v4.25 fix attempt: Issue #179 (failed due to wrong offset)
+```
+
+---
+
+## Status-Update
+
+**v4.15-v4.24**: Verschiedene Login-Handshake Fixes  
+**v4.25**: LBCS FRAG-Ignorierung implementiert mit FALSCHEM OFFSET ❌ (Issue #179)  
+**v4.26** (TODO): Offset-Korrektur data[4:8] statt data[8:12] (Issue #181) - **KRITISCHER FIX**
+
+---
+
+## Referenzen (aktualisiert)
+
+- **Issues**: #157, #159, #162, #164, #166, #168, #170, #172, #174, #177, #179, **#181**
+- **Protokoll-Spezifikation**: `Protocol_analysis.md` (§3.1 RUDP Header Struktur)
+- **MITM-Captures**: 
+  - `tests/MITM_Captures/ble_udp_1.log` (funktionierender Login - KEINE ACKs für LBCS FRAG!)
+- **Debug-Logs**:
+  - `tests/debug09012026_1.log` (v4.23)
+  - `tests/debug09012026_2.log` (v4.25 - Bug: falscher Offset, ACKs weiterhin gesendet)
+  - `tests/debug09012026_3.log` (v4.25 - Bug: gleiches Problem)
+- **Implementierung**: `get_thumbnail_perp.py` (aktuell v4.25 - ❌ Bug im LBCS-Check, TODO: v4.26)
