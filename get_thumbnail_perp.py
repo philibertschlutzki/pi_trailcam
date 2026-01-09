@@ -1273,9 +1273,9 @@ class Session:
                     # Skip ACK for LBCS Discovery FRAG packets (Issue #179)
                     if pkt_type == 0x42 and len(data) >= 12 and data[8:12] == b'LBCS':
                         if self.debug:
-                            logger.debug(f"⚠️ Ignoring LBCS Discovery FRAG Seq={rx_seq} (no ACK sent)")
-                        # Do NOT send ACK, do NOT continue - let normal FRAG processing happen
-                        # but skip the ACK to prevent discovery loop
+                            logger.debug(f"⚠️ Ignoring LBCS Discovery FRAG Seq={rx_seq} (no ACK sent, skipping packet)")
+                        # Skip this packet entirely - do not ACK, do not process
+                        continue
                     elif not self._is_simple_ack_payload(data) and self.active_port:
                         ack_pkt = self.build_ack_10(rx_seq)
                         if self.debug:
@@ -1295,7 +1295,7 @@ class Session:
                         data = re
                     else:
                         if self.debug:
-                            logger.debug("FRAG without ARTEMIS signature (likely LBCS/Discovery); ACK sent")
+                            logger.debug("FRAG without ARTEMIS signature (non-LBCS)")
 
             # Token buffer: store MsgType=3 responses (raw) while buffering is active
             if self._buffering_active:
