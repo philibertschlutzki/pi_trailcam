@@ -1,5 +1,38 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.28
+"""Wildkamera Thumbnail Downloader - consolidated v4.29
+
+Changes in this version (v4.29) - CRITICAL FIX for Issue #187:
+- CRITICAL FIX: Two separate bugs in ACK sequence number handling after Magic1.
+  Analysis of debug09012026_6.log vs MITM ble_udp_1.log reveals that v4.28 sends
+  ACK with wrong sequence number (Seq=0 instead of Seq=1) after Magic1.
+  
+  Problem with v4.28:
+  - After Magic1 (force_seq=3), global_seq was NOT reset to 0
+  - build_ack_10() used rx_seq for ACK header instead of next_seq()
+  - Result: TX ACK (Seq=0) instead of TX ACK (Seq=1) per MITM Line 399
+  - Camera sends ERR (0xE0) and DISC (0xF0) signals, rejecting session
+  
+  Root Causes (Issue #187):
+  1. Missing global_seq = 0 reset after Magic1 (Seq=3)
+     - MITM shows sequence jumps: Login(0) → Magic1(3) → ACK(1) → Login#2(0)
+     - This implies reset to 0 after Magic1, so next ACK uses Seq=1
+  
+  2. build_ack_10() used rx_seq instead of next_seq()
+     - Per RUDP spec, ACK packets use sender's next sequence, not received seq
+     - MITM Line 399: TX ACK (Seq=1) for RX "ACK" (Seq=0)
+     - Header byte 7 must be ack_seq (next_seq), not rx_seq
+  
+  Fixes:
+  1. Added self.global_seq = 0 after sending Magic1 (line ~1630)
+  2. Modified build_ack_10() to use ack_seq = self.next_seq() (line ~1007)
+  
+  Expected behavior after fix:
+  Login#1(Seq=0) → Magic1(Seq=3) → Reset global_seq: 3→0 ✅ →
+  RX "ACK" (Seq=0) → TX ACK(Seq=1) ✅ [BOTH FIXES!] →
+  Login#2 → Login#3 → RX MsgType=3 with token ✅
+  
+  See ANALYSE_KONSOLIDIERT_LOGIN.md "🎯 KRITISCHER BUG IN v4.28 (Issue #187)" for
+  detailed hex-level analysis and MITM comparison proving the sequence number bug.
 
 Changes in this version (v4.28) - CRITICAL FIX for Issue #185:
 - CRITICAL FIX: Corrected ACK logic to always ACK DATA packets, even with "ACK" payload.
@@ -1005,9 +1038,23 @@ class Session:
         return bytes(header) + payload, seq
 
     def build_ack_10(self, rx_seq: int) -> bytes:
-        payload = bytes([0x00, rx_seq])
+        """Build ACK packet with next sequence number.
+        
+        CRITICAL FIX (Issue #187): ACK packets must use the sender's next sequence number,
+        not the received sequence number. Per MITM ble_udp_1.log Line 399:
+        - Received: DATA Seq=0 "ACK" (Line 396)
+        - Sent: ACK Seq=1 (Line 399) ← Uses next_seq(), not rx_seq!
+        
+        The received sequence goes in the payload for tracking purposes.
+        """
+        # Get next sequence number for this ACK transmission
+        ack_seq = self.next_seq()
+        
+        payload = bytes([0x00, rx_seq])  # Payload contains rx_seq for tracking
         body_len = 6
-        header = bytes([0xF1, 0xD1, (body_len >> 8) & 0xFF, body_len & 0xFF, 0xD1, 0x00, 0x00, rx_seq])
+        header = bytes([0xF1, 0xD1, (body_len >> 8) & 0xFF, body_len & 0xFF, 0xD1, 0x00, 0x00, ack_seq])
+        #                                                                                          ^^^^^^^
+        #                                                                                          Uses ack_seq (next_seq)
         return header + payload
 
     def encrypt_json(self, obj) -> bytes:
@@ -1620,6 +1667,14 @@ class Session:
         logger.info(">>> Login Handshake Step 1b: Send Magic1 packet")
         magic1_pkt, _ = self.build_packet(0xD1, MAGIC_BODY_1, force_seq=3)
         self.send_raw(magic1_pkt, desc="Magic1")
+        
+        # CRITICAL FIX (Issue #187): Reset global_seq to 0 after Magic1
+        # Per MITM ble_udp_1.log Line 399, the ACK for camera's "ACK" packet uses Seq=1.
+        # This means after Magic1 (Seq=3), the app resets its sequence counter to 0,
+        # so the next packet (the ACK) has Seq=1 (next_seq() from 0 → 1).
+        self.global_seq = 0
+        if self.debug:
+            logger.debug("🔄 Reset global_seq: 3 → 0 (preparing for ACK Seq=1)")
         
         # CRITICAL (Issue #185): Wait for and ACK the camera's "ACK" response
         # After Magic1, camera sends DATA(0xD0) Seq=0 with "ACK" string as payload.
