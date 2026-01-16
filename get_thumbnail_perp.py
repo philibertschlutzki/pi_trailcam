@@ -1087,6 +1087,57 @@ class Session:
 
             self.active_port = addr[1]
             logger.info(f"✅ Discovery OK, active_port={self.active_port}")
+            
+            # CRITICAL FIX (Issue #195): Discovery Drain Phase
+            # After receiving first discovery response, camera continues sending LBCS FRAG Seq=83
+            # packets for a short time. These must be "drained" before starting login sequence.
+            #
+            # Problem (debug16012026_1.log):
+            # - FRAG Seq=83 packets flood during ENTIRE login sequence (lines 20-250+)
+            # - Camera remains in discovery mode → sends ERROR (0xE0) instead of MsgType=3
+            # - Login timeout, no token received
+            #
+            # Working behavior (MITM ble_udp_1.log):
+            # - Last FRAG Seq=83 at line 375
+            # - Login starts at line 378 (FRAGs have STOPPED naturally)
+            # - Camera responds with MsgType=3 login response ✅
+            #
+            # Root Cause (H17):
+            # Camera expects "discovery exit" phase. By returning immediately after first
+            # response, we leave camera in discovery state. FRAG flooding is symptom.
+            #
+            # Fix: Drain all pending LBCS FRAG packets for 1.0s to ensure camera exits discovery.
+            logger.info(">>> Discovery drain phase: consuming pending LBCS FRAG packets...")
+            drain_start = time.time()
+            drain_count = 0
+            
+            while time.time() - drain_start < 1.0:  # Drain for 1.0 second
+                try:
+                    data, drain_addr = self.sock.recvfrom(2048)  # type: ignore[union-attr]
+                    
+                    # Check if this is an LBCS FRAG packet (Discovery packets)
+                    # Format: F1 42 00 14 4c 42 43 53 ... (LBCS at offset 4-8)
+                    if (len(data) >= 8 and data[0] == 0xF1 and data[1] == 0x42 and 
+                        data[4:8] == b'LBCS'):
+                        drain_count += 1
+                        if self.debug:
+                            logger.debug(f"🗑️ Draining LBCS Discovery FRAG (drain_count={drain_count})")
+                    else:
+                        # Not an LBCS packet - log and continue draining
+                        if self.debug:
+                            pkt_type = data[1] if len(data) >= 2 else 0
+                            logger.debug(f"🗑️ Draining non-LBCS packet (type=0x{pkt_type:02x}, len={len(data)})")
+                        
+                except socket.timeout:
+                    # Timeout is expected when no more packets - discovery exit complete
+                    break
+                except Exception as e:
+                    logger.warning(f"⚠️ Discovery drain exception: {e}")
+                    break
+            
+            drain_duration = time.time() - drain_start
+            logger.info(f">>> Discovery drain complete: {drain_count} LBCS FRAG packets drained in {drain_duration:.2f}s")
+            
             return True
 
         logger.error("❌ Discovery failed (no reply on candidate ports)")
