@@ -1,0 +1,460 @@
+2026-01-16 17:02:44,845 - INFO - Verbinde WLAN…
+2026-01-16 17:02:51,685 - INFO - Socket: 192.168.43.20:35281
+2026-01-16 17:02:51,708 - INFO - Discovery…
+2026-01-16 17:02:51,722 - DEBUG - 📤 RUDP DISC Seq=83 BodyLen=20 to=192.168.43.1:40611 LBCS | hex=f14100144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:51,737 - DEBUG - 📤 RUDP DISC Seq=83 BodyLen=20 to=192.168.43.1:3333 LBCS | hex=f14100144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:51,749 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:51,762 - INFO - ✅ Discovery OK, active_port=40611
+2026-01-16 17:02:54,777 - INFO - >>> Camera stabilization complete (3.0s)
+2026-01-16 17:02:54,791 - DEBUG - 🔓 Token-Pufferung aktiviert
+2026-01-16 17:02:54,798 - INFO - >>> Login Handshake Step 1: Send Login Request (cmdId=0, AppSeq=1)
+2026-01-16 17:02:54,807 - DEBUG - 🔐 Login JSON: {"cmdId":0,"usrName":"admin","password":"admin","needVideo":0,"needAudio":0,"utcTime":1768579374,"su...
+2026-01-16 17:02:54,821 - DEBUG - 🔧 build_artemis_frame: MsgType=2, AppSeq=1, BodyLen=173
+2026-01-16 17:02:54,836 - DEBUG -    AppSeq bytes (LE): 01000000
+2026-01-16 17:02:54,842 - DEBUG - 📊 Login packet: RUDP seq=0, ARTEMIS MsgType=2, AppSeq=1
+2026-01-16 17:02:54,851 - DEBUG - 📤 RUDP DATA Seq=0 BodyLen=197 | ARTEMIS MsgType=2 AppSeq=1 ALen=173 to=192.168.43.1:40611 Login#1(cmdId=0,AppSeq=1) | hex=f1d000c5d1000000415254454d4953000200000001000000ad000000524a467673684d7353714534323179344c63785a7253733667623841566e3554594d5a354f2b44427478517852552b574d677251314f70452b435a74656c534e6a527364…(+105b)
+2026-01-16 17:02:54,860 - INFO - >>> Login Handshake Step 1b: Send Magic1 packet
+2026-01-16 17:02:54,871 - DEBUG - 📤 RUDP ACK Seq=3 BodyLen=10 to=192.168.43.1:40611 Magic1 | hex=f1d1000ad1000003000000000000
+2026-01-16 17:02:54,884 - DEBUG - 🔄 Reset global_seq: 3 → 0 (preparing for ACK Seq=1)
+2026-01-16 17:02:54,890 - INFO - >>> Login Handshake Step 1c: Wait for camera's ACK after Magic1
+2026-01-16 17:02:54,898 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:54,907 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:54,919 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:54,933 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:54,939 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:54,947 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:54,957 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:54,969 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:54,983 - DEBUG - 📤 RUDP ACK Seq=1 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000010000
+2026-01-16 17:02:54,989 - DEBUG - ✅ Camera ACK received after Magic1, proceeding immediately to login retransmissions
+2026-01-16 17:02:54,998 - INFO - >>> Login Handshake Step 1d: Retransmit Login #2
+2026-01-16 17:02:55,009 - DEBUG - 📤 RUDP DATA Seq=0 BodyLen=197 | ARTEMIS MsgType=2 AppSeq=1 ALen=173 to=192.168.43.1:40611 Login#2(cmdId=0,AppSeq=1) | hex=f1d000c5d1000000415254454d4953000200000001000000ad000000524a467673684d7353714534323179344c63785a7253733667623841566e3554594d5a354f2b44427478517852552b574d677251314f70452b435a74656c534e6a527364…(+105b)
+2026-01-16 17:02:55,022 - INFO - >>> Login Handshake Step 1e: Retransmit Login #3
+2026-01-16 17:02:55,032 - DEBUG - 📤 RUDP DATA Seq=0 BodyLen=197 | ARTEMIS MsgType=2 AppSeq=1 ALen=173 to=192.168.43.1:40611 Login#3(cmdId=0,AppSeq=1) | hex=f1d000c5d1000000415254454d4953000200000001000000ad000000524a467673684d7353714534323179344c63785a7253733667623841566e3554594d5a354f2b44427478517852552b574d677251314f70452b435a74656c534e6a527364…(+105b)
+2026-01-16 17:02:55,043 - DEBUG - 🔒 Entered login response wait mode - time-limited ACK suppression active (200ms/5 packets max)
+2026-01-16 17:02:55,052 - INFO - >>> Login Handshake Step 2: Wait for Login Response (MsgType=3, AppSeq=1)
+2026-01-16 17:02:55,064 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,078 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,085 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,094 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (count=1/5, time=51ms/200ms)
+2026-01-16 17:02:55,105 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,117 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,128 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,135 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (count=2/5, time=92ms/200ms)
+2026-01-16 17:02:55,144 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,155 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,170 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,176 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (count=3/5, time=133ms/200ms)
+2026-01-16 17:02:55,184 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,194 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,205 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,218 - DEBUG - ⚠️ Suppressing ACK for camera's 'ACK' packet (count=4/5, time=175ms/200ms)
+2026-01-16 17:02:55,224 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,232 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,241 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,253 - DEBUG - ✅ Resumed ACKing camera's 'ACK' packets after 4 suppressions, 210ms elapsed
+2026-01-16 17:02:55,267 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,273 - DEBUG - 📤 RUDP ACK Seq=1 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000010000
+2026-01-16 17:02:55,281 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,291 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,303 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,317 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,323 - DEBUG - 📤 RUDP ACK Seq=2 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000020000
+2026-01-16 17:02:55,332 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,343 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,356 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,366 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,375 - DEBUG - 📤 RUDP ACK Seq=3 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000030000
+2026-01-16 17:02:55,385 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,397 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,411 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,417 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,426 - DEBUG - 📤 RUDP ACK Seq=4 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000040000
+2026-01-16 17:02:55,437 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,449 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,460 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,467 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,477 - DEBUG - 📤 RUDP ACK Seq=5 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000050000
+2026-01-16 17:02:55,488 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,503 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,509 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,517 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,526 - DEBUG - 📤 RUDP ACK Seq=6 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000060000
+2026-01-16 17:02:55,538 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,550 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,556 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,565 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,574 - DEBUG - 📤 RUDP ACK Seq=7 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000070000
+2026-01-16 17:02:55,586 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,599 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,606 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,614 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,624 - DEBUG - 📤 RUDP ACK Seq=8 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000080000
+2026-01-16 17:02:55,636 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,649 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,655 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,664 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,676 - DEBUG - 📤 RUDP ACK Seq=9 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000090000
+2026-01-16 17:02:55,688 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,700 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,708 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,718 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,730 - DEBUG - 📤 RUDP ACK Seq=10 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100000a0000
+2026-01-16 17:02:55,744 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,750 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,759 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,770 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,782 - DEBUG - 📤 RUDP ACK Seq=11 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100000b0000
+2026-01-16 17:02:55,793 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,800 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,809 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,820 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,835 - DEBUG - 📤 RUDP ACK Seq=12 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100000c0000
+2026-01-16 17:02:55,841 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,850 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,859 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,870 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,882 - DEBUG - 📤 RUDP ACK Seq=13 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100000d0000
+2026-01-16 17:02:55,889 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,897 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,906 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,918 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,932 - DEBUG - 📤 RUDP ACK Seq=14 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100000e0000
+2026-01-16 17:02:55,938 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,946 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:55,956 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:55,968 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:55,982 - DEBUG - 📤 RUDP ACK Seq=15 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100000f0000
+2026-01-16 17:02:55,988 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:55,997 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,008 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,020 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,033 - DEBUG - 📤 RUDP ACK Seq=16 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000100000
+2026-01-16 17:02:56,041 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,051 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,063 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,076 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,083 - DEBUG - 📤 RUDP ACK Seq=17 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000110000
+2026-01-16 17:02:56,092 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,103 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,115 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,125 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,133 - DEBUG - 📤 RUDP ACK Seq=18 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000120000
+2026-01-16 17:02:56,142 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,154 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,168 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,175 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,183 - DEBUG - 📤 RUDP ACK Seq=19 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000130000
+2026-01-16 17:02:56,192 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,203 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,216 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,223 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,231 - DEBUG - 📤 RUDP ACK Seq=20 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000140000
+2026-01-16 17:02:56,240 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,252 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,265 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,272 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,280 - DEBUG - 📤 RUDP ACK Seq=21 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000150000
+2026-01-16 17:02:56,290 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,302 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,315 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-16 17:02:56,322 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,331 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,342 - DEBUG - 📤 RUDP ACK Seq=22 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000160000
+2026-01-16 17:02:56,354 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,366 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,374 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,384 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,396 - DEBUG - 📤 RUDP ACK Seq=23 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000170000
+2026-01-16 17:02:56,410 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,416 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,425 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,436 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,448 - DEBUG - 📤 RUDP ACK Seq=24 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000180000
+2026-01-16 17:02:56,459 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,466 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,474 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,534 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,540 - DEBUG - 📤 RUDP ACK Seq=25 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000190000
+2026-01-16 17:02:56,549 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,561 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,573 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,583 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,590 - DEBUG - 📤 RUDP ACK Seq=26 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100001a0000
+2026-01-16 17:02:56,600 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,611 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,625 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,631 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,640 - DEBUG - 📤 RUDP ACK Seq=27 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100001b0000
+2026-01-16 17:02:56,649 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,660 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,672 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,678 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,687 - DEBUG - 📤 RUDP ACK Seq=28 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100001c0000
+2026-01-16 17:02:56,696 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,708 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,721 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,727 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,737 - DEBUG - 📤 RUDP ACK Seq=29 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100001d0000
+2026-01-16 17:02:56,749 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,761 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,767 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,775 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,785 - DEBUG - 📤 RUDP ACK Seq=30 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100001e0000
+2026-01-16 17:02:56,797 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,810 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,816 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,824 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,834 - DEBUG - 📤 RUDP ACK Seq=31 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100001f0000
+2026-01-16 17:02:56,846 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,860 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,866 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,875 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,886 - DEBUG - 📤 RUDP ACK Seq=32 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000200000
+2026-01-16 17:02:56,898 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,909 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,916 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,925 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,936 - DEBUG - 📤 RUDP ACK Seq=33 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000210000
+2026-01-16 17:02:56,951 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:56,957 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:56,965 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:56,974 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:56,985 - DEBUG - 📤 RUDP ACK Seq=34 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000220000
+2026-01-16 17:02:56,998 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,004 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,012 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,022 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,034 - DEBUG - 📤 RUDP ACK Seq=35 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000230000
+2026-01-16 17:02:57,047 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,056 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,065 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,076 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,089 - DEBUG - 📤 RUDP ACK Seq=36 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000240000
+2026-01-16 17:02:57,095 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,103 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,112 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,124 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,138 - DEBUG - 📤 RUDP ACK Seq=37 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000250000
+2026-01-16 17:02:57,144 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,152 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,162 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,174 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,188 - DEBUG - 📤 RUDP ACK Seq=38 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000260000
+2026-01-16 17:02:57,194 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,203 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,214 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,226 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,237 - DEBUG - 📤 RUDP ACK Seq=39 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000270000
+2026-01-16 17:02:57,244 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,254 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,265 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,279 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,286 - DEBUG - 📤 RUDP ACK Seq=40 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000280000
+2026-01-16 17:02:57,294 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,303 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,314 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,327 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,333 - DEBUG - 📤 RUDP ACK Seq=41 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000290000
+2026-01-16 17:02:57,342 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,351 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,362 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,376 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,385 - DEBUG - 📤 RUDP ACK Seq=42 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100002a0000
+2026-01-16 17:02:57,394 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,405 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,418 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,424 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,432 - DEBUG - 📤 RUDP ACK Seq=43 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100002b0000
+2026-01-16 17:02:57,442 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,453 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,467 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,473 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,481 - DEBUG - 📤 RUDP ACK Seq=44 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100002c0000
+2026-01-16 17:02:57,491 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,503 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,517 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,523 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,532 - DEBUG - 📤 RUDP ACK Seq=45 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100002d0000
+2026-01-16 17:02:57,544 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,555 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,566 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,573 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,582 - DEBUG - 📤 RUDP ACK Seq=46 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100002e0000
+2026-01-16 17:02:57,594 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,608 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,614 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-16 17:02:57,622 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,631 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,643 - DEBUG - 📤 RUDP ACK Seq=47 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100002f0000
+2026-01-16 17:02:57,655 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,661 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,669 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,678 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,690 - DEBUG - 📤 RUDP ACK Seq=48 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000300000
+2026-01-16 17:02:57,704 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,713 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,722 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,733 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,746 - DEBUG - 📤 RUDP ACK Seq=49 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000310000
+2026-01-16 17:02:57,752 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,760 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,769 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,781 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,795 - DEBUG - 📤 RUDP ACK Seq=50 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000320000
+2026-01-16 17:02:57,801 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,809 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,819 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,831 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,844 - DEBUG - 📤 RUDP ACK Seq=51 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000330000
+2026-01-16 17:02:57,851 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,859 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,870 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,882 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,893 - DEBUG - 📤 RUDP ACK Seq=52 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000340000
+2026-01-16 17:02:57,900 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,909 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,921 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,935 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,942 - DEBUG - 📤 RUDP ACK Seq=53 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000350000
+2026-01-16 17:02:57,950 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:57,959 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:57,970 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:57,982 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:57,989 - DEBUG - 📤 RUDP ACK Seq=54 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000360000
+2026-01-16 17:02:57,997 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:58,006 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:58,018 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:58,032 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:58,041 - DEBUG - 📤 RUDP ACK Seq=55 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000370000
+2026-01-16 17:02:58,050 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:58,061 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:58,073 - WARNING - ⚠️ No Login Response received within timeout
+2026-01-16 17:02:58,079 - INFO - Attempting to continue with stabilization and token wait...
+2026-01-16 17:02:58,087 - INFO - >>> Login Handshake Step 3: Stabilization (send heartbeats)
+2026-01-16 17:02:58,096 - DEBUG - 🔧 build_artemis_frame: MsgType=2, AppSeq=2, BodyLen=25
+2026-01-16 17:02:58,108 - DEBUG -    AppSeq bytes (LE): 02000000
+2026-01-16 17:02:58,122 - DEBUG - 📊 Heartbeat AppSeq=2, cnt=1
+2026-01-16 17:02:58,130 - DEBUG - 📤 RUDP DATA Seq=56 BodyLen=49 | ARTEMIS MsgType=2 AppSeq=2 ALen=25 to=192.168.43.1:40611 Heartbeat AppSeq=2 | hex=f1d00031d1000038415254454d4953000200000002000000190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00
+2026-01-16 17:02:58,138 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:58,149 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:58,163 - DEBUG - 📤 RUDP ACK Seq=57 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000390000
+2026-01-16 17:02:58,178 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:58,184 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:58,194 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:58,206 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:58,219 - DEBUG - 📤 RUDP ACK Seq=58 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100003a0000
+2026-01-16 17:02:58,232 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:58,241 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:58,251 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:58,263 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:58,285 - DEBUG - 📤 RUDP ACK Seq=59 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100003b0000
+2026-01-16 17:02:58,292 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:58,301 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:58,310 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:58,327 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:58,340 - DEBUG - 📤 RUDP ACK Seq=60 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100003c0000
+2026-01-16 17:02:58,347 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:58,356 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:58,365 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:58,377 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:58,391 - DEBUG - 📤 RUDP ACK Seq=61 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100003d0000
+2026-01-16 17:02:58,402 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:58,412 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:58,424 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:58,436 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:58,443 - DEBUG - 📤 RUDP ACK Seq=62 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100003e0000
+2026-01-16 17:02:58,451 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:58,460 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:58,472 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:58,486 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:58,492 - DEBUG - 📤 RUDP ACK Seq=63 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d100003f0000
+2026-01-16 17:02:58,500 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:58,510 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:58,522 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:58,536 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:58,542 - DEBUG - 📤 RUDP ACK Seq=64 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000400000
+2026-01-16 17:02:58,552 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:58,563 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:58,575 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:58,585 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:58,593 - DEBUG - 📤 RUDP ACK Seq=65 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000410000
+2026-01-16 17:02:58,602 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:58,613 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:58,628 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:58,634 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:58,642 - DEBUG - 📤 RUDP ACK Seq=66 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000420000
+2026-01-16 17:02:58,652 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:58,663 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:58,675 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:58,681 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:58,690 - DEBUG - 📤 RUDP ACK Seq=67 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000430000
+2026-01-16 17:02:58,699 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:58,711 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:58,724 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:58,733 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:58,743 - DEBUG - 📤 RUDP ACK Seq=68 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000440000
+2026-01-16 17:02:58,754 - DEBUG - 📥 RUDP FRAG Seq=83 BodyLen=20 from=('192.168.43.1', 40611) | hex=f14200144c42435300000000000000004343434a4a000000
+2026-01-16 17:02:58,766 - DEBUG - ⚠️ Ignoring LBCS Discovery FRAG Seq=83 (no ACK sent, skipping packet)
+2026-01-16 17:02:58,773 - DEBUG - 📥 RUDP DATA Seq=0 BodyLen=7 from=('192.168.43.1', 40611) | hex=f1d00007d100000041434b
+2026-01-16 17:02:58,781 - DEBUG - 🔧 ACKing DATA packet with 'ACK' payload Seq=0 (Critical for login! Issue #185)
+2026-01-16 17:02:58,790 - DEBUG - 📤 RUDP ACK Seq=69 BodyLen=6 to=192.168.43.1:40611 ACK(rx_seq=0) | hex=f1d10006d10000450000
+2026-01-16 17:02:58,802 - DEBUG - 📥 RUDP ACK Seq=1 BodyLen=6 from=('192.168.43.1', 40611) | hex=f1d10006d10000010000
+2026-01-16 17:02:58,816 - DEBUG - 📥 RUDP ACK Seq=2 BodyLen=8 from=('192.168.43.1', 40611) | hex=f1d10008d100000200000000
+2026-01-16 17:02:58,822 - DEBUG - 📥 RUDP ACK Seq=1 BodyLen=6 from=('192.168.43.1', 40611) | hex=f1d10006d10000010038
+2026-01-16 17:02:59,281 - INFO - >>> Waiting 2.0s for additional responses...
+2026-01-16 17:02:59,890 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-16 17:03:00,203 - DEBUG - 🔧 build_artemis_frame: MsgType=2, AppSeq=3, BodyLen=25
+2026-01-16 17:03:00,217 - DEBUG -    AppSeq bytes (LE): 03000000
+2026-01-16 17:03:00,223 - DEBUG - 📊 Heartbeat AppSeq=3, cnt=2
+2026-01-16 17:03:00,232 - DEBUG - 📤 RUDP DATA Seq=70 BodyLen=49 | ARTEMIS MsgType=2 AppSeq=3 ALen=25 to=192.168.43.1:40611 Heartbeat AppSeq=3 | hex=f1d00031d1000046415254454d4953000200000003000000190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00
+2026-01-16 17:03:00,269 - DEBUG - 📥 RUDP ACK Seq=1 BodyLen=6 from=('192.168.43.1', 40611) | hex=f1d10006d10000010046
+2026-01-16 17:03:01,322 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-16 17:03:01,333 - DEBUG - 🧾 RAW-RX-DUMP aktiv für 20.0s (bis 1768579401.3332446)
+2026-01-16 17:03:01,340 - INFO - >>> Extracting token from Login Response (AppSeq=1)...
+2026-01-16 17:03:02,251 - DEBUG - 🔧 build_artemis_frame: MsgType=2, AppSeq=4, BodyLen=25
+2026-01-16 17:03:02,263 - DEBUG -    AppSeq bytes (LE): 04000000
+2026-01-16 17:03:02,277 - DEBUG - 📊 Heartbeat AppSeq=4, cnt=3
+2026-01-16 17:03:02,284 - DEBUG - 📤 RUDP DATA Seq=71 BodyLen=49 | ARTEMIS MsgType=2 AppSeq=4 ALen=25 to=192.168.43.1:40611 Heartbeat AppSeq=4 | hex=f1d00031d1000047415254454d4953000200000004000000190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00
+2026-01-16 17:03:02,317 - DEBUG - 🧾 RAW RX from=192.168.43.1:40611 len=10
+0000: f1d10006d10000010047
+2026-01-16 17:03:02,327 - DEBUG - 📥 RUDP ACK Seq=1 BodyLen=6 from=('192.168.43.1', 40611) | hex=f1d10006d10000010047
+2026-01-16 17:03:03,370 - DEBUG - 🧾 RAW RX from=192.168.43.1:40611 len=4
+0000: f1e00000
+2026-01-16 17:03:03,384 - DEBUG - 📥 F1 ERR (short,len=4) f1e00000 from=('192.168.43.1', 40611) | hex=f1e00000
+2026-01-16 17:03:03,649 - DEBUG - 🧾 RAW RX from=192.168.43.1:40611 len=4
+0000: f1f00000
+2026-01-16 17:03:03,657 - DEBUG - 📥 F1 DISC (short,len=4) f1f00000 from=('192.168.43.1', 40611) | hex=f1f00000
+2026-01-16 17:03:04,418 - DEBUG - 🔧 build_artemis_frame: MsgType=2, AppSeq=5, BodyLen=25
+2026-01-16 17:03:04,430 - DEBUG -    AppSeq bytes (LE): 05000000
+2026-01-16 17:03:04,443 - DEBUG - 📊 Heartbeat AppSeq=5, cnt=4
+2026-01-16 17:03:04,450 - DEBUG - 📤 RUDP DATA Seq=72 BodyLen=49 | ARTEMIS MsgType=2 AppSeq=5 ALen=25 to=192.168.43.1:40611 Heartbeat AppSeq=5 | hex=f1d00031d1000048415254454d4953000200000005000000190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00
+2026-01-16 17:03:06,561 - DEBUG - 🔧 build_artemis_frame: MsgType=2, AppSeq=6, BodyLen=25
+2026-01-16 17:03:06,571 - DEBUG -    AppSeq bytes (LE): 06000000
+2026-01-16 17:03:06,587 - DEBUG - 📊 Heartbeat AppSeq=6, cnt=5
+2026-01-16 17:03:06,594 - DEBUG - 📤 RUDP DATA Seq=73 BodyLen=49 | ARTEMIS MsgType=2 AppSeq=6 ALen=25 to=192.168.43.1:40611 Heartbeat AppSeq=6 | hex=f1d00031d1000049415254454d4953000200000006000000190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00
+2026-01-16 17:03:08,705 - DEBUG - 🔧 build_artemis_frame: MsgType=2, AppSeq=7, BodyLen=25
+2026-01-16 17:03:08,715 - DEBUG -    AppSeq bytes (LE): 07000000
+2026-01-16 17:03:08,728 - DEBUG - 📊 Heartbeat AppSeq=7, cnt=6
+2026-01-16 17:03:08,744 - DEBUG - 📤 RUDP DATA Seq=74 BodyLen=49 | ARTEMIS MsgType=2 AppSeq=7 ALen=25 to=192.168.43.1:40611 Heartbeat AppSeq=7 | hex=f1d00031d100004a415254454d4953000200000007000000190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00
+2026-01-16 17:03:10,858 - DEBUG - 🔧 build_artemis_frame: MsgType=2, AppSeq=8, BodyLen=25
+2026-01-16 17:03:10,866 - DEBUG -    AppSeq bytes (LE): 08000000
+2026-01-16 17:03:10,876 - DEBUG - 📊 Heartbeat AppSeq=8, cnt=7
+2026-01-16 17:03:10,888 - DEBUG - 📤 RUDP DATA Seq=75 BodyLen=49 | ARTEMIS MsgType=2 AppSeq=8 ALen=25 to=192.168.43.1:40611 Heartbeat AppSeq=8 | hex=f1d00031d100004b415254454d4953000200000008000000190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00
+2026-01-16 17:03:13,005 - DEBUG - 🔧 build_artemis_frame: MsgType=2, AppSeq=9, BodyLen=25
+2026-01-16 17:03:13,011 - DEBUG -    AppSeq bytes (LE): 09000000
+2026-01-16 17:03:13,020 - DEBUG - 📊 Heartbeat AppSeq=9, cnt=8
+2026-01-16 17:03:13,031 - DEBUG - 📤 RUDP DATA Seq=76 BodyLen=49 | ARTEMIS MsgType=2 AppSeq=9 ALen=25 to=192.168.43.1:40611 Heartbeat AppSeq=9 | hex=f1d00031d100004c415254454d4953000200000009000000190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00
+2026-01-16 17:03:15,147 - DEBUG - 🔧 build_artemis_frame: MsgType=2, AppSeq=10, BodyLen=25
+2026-01-16 17:03:15,159 - DEBUG -    AppSeq bytes (LE): 0a000000
+2026-01-16 17:03:15,167 - DEBUG - 📊 Heartbeat AppSeq=10, cnt=9
+2026-01-16 17:03:15,177 - DEBUG - 📤 RUDP DATA Seq=77 BodyLen=49 | ARTEMIS MsgType=2 AppSeq=10 ALen=25 to=192.168.43.1:40611 Heartbeat AppSeq=10 | hex=f1d00031d100004d415254454d495300020000000a000000190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00
+2026-01-16 17:03:17,293 - DEBUG - 🔧 build_artemis_frame: MsgType=2, AppSeq=11, BodyLen=25
+2026-01-16 17:03:17,308 - DEBUG -    AppSeq bytes (LE): 0b000000
+2026-01-16 17:03:17,315 - DEBUG - 📊 Heartbeat AppSeq=11, cnt=10
+2026-01-16 17:03:17,324 - DEBUG - 📤 RUDP DATA Seq=78 BodyLen=49 | ARTEMIS MsgType=2 AppSeq=11 ALen=25 to=192.168.43.1:40611 Heartbeat AppSeq=11 | hex=f1d00031d100004e415254454d495300020000000b000000190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00
+2026-01-16 17:03:19,438 - DEBUG - 🔧 build_artemis_frame: MsgType=2, AppSeq=12, BodyLen=25
+2026-01-16 17:03:19,449 - DEBUG -    AppSeq bytes (LE): 0c000000
+2026-01-16 17:03:19,462 - DEBUG - 📊 Heartbeat AppSeq=12, cnt=11
+2026-01-16 17:03:19,468 - DEBUG - 📤 RUDP DATA Seq=79 BodyLen=49 | ARTEMIS MsgType=2 AppSeq=12 ALen=25 to=192.168.43.1:40611 Heartbeat AppSeq=12 | hex=f1d00031d100004f415254454d495300020000000c000000190000004d7a6c423336582f49566f385a7a49357247396a31773d3d00
+2026-01-16 17:03:21,429 - ERROR - ❌ Login Timeout (no token received, 0 MsgType=3 packets buffered)
