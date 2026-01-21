@@ -1,5 +1,25 @@
 #!/usr/bin/env python3
-"""Wildkamera Thumbnail Downloader - consolidated v4.31
+"""Wildkamera Thumbnail Downloader - consolidated v4.32
+
+Changes in this version (v4.32) - CRITICAL FIX for Issue #195:
+- CRITICAL FIX: Discovery Drain Phase to prevent LBCS FRAG flooding during login.
+  Analysis of debug16012026_1.log reveals that the camera remains in discovery mode
+  (sending LBCS FRAG Seq=83 packets) during the login handshake.
+
+  Problem with v4.31:
+  - Discovery returns immediately after first response
+  - Camera continues sending FRAG packets
+  - These packets flood during login handshake
+  - Camera sends ERROR (0xE0) instead of MsgType=3 login response
+
+  Root Cause (Issue #195):
+  - Client must consume ("drain") remaining discovery packets to let camera exit discovery mode
+  - MITM ble_udp_1.log shows FRAG packets stop naturally BEFORE login starts
+
+  Fix:
+  - Added "Discovery Drain" phase in discovery() method
+  - Consumes all LBCS FRAG packets for 1.0s after discovery success
+  - Ensures camera is clean before 3.0s stabilization and login
 
 Changes in this version (v4.31) - CRITICAL FIX for Issue #191:
 - CRITICAL FIX: Time-limited ACK suppression to prevent camera ERROR (0xE0) signals.
